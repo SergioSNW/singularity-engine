@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.1.0-alpha — Hello Window
+v0.2.0-alpha — Modular Architecture
 
 ## Dependencies
 

@@ -5,5 +5,27 @@
 ### Added
 
 - CMake build system with FetchContent-based SDL2 resolution.
-- `src/core/main.cpp` — SDL2 window (1280x720), V-Sync'd render loop with 60 FPS fallback.
+- `src/core/main.cpp` — SDL2 window (1280x720), V-Sync'd render loop.
 - README with build instructions and project structure.
+
+### Changed
+
+- Game loop now calculates delta time via `SDL_GetPerformanceCounter`.
+- Escape key closes the window alongside the close button.
+- Frame-aware pacing: `SDL_Delay` only the remainder to hit 60 FPS target, preventing drift and busy-waiting.
+- Integrated Dear ImGui (v1.91.0) with SDL2 + SDL_Renderer2 backends.
+- Engine Stats diagnostic window showing Delta Time and FPS.
+- ImGui demo window enabled for visual confirmation.
+
+## [0.2.0-alpha] — 2026-07-09
+
+### Added
+
+- `src/core/Window.h` / `Window.cpp` — class encapsulating SDL_Window and SDL_Renderer creation and destruction.
+- `src/core/Application.h` / `Application.cpp` — class managing the ImGui lifecycle and the thermal-mitigated game loop.
+- `docs/Singularity_Architecture_Textbook.md` — comprehensive architecture documentation covering the environment setup, frame pacing math, ImGui integration, and structural design decisions.
+
+### Changed
+
+- `src/core/main.cpp` refactored to a minimal entry point (instantiates `Application`, calls `Init` + `Run`).
+- `CMakeLists.txt` updated to compile `Window.cpp` and `Application.cpp`.

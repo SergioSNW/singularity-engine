@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.1.0-alpha — SDL2 window with V-Sync'd 2D renderer.
+> **Current version:** v0.2.0-alpha — Modular architecture with Window and Application classes.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

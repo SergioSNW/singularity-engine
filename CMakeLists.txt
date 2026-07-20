@@ -23,17 +23,42 @@ set(SDL_METAL OFF)
 set(SDL_X11 OFF)
 set(SDL_WAYLAND OFF)
 
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG v1.91.0
+  GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(SDL2)
+FetchContent_MakeAvailable(imgui)
+
+set(IMGUI_SOURCES
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+)
 
 add_executable(singularity-engine)
 
 target_sources(singularity-engine PRIVATE
   src/core/main.cpp
+  src/core/Window.cpp
+  src/core/Application.cpp
+  ${IMGUI_SOURCES}
 )
 
 target_link_libraries(singularity-engine PRIVATE
   SDL2::SDL2
   SDL2::SDL2main
+)
+
+target_include_directories(singularity-engine PRIVATE
+  ${imgui_SOURCE_DIR}
+  ${imgui_SOURCE_DIR}/backends
 )
 
 target_include_directories(singularity-engine PRIVATE
