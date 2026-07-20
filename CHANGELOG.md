@@ -44,3 +44,11 @@
 - ImGui stats UI logic moved out of `Application::Run()` into `StatsPanel::OnImGuiRender()`.
 - `Application::Init()` instantiates and registers `StatsPanel`.
 - `Application::Run()` iterates the panel collection each frame.
+
+## [0.3.1-alpha] — 2026-07-09
+
+### Fixed
+
+- `ImGui_ImplSDLRenderer2_RenderDrawData` call missing `SDL_Renderer*` second argument in `Application::Run()`.
+- Missing `#include <SDL.h>` in `main.cpp` causing `SDL_main` macro not to be applied, leading to linker error on Windows.
+- Removed `ImGui::ShowDemoWindow()` call from `StatsPanel` (requires `imgui_demo.cpp` which is not compiled).

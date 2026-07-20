@@ -23,5 +23,4 @@ void StatsPanel::OnImGuiRender(float dt)
     ImGui::Text("V-Sync: ON");
     ImGui::End();
 
-    ImGui::ShowDemoWindow();
 }
