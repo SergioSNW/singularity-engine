@@ -1,5 +1,7 @@
 #include "Application.h"
 #include "Window.h"
+#include "editor/EditorPanel.h"
+#include "editor/StatsPanel.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -37,6 +39,10 @@ bool Application::Init(int width, int height, const char *title)
     );
     ImGui_ImplSDLRenderer2_Init(m_window->GetNativeRenderer());
 
+    m_panels.push_back(
+        std::make_shared<StatsPanel>(m_window->GetWidth(), m_window->GetHeight())
+    );
+
     m_running = true;
     return true;
 }
@@ -69,19 +75,8 @@ void Application::Run()
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        double fps = (dt > 0.0) ? 1.0 / dt : 0.0;
-        char fps_buffer[64];
-        snprintf(fps_buffer, sizeof(fps_buffer), "%.1f", fps);
-
-        ImGui::Begin("Singularity Engine Stats");
-        ImGui::Text("Delta Time: %.4f ms", dt * 1000.0);
-        ImGui::Text("FPS: %s", fps_buffer);
-        ImGui::Separator();
-        ImGui::Text("Resolution: %dx%d",
-            m_window->GetWidth(),
-            m_window->GetHeight());
-        ImGui::Text("V-Sync: ON");
-        ImGui::End();
+        for (auto &panel : m_panels)
+            panel->OnImGuiRender((float)dt);
 
         ImGui::Render();
 
@@ -103,6 +98,8 @@ void Application::Shutdown()
 {
     if (!m_window)
         return;
+
+    m_panels.clear();
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

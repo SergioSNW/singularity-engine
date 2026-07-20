@@ -29,3 +29,18 @@
 
 - `src/core/main.cpp` refactored to a minimal entry point (instantiates `Application`, calls `Init` + `Run`).
 - `CMakeLists.txt` updated to compile `Window.cpp` and `Application.cpp`.
+
+## [0.3.0-alpha] — 2026-07-09
+
+### Added
+
+- `src/editor/EditorPanel.h` — pure virtual interface for all editor panels.
+- `src/editor/StatsPanel.h` / `StatsPanel.cpp` — first panel implementation, containing the diagnostic stats window and ImGui demo window.
+- `CMakeLists.txt` updated to compile `StatsPanel.cpp` and include `src/editor/` in the include path.
+
+### Changed
+
+- `Application` now holds a `std::vector<std::shared_ptr<EditorPanel>>` collection.
+- ImGui stats UI logic moved out of `Application::Run()` into `StatsPanel::OnImGuiRender()`.
+- `Application::Init()` instantiates and registers `StatsPanel`.
+- `Application::Run()` iterates the panel collection each frame.
