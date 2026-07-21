@@ -19,7 +19,8 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
-    ImGui::Begin("Hierarchy");
+    ImGui::Begin("Hierarchy", nullptr,
+        ImGuiWindowFlags_NoCollapse);
 
     {
         const int id = 0;

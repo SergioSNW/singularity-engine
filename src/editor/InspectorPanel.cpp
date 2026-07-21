@@ -17,7 +17,8 @@ void InspectorPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
-    ImGui::Begin("Inspector");
+    ImGui::Begin("Inspector", nullptr,
+        ImGuiWindowFlags_NoCollapse);
 
     if (m_selection->entity_id < 0)
     {

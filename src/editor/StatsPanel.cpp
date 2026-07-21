@@ -15,7 +15,8 @@ void StatsPanel::OnImGuiRender(float dt)
     char fps_buffer[64];
     snprintf(fps_buffer, sizeof(fps_buffer), "%.1f", fps);
 
-    ImGui::Begin("Singularity Engine Stats");
+    ImGui::Begin("Singularity Engine Stats", nullptr,
+        ImGuiWindowFlags_NoCollapse);
     ImGui::Text("Delta Time: %.4f ms", dt * 1000.0f);
     ImGui::Text("FPS: %s", fps_buffer);
     ImGui::Separator();

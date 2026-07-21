@@ -43,7 +43,9 @@ void ConfigureImGuiStyle()
 Application::Application()
     : m_window(nullptr)
     , m_running(false)
+    , m_layout_initialized(false)
     , m_selection(nullptr)
+    , m_viewport(nullptr)
 {
 }
 
@@ -74,6 +76,8 @@ bool Application::Init(int width, int height, const char *title)
 
     m_selection = new SelectionState();
 
+    m_viewport = new ViewportPanel();
+
     m_panels.push_back(
         std::make_shared<StatsPanel>(m_window->GetWidth(), m_window->GetHeight())
     );
@@ -83,12 +87,32 @@ bool Application::Init(int width, int height, const char *title)
     m_panels.push_back(
         std::make_shared<InspectorPanel>(m_selection)
     );
-    m_panels.push_back(
-        std::make_shared<ViewportPanel>()
-    );
+    m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
     m_running = true;
     return true;
+}
+
+void SetupDockingLayout()
+{
+    ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
+
+    ImGui::DockBuilderRemoveNode(dockspace_id);
+    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
+
+    ImGuiID top, bottom;
+    ImGuiID left, center, right;
+    ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.80f, &top, &bottom);
+    ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &center);
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, &right, &center);
+
+    ImGui::DockBuilderDockWindow("Hierarchy", left);
+    ImGui::DockBuilderDockWindow("Viewport", center);
+    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Singularity Engine Stats", bottom);
+
+    ImGui::DockBuilderFinish(dockspace_id);
 }
 
 void Application::Run()
@@ -119,7 +143,17 @@ void Application::Run()
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+        if (!m_layout_initialized)
+        {
+            SetupDockingLayout();
+            m_layout_initialized = true;
+        }
+
+        ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
+        ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode
+                                           | ImGuiDockNodeFlags_NoDockingSplit
+                                           | ImGuiDockNodeFlags_NoUndocking;
+        ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), dockspace_flags);
 
         for (auto &panel : m_panels)
             panel->OnImGuiRender((float)dt);
@@ -146,6 +180,7 @@ void Application::Shutdown()
         return;
 
     m_panels.clear();
+    m_viewport = nullptr;
 
     delete m_selection;
     m_selection = nullptr;

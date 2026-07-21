@@ -6,6 +6,7 @@
 class Window;
 class EditorPanel;
 struct SelectionState;
+class ViewportPanel;
 
 class Application
 {
@@ -20,6 +21,8 @@ public:
 private:
     Window *m_window;
     bool m_running;
+    bool m_layout_initialized;
     SelectionState *m_selection;
+    ViewportPanel *m_viewport;
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };
