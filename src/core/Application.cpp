@@ -9,6 +9,7 @@
 
 #include <SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <backends/imgui_impl_sdl2.h>
 #include <backends/imgui_impl_sdlrenderer2.h>
 
@@ -150,9 +151,7 @@ void Application::Run()
         }
 
         ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-        ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode
-                                           | ImGuiDockNodeFlags_NoDockingSplit
-                                           | ImGuiDockNodeFlags_NoUndocking;
+        ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
         ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), dockspace_flags);
 
         for (auto &panel : m_panels)
