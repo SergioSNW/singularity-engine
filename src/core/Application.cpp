@@ -2,6 +2,8 @@
 #include "Window.h"
 #include "editor/EditorPanel.h"
 #include "editor/StatsPanel.h"
+#include "editor/SceneHierarchyPanel.h"
+#include "editor/InspectorPanel.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -32,6 +34,7 @@ bool Application::Init(int width, int height, const char *title)
         return false;
 
     ImGui::CreateContext();
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
     ImGui_ImplSDL2_InitForSDLRenderer(
         m_window->GetNativeWindow(),
@@ -41,6 +44,12 @@ bool Application::Init(int width, int height, const char *title)
 
     m_panels.push_back(
         std::make_shared<StatsPanel>(m_window->GetWidth(), m_window->GetHeight())
+    );
+    m_panels.push_back(
+        std::make_shared<SceneHierarchyPanel>()
+    );
+    m_panels.push_back(
+        std::make_shared<InspectorPanel>()
     );
 
     m_running = true;
@@ -74,6 +83,8 @@ void Application::Run()
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
         for (auto &panel : m_panels)
             panel->OnImGuiRender((float)dt);

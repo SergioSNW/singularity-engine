@@ -52,3 +52,25 @@
 - `ImGui_ImplSDLRenderer2_RenderDrawData` call missing `SDL_Renderer*` second argument in `Application::Run()`.
 - Missing `#include <SDL.h>` in `main.cpp` causing `SDL_main` macro not to be applied, leading to linker error on Windows.
 - Removed `ImGui::ShowDemoWindow()` call from `StatsPanel` (requires `imgui_demo.cpp` which is not compiled).
+
+## [0.4.0-alpha] — 2026-07-09
+
+### Added
+
+- ImGui docking enabled (`ImGuiConfigFlags_DockingEnable`) in `Application::Init()`.
+- Root dockspace covering the main viewport (`DockSpaceOverViewport`) created each frame before panel rendering.
+- All existing panels (StatsPanel) are now dockable into the central dockspace.
+
+## [0.4.1-alpha] — 2026-07-09
+
+### Added
+
+- `src/editor/SceneHierarchyPanel.h` / `.cpp` — new panel inheriting `EditorPanel`, renders a "Hierarchy" window with a mock scene tree (Scene Root, Camera, Directional Light, Cube Object).
+- SceneHierarchyPanel registered in `Application::Init()` alongside StatsPanel.
+
+## [0.4.2-alpha] — 2026-07-09
+
+### Added
+
+- `src/editor/InspectorPanel.h` / `.cpp` — new panel inheriting `EditorPanel`, renders an "Inspector" window with mock Transform (Position/Rotation/Scale drag floats), Material (color picker), and Active checkbox controls.
+- InspectorPanel registered in `Application::Init()` alongside existing panels.

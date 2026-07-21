@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.3.1-alpha — Modular Editor Panels
+v0.4.2-alpha — 3-Panel Editor Layout
 
 ## Dependencies
 
@@ -23,9 +23,16 @@ cmake --build build
 
 ```
 src/
-├── core/      Game loop and ECS logic
-├── render/    SDL2 rendering wrappers
-└── editor/    Dear ImGui editor panels
+├── core/          Game loop and ECS logic
+│   ├── main.cpp
+│   ├── Application.h/.cpp
+│   ├── Window.h/.cpp
+├── render/        SDL2 rendering wrappers (future)
+└── editor/        Dear ImGui editor panels
+    ├── EditorPanel.h            (base interface)
+    ├── StatsPanel.h/.cpp        (diagnostics)
+    ├── SceneHierarchyPanel.h/.cpp (scene tree)
+    └── InspectorPanel.h/.cpp    (property editor)
 ```
 
 ## License

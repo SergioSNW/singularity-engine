@@ -26,7 +26,7 @@ set(SDL_WAYLAND OFF)
 FetchContent_Declare(
   imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG v1.91.0
+  GIT_TAG docking
   GIT_SHALLOW TRUE
 )
 
@@ -49,6 +49,8 @@ target_sources(singularity-engine PRIVATE
   src/core/Window.cpp
   src/core/Application.cpp
   src/editor/StatsPanel.cpp
+  src/editor/SceneHierarchyPanel.cpp
+  src/editor/InspectorPanel.cpp
   ${IMGUI_SOURCES}
 )
 
