@@ -1,9 +1,11 @@
 #include "InspectorPanel.h"
+#include "SelectionState.h"
 
 #include <imgui.h>
 
-InspectorPanel::InspectorPanel()
-    : m_position{0.0f, 0.0f, 0.0f}
+InspectorPanel::InspectorPanel(SelectionState *selection)
+    : m_selection(selection)
+    , m_position{0.0f, 0.0f, 0.0f}
     , m_rotation{0.0f, 0.0f, 0.0f}
     , m_scale{1.0f, 1.0f, 1.0f}
     , m_color{1.0f, 1.0f, 1.0f, 1.0f}
@@ -16,6 +18,16 @@ void InspectorPanel::OnImGuiRender(float dt)
     (void)dt;
 
     ImGui::Begin("Inspector");
+
+    if (m_selection->entity_id < 0)
+    {
+        ImGui::TextDisabled("No entity selected");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Entity: %s", m_selection->entity_name.c_str());
+    ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
     {

@@ -5,6 +5,7 @@
 
 class Window;
 class EditorPanel;
+struct SelectionState;
 
 class Application
 {
@@ -19,5 +20,6 @@ public:
 private:
     Window *m_window;
     bool m_running;
+    SelectionState *m_selection;
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };

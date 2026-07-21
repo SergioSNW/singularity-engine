@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.4.2-alpha — 3-Panel Editor Layout
+v0.5.0-alpha — Selection, Viewport, Custom Theme
 
 ## Dependencies
 

@@ -51,6 +51,7 @@ target_sources(singularity-engine PRIVATE
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
   src/editor/InspectorPanel.cpp
+  src/editor/ViewportPanel.cpp
   ${IMGUI_SOURCES}
 )
 
