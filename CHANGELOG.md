@@ -127,3 +127,12 @@
 - `RecreateViewportTarget()` destroys and recreates the texture on size mismatch.
 - `RenderViewportTarget()` draws a dark background, grid lines, crosshair axes, and a cube outline to the off-screen texture each frame.
 - `ViewportPanel::SetTexture()` receives the live texture so `ImGui::Image()` blits the off-screen scene directly.
+
+## [0.6.2-alpha] — 2026-07-09
+
+### Added
+
+- `RenderViewportTarget()` now reads entity `TransformComponent` and `MaterialComponent` from the active `Scene`.
+- Each entity is drawn as a filled + outlined rectangle at its position offset from viewport center, scaled by its `scale` values, colored by its `MaterialComponent::color`.
+- Inactive entities (`material.active == false`) render as outlines only.
+- Changes to position, scale, or color in the InspectorPanel update the viewport in real-time.

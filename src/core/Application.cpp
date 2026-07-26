@@ -116,9 +116,40 @@ void Application::RenderViewportTarget()
     SDL_RenderDrawLine(renderer, cx, 0, cx, h);
     SDL_RenderDrawLine(renderer, 0, cy, w, cy);
 
-    SDL_SetRenderDrawColor(renderer, 60, 140, 100, 255);
-    SDL_Rect cube = { cx - 30, cy - 30, 60, 60 };
-    SDL_RenderDrawRect(renderer, &cube);
+    if (m_scene)
+    {
+        for (auto &entity : m_scene->GetEntities())
+        {
+            float r = entity.material.color[0];
+            float g = entity.material.color[1];
+            float b = entity.material.color[2];
+
+            Uint8 ur = (Uint8)(r * 255.0f);
+            Uint8 ug = (Uint8)(g * 255.0f);
+            Uint8 ub = (Uint8)(b * 255.0f);
+
+            if (entity.material.active)
+            {
+                SDL_SetRenderDrawColor(renderer, ur, ug, ub, 200);
+                SDL_Rect fill = {
+                    cx + (int)entity.transform.position[0] - (int)entity.transform.scale[0] / 2,
+                    cy + (int)entity.transform.position[1] - (int)entity.transform.scale[1] / 2,
+                    (int)entity.transform.scale[0],
+                    (int)entity.transform.scale[1]
+                };
+                SDL_RenderFillRect(renderer, &fill);
+            }
+
+            SDL_SetRenderDrawColor(renderer, ur, ug, ub, 255);
+            SDL_Rect outline = {
+                cx + (int)entity.transform.position[0] - (int)entity.transform.scale[0] / 2,
+                cy + (int)entity.transform.position[1] - (int)entity.transform.scale[1] / 2,
+                (int)entity.transform.scale[0],
+                (int)entity.transform.scale[1]
+            };
+            SDL_RenderDrawRect(renderer, &outline);
+        }
+    }
 
     SDL_SetRenderTarget(renderer, nullptr);
 }
