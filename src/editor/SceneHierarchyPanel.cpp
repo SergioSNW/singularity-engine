@@ -1,17 +1,13 @@
 #include "SceneHierarchyPanel.h"
 #include "SelectionState.h"
+#include "Scene.h"
+#include "Entity.h"
 
 #include <imgui.h>
 
-static const char *g_entity_names[] = {
-    "Scene Root",
-    "Camera",
-    "Directional Light",
-    "Cube Object",
-};
-
-SceneHierarchyPanel::SceneHierarchyPanel(SelectionState *selection)
+SceneHierarchyPanel::SceneHierarchyPanel(SelectionState *selection, Scene *scene)
     : m_selection(selection)
+    , m_scene(scene)
 {
 }
 
@@ -22,36 +18,25 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
     ImGui::Begin("Hierarchy", nullptr,
         ImGuiWindowFlags_NoCollapse);
 
+    if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
-        const int id = 0;
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen
-                                 | ImGuiTreeNodeFlags_SpanFullWidth;
-        if (m_selection->entity_id == id)
-            flags |= ImGuiTreeNodeFlags_Selected;
-        if (id == 0 && ImGui::TreeNodeEx(g_entity_names[id], flags))
+        for (auto &entity : m_scene->GetEntities())
         {
-            for (int i = 1; i < 4; ++i)
-            {
-                ImGuiTreeNodeFlags child_flags = ImGuiTreeNodeFlags_Leaf
-                                               | ImGuiTreeNodeFlags_SpanFullWidth
-                                               | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-                if (m_selection->entity_id == i)
-                    child_flags |= ImGuiTreeNodeFlags_Selected;
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf
+                                     | ImGuiTreeNodeFlags_SpanFullWidth
+                                     | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            if (m_selection->entity_id == entity.id)
+                flags |= ImGuiTreeNodeFlags_Selected;
 
-                ImGui::TreeNodeEx(g_entity_names[i], child_flags);
-                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-                {
-                    m_selection->entity_id = i;
-                    m_selection->entity_name = g_entity_names[i];
-                }
+            ImGui::TreeNodeEx(entity.tag.tag.c_str(), flags);
+
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            {
+                m_selection->entity_id = entity.id;
+                m_selection->entity_name = entity.tag.tag;
             }
-            ImGui::TreePop();
         }
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-        {
-            m_selection->entity_id = id;
-            m_selection->entity_name = g_entity_names[id];
-        }
+        ImGui::TreePop();
     }
 
     ImGui::End();

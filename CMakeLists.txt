@@ -48,6 +48,7 @@ target_sources(singularity-engine PRIVATE
   src/core/main.cpp
   src/core/Window.cpp
   src/core/Application.cpp
+  src/core/Scene.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
   src/editor/InspectorPanel.cpp

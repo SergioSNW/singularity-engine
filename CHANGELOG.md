@@ -103,3 +103,18 @@
 ### Changed
 
 - Removed `NoDockingSplit` and `NoUndocking` dockspace flags to allow users to freely undock, rearrange, and float panels after the initial layout loads.
+
+## [0.6.0-alpha] — 2026-07-09
+
+### Added
+
+- `src/core/Components.h` — `TransformComponent`, `TagComponent`, `MaterialComponent` structs.
+- `src/core/Entity.h` — lightweight `Entity` struct holding id + all components.
+- `src/core/Scene.h` / `Scene.cpp` — `Scene` class managing a vector of entities with `CreateEntity()` and `GetEntityById()`.
+- Scene pre-populated with Camera, Directional Light, and Cube Object.
+
+### Changed
+
+- `SceneHierarchyPanel` now iterates `Scene::GetEntities()` instead of hardcoded arrays.
+- `InspectorPanel` reads and writes directly to the selected entity's `TransformComponent` and `MaterialComponent` — no more local mock variables.
+- `Application` owns a `Scene*` and passes it to both panels.

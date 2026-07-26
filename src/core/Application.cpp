@@ -7,6 +7,8 @@
 #include "editor/InspectorPanel.h"
 #include "editor/ViewportPanel.h"
 
+#include "Scene.h"
+
 #include <SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -47,6 +49,7 @@ Application::Application()
     , m_layout_initialized(false)
     , m_selection(nullptr)
     , m_viewport(nullptr)
+    , m_scene(nullptr)
 {
 }
 
@@ -77,16 +80,21 @@ bool Application::Init(int width, int height, const char *title)
 
     m_selection = new SelectionState();
 
+    m_scene = new Scene();
+    m_scene->CreateEntity("Camera");
+    m_scene->CreateEntity("Directional Light");
+    m_scene->CreateEntity("Cube Object");
+
     m_viewport = new ViewportPanel();
 
     m_panels.push_back(
         std::make_shared<StatsPanel>(m_window->GetWidth(), m_window->GetHeight())
     );
     m_panels.push_back(
-        std::make_shared<SceneHierarchyPanel>(m_selection)
+        std::make_shared<SceneHierarchyPanel>(m_selection, m_scene)
     );
     m_panels.push_back(
-        std::make_shared<InspectorPanel>(m_selection)
+        std::make_shared<InspectorPanel>(m_selection, m_scene)
     );
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -183,6 +191,9 @@ void Application::Shutdown()
 
     delete m_selection;
     m_selection = nullptr;
+
+    delete m_scene;
+    m_scene = nullptr;
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

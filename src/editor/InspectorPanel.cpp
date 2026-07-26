@@ -1,15 +1,13 @@
 #include "InspectorPanel.h"
 #include "SelectionState.h"
+#include "Scene.h"
+#include "Entity.h"
 
 #include <imgui.h>
 
-InspectorPanel::InspectorPanel(SelectionState *selection)
+InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene)
     : m_selection(selection)
-    , m_position{0.0f, 0.0f, 0.0f}
-    , m_rotation{0.0f, 0.0f, 0.0f}
-    , m_scale{1.0f, 1.0f, 1.0f}
-    , m_color{1.0f, 1.0f, 1.0f, 1.0f}
-    , m_active(true)
+    , m_scene(scene)
 {
 }
 
@@ -27,22 +25,29 @@ void InspectorPanel::OnImGuiRender(float dt)
         return;
     }
 
-    ImGui::Text("Entity: %s", m_selection->entity_name.c_str());
+    Entity *entity = m_scene->GetEntityById(m_selection->entity_id);
+    if (!entity)
+    {
+        ImGui::TextDisabled("Entity not found");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Entity: %s", entity->tag.tag.c_str());
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::DragFloat3("Position", m_position, 0.1f);
-        ImGui::DragFloat3("Rotation", m_rotation, 0.1f);
-        ImGui::DragFloat3("Scale", m_scale, 0.1f);
+        ImGui::DragFloat3("Position", entity->transform.position, 0.1f);
+        ImGui::DragFloat3("Rotation", entity->transform.rotation, 0.1f);
+        ImGui::DragFloat3("Scale",    entity->transform.scale,    0.1f);
     }
 
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::ColorEdit4("Albedo", m_color);
+        ImGui::ColorEdit4("Albedo", entity->material.color);
+        ImGui::Checkbox("Active", &entity->material.active);
     }
-
-    ImGui::Checkbox("Active", &m_active);
 
     ImGui::End();
 }
