@@ -118,3 +118,12 @@
 - `SceneHierarchyPanel` now iterates `Scene::GetEntities()` instead of hardcoded arrays.
 - `InspectorPanel` reads and writes directly to the selected entity's `TransformComponent` and `MaterialComponent` — no more local mock variables.
 - `Application` owns a `Scene*` and passes it to both panels.
+
+## [0.6.1-alpha] — 2026-07-09
+
+### Added
+
+- Off-screen SDL render target (`SDL_TEXTUREACCESS_TARGET`) created and dynamically resized when `ViewportPanel` dimensions change.
+- `RecreateViewportTarget()` destroys and recreates the texture on size mismatch.
+- `RenderViewportTarget()` draws a dark background, grid lines, crosshair axes, and a cube outline to the off-screen texture each frame.
+- `ViewportPanel::SetTexture()` receives the live texture so `ImGui::Image()` blits the off-screen scene directly.

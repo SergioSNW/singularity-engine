@@ -50,12 +50,77 @@ Application::Application()
     , m_selection(nullptr)
     , m_viewport(nullptr)
     , m_scene(nullptr)
+    , m_viewport_target(nullptr)
+    , m_viewport_target_w(0)
+    , m_viewport_target_h(0)
 {
 }
 
 Application::~Application()
 {
     Shutdown();
+}
+
+void Application::RecreateViewportTarget(int width, int height)
+{
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+
+    if (m_viewport_target)
+    {
+        SDL_DestroyTexture(m_viewport_target);
+        m_viewport_target = nullptr;
+    }
+
+    if (width <= 0 || height <= 0)
+        return;
+
+    m_viewport_target = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_TARGET,
+        width, height
+    );
+
+    m_viewport_target_w = width;
+    m_viewport_target_h = height;
+
+    if (m_viewport)
+        m_viewport->SetTexture(m_viewport_target);
+}
+
+void Application::RenderViewportTarget()
+{
+    if (!m_viewport_target || !m_viewport)
+        return;
+
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+
+    SDL_SetRenderTarget(renderer, m_viewport_target);
+
+    SDL_SetRenderDrawColor(renderer, 18, 18, 24, 255);
+    SDL_RenderClear(renderer);
+
+    int w = m_viewport_target_w;
+    int h = m_viewport_target_h;
+
+    SDL_SetRenderDrawColor(renderer, 40, 40, 50, 255);
+    int grid_step = 40;
+    for (int x = 0; x <= w; x += grid_step)
+        SDL_RenderDrawLine(renderer, x, 0, x, h);
+    for (int y = 0; y <= h; y += grid_step)
+        SDL_RenderDrawLine(renderer, 0, y, w, y);
+
+    int cx = w / 2;
+    int cy = h / 2;
+    SDL_SetRenderDrawColor(renderer, 80, 80, 100, 255);
+    SDL_RenderDrawLine(renderer, cx, 0, cx, h);
+    SDL_RenderDrawLine(renderer, 0, cy, w, cy);
+
+    SDL_SetRenderDrawColor(renderer, 60, 140, 100, 255);
+    SDL_Rect cube = { cx - 30, cy - 30, 60, 60 };
+    SDL_RenderDrawRect(renderer, &cube);
+
+    SDL_SetRenderTarget(renderer, nullptr);
 }
 
 bool Application::Init(int width, int height, const char *title)
@@ -97,6 +162,8 @@ bool Application::Init(int width, int height, const char *title)
         std::make_shared<InspectorPanel>(m_selection, m_scene)
     );
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
+
+    RecreateViewportTarget(800, 600);
 
     m_running = true;
     return true;
@@ -167,6 +234,13 @@ void Application::Run()
 
         ImGui::Render();
 
+        int vp_w = m_viewport ? m_viewport->GetWidth() : 0;
+        int vp_h = m_viewport ? m_viewport->GetHeight() : 0;
+        if (vp_w != m_viewport_target_w || vp_h != m_viewport_target_h)
+            RecreateViewportTarget(vp_w, vp_h);
+
+        RenderViewportTarget();
+
         SDL_Renderer *renderer = m_window->GetNativeRenderer();
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
@@ -188,6 +262,12 @@ void Application::Shutdown()
 
     m_panels.clear();
     m_viewport = nullptr;
+
+    if (m_viewport_target)
+    {
+        SDL_DestroyTexture(m_viewport_target);
+        m_viewport_target = nullptr;
+    }
 
     delete m_selection;
     m_selection = nullptr;

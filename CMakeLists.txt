@@ -68,6 +68,7 @@ target_include_directories(singularity-engine PRIVATE
 
 target_include_directories(singularity-engine PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/core
 )
 
 set_target_properties(singularity-engine PROPERTIES
