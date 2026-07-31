@@ -38,5 +38,8 @@ private:
     int m_viewport_target_w;
     int m_viewport_target_h;
     float m_camera_scroll;
+    float m_ui_scale;
+    float m_applied_ui_scale;
+    bool m_recreate_viewport;
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };

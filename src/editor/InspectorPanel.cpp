@@ -2,6 +2,7 @@
 #include "SelectionState.h"
 #include "Scene.h"
 #include "Entity.h"
+#include "EngineMath.h"
 
 #include <imgui.h>
 #include <cstring>
@@ -51,6 +52,38 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::DragFloat3("Position", entity->transform.position, 0.1f);
         ImGui::DragFloat3("Rotation", entity->transform.rotation, 0.1f);
         ImGui::DragFloat3("Scale",    entity->transform.scale,    0.1f);
+
+        // Read-only world position: local transform folded through the parent
+        // chain (WorldMatrix = ParentWorld * LocalMatrix), so a child reports
+        // its actual location in scene space.
+        Mat4 world = m_scene->ComputeWorldMatrix(*entity);
+        ImGui::TextDisabled("World Position: (%.2f, %.2f, %.2f)",
+                            world.m[12], world.m[13], world.m[14]);
+    }
+
+    if (ImGui::CollapsingHeader("Hierarchy", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Parent combo: list every entity that is not this one or a descendant
+        // (a reparent into its own subtree is a cycle and is rejected).
+        if (ImGui::BeginCombo("Parent",
+                              entity->parent ? entity->parent->tag.tag.c_str() : "None"))
+        {
+            if (ImGui::Selectable("None", entity->parent == nullptr))
+                m_scene->SetParent(entity->id, -1);
+
+            for (auto &candidate : m_scene->GetEntities())
+            {
+                if (candidate->id == entity->id ||
+                    m_scene->IsDescendantOf(candidate->id, entity->id))
+                    continue;
+                bool is_current = entity->parent == candidate.get();
+                if (ImGui::Selectable(candidate->tag.tag.c_str(), is_current))
+                    m_scene->SetParent(entity->id, candidate->id);
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::TextDisabled("Children: %d", (int)entity->children.size());
     }
 
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))

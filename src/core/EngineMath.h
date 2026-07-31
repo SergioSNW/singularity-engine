@@ -50,6 +50,13 @@ static inline Mat4 Mat4Translate(float tx, float ty, float tz)
     return r;
 }
 
+static inline Mat4 Mat4Scale(float sx, float sy, float sz)
+{
+    Mat4 r;
+    r.m[0] = sx;  r.m[5] = sy;  r.m[10] = sz;  r.m[15] = 1.0f;
+    return r;
+}
+
 static inline Mat4 Mat4RotateX(float deg)
 {
     float rad = deg * 3.1415926535f / 180.0f;
@@ -78,6 +85,19 @@ static inline Mat4 Mat4RotateZ(float deg)
     r.m[0] = c;   r.m[1] = s;
     r.m[4] = -s;  r.m[5] = c;
     return r;
+}
+
+// Model matrix from position / Euler rotation (degrees, ZYX order) / scale:
+// M = T * Rx * Ry * Rz * S, so a local point is scaled, then rotated, then
+// translated into parent/world space.
+static inline Mat4 Mat4TRS(const Vec3 &pos, const Vec3 &euler_deg, const Vec3 &scale)
+{
+    Mat4 rot = Mat4Mul(
+        Mat4RotateX(euler_deg.x),
+        Mat4Mul(Mat4RotateY(euler_deg.y), Mat4RotateZ(euler_deg.z))
+    );
+    Mat4 rs = Mat4Mul(rot, Mat4Scale(scale.x, scale.y, scale.z));
+    return Mat4Mul(Mat4Translate(pos.x, pos.y, pos.z), rs);
 }
 
 static inline Mat4 Mat4Transpose(const Mat4 &m)

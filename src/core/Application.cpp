@@ -16,11 +16,18 @@
 #include <backends/imgui_impl_sdl2.h>
 #include <backends/imgui_impl_sdlrenderer2.h>
 
+#include <algorithm>
+
 static const double TARGET_FRAME_TIME = 1.0 / 60.0;
 
-void ConfigureImGuiStyle()
+void ConfigureImGuiStyle(float ui_scale)
 {
+    // Rebuild the style from scratch so scaling never drifts: reset to the
+    // built-in defaults, apply the dark theme, then our color overrides.
     ImGuiStyle &style = ImGui::GetStyle();
+    style = ImGuiStyle();
+    ImGui::StyleColorsDark();
+
     style.FrameRounding = 4.0f;
     style.GrabRounding = 4.0f;
     style.WindowRounding = 6.0f;
@@ -42,6 +49,10 @@ void ConfigureImGuiStyle()
     style.Colors[ImGuiCol_TabHovered]        = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
     style.Colors[ImGuiCol_TabActive]         = ImVec4(0.20f, 0.20f, 0.27f, 1.00f);
     style.Colors[ImGuiCol_TabUnfocusedActive]= ImVec4(0.15f, 0.15f, 0.20f, 1.00f);
+
+    // Global UI zoom: scale every style metric (spacing, padding, rounding,
+    // minimum window size, ...) so all widgets grow together.
+    style.ScaleAllSizes(ui_scale);
 }
 
 Application::Application()
@@ -56,6 +67,9 @@ Application::Application()
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
     , m_camera_scroll(0.0f)
+    , m_ui_scale(1.0f)
+    , m_applied_ui_scale(1.0f)
+    , m_recreate_viewport(false)
 {
 }
 
@@ -66,24 +80,27 @@ Application::~Application()
 
 void Application::RecreateViewportTarget(int width, int height)
 {
-    SDL_Renderer *renderer = m_window->GetNativeRenderer();
-
-    if (m_viewport_target)
-    {
-        SDL_DestroyTexture(m_viewport_target);
-        m_viewport_target = nullptr;
-    }
-
     if (width <= 0 || height <= 0)
         return;
 
-    m_viewport_target = SDL_CreateTexture(
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+
+    // Create the replacement first: if the GPU refuses a new target (e.g. the
+    // window was just restored and resources are not ready yet), keep the old
+    // target instead of leaving the viewport black.
+    SDL_Texture *texture = SDL_CreateTexture(
         renderer,
         SDL_PIXELFORMAT_RGBA8888,
         SDL_TEXTUREACCESS_TARGET,
         width, height
     );
+    if (!texture)
+        return;
 
+    if (m_viewport_target)
+        SDL_DestroyTexture(m_viewport_target);
+
+    m_viewport_target = texture;
     m_viewport_target_w = width;
     m_viewport_target_h = height;
 
@@ -157,6 +174,151 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                       { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent });
 }
 
+// --- Cube mesh data (unit cube, corners at +-0.5 in local space) ---
+static const Vec3 CUBE_CORNERS[8] = {
+    { -0.5f, -0.5f, -0.5f },  // 0
+    {  0.5f, -0.5f, -0.5f },  // 1
+    {  0.5f,  0.5f, -0.5f },  // 2
+    { -0.5f,  0.5f, -0.5f },  // 3
+    { -0.5f, -0.5f,  0.5f },  // 4
+    {  0.5f, -0.5f,  0.5f },  // 5
+    {  0.5f,  0.5f,  0.5f },  // 6
+    { -0.5f,  0.5f,  0.5f },  // 7
+};
+
+// 12 edges of the cube; each pair indexes CUBE_CORNERS.
+static const int CUBE_EDGES[12][2] = {
+    { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 },  // back  face (z = -0.5)
+    { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 },  // front face (z = +0.5)
+    { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 },  // depth connectors
+};
+
+// 6 faces, 4 corners each, wound counter-clockwise when viewed from outside
+// so the cross product of the first three corners points outward.
+static const int CUBE_FACES[6][4] = {
+    { 4, 5, 6, 7 },  // front  (z = +0.5)
+    { 1, 0, 3, 2 },  // back   (z = -0.5)
+    { 2, 3, 7, 6 },  // top    (y = +0.5)
+    { 1, 5, 4, 0 },  // bottom (y = -0.5)
+    { 5, 1, 2, 6 },  // right  (x = +0.5)
+    { 0, 4, 7, 3 },  // left   (x = -0.5)
+};
+
+static inline Vec3 Mat4TransformPoint(const Mat4 &m, const Vec3 &p)
+{
+    float w;
+    return Mat4MulVec3(m, p, w);
+}
+
+static void RenderCubeWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
+                                float near_p, int w, int h, const Mat4 &world,
+                                const float color[3], bool brighten)
+{
+    float gain = brighten ? 1.35f : 1.0f;
+    Uint8 r = (Uint8)std::min(255.0f, color[0] * 255.0f * gain);
+    Uint8 g = (Uint8)std::min(255.0f, color[1] * 255.0f * gain);
+    Uint8 b = (Uint8)std::min(255.0f, color[2] * 255.0f * gain);
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+
+    for (int i = 0; i < 12; ++i)
+    {
+        Vec3 a = Mat4TransformPoint(world, CUBE_CORNERS[CUBE_EDGES[i][0]]);
+        Vec3 b2 = Mat4TransformPoint(world, CUBE_CORNERS[CUBE_EDGES[i][1]]);
+        DrawProjectedLine(renderer, view_proj, near_p, w, h, a, b2);
+    }
+}
+
+static void RenderCubeSolid(SDL_Renderer *renderer, const Mat4 &view_proj,
+                            float near_p, int w, int h, const Mat4 &world,
+                            const float color[3])
+{
+    int sx[8], sy[8];
+    float depth[8];
+    bool behind = false;
+
+    for (int i = 0; i < 8; ++i)
+    {
+        Vec3 corner = Mat4TransformPoint(world, CUBE_CORNERS[i]);
+        float w_out;
+        Vec3 clip = Mat4MulVec3(view_proj, corner, w_out);
+        depth[i] = w_out;
+        if (w_out < near_p)
+            behind = true;
+        sx[i] = (int)((clip.x / w_out + 1.0f) * 0.5f * w);
+        sy[i] = (int)((1.0f - clip.y / w_out) * 0.5f * h);
+    }
+
+    // A face straddling the near plane would project to garbage; the wireframe
+    // pass clips per-edge and carries the silhouette in that case.
+    if (behind)
+        return;
+
+    // Painter's algorithm: draw faces farthest first, so nearer faces overlap.
+    float face_depth[6];
+    for (int f = 0; f < 6; ++f)
+    {
+        const int *idx = CUBE_FACES[f];
+        face_depth[f] = (depth[idx[0]] + depth[idx[1]] + depth[idx[2]] + depth[idx[3]]) * 0.25f;
+    }
+    int order[6] = { 0, 1, 2, 3, 4, 5 };
+    for (int i = 1; i < 6; ++i)
+    {
+        int key = order[i];
+        int j = i - 1;
+        while (j >= 0 && face_depth[order[j]] < face_depth[key])
+        {
+            order[j + 1] = order[j];
+            --j;
+        }
+        order[j + 1] = key;
+    }
+
+    // Directional shading: brightness follows the face normal against a fixed
+    // light direction so the cube's planes read as distinct in 3D.
+    static const Vec3 LIGHT = { 0.45f, 0.78f, 0.44f };
+
+    Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
+    Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
+    Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
+
+    SDL_Vertex verts[36];
+    int v = 0;
+    for (int f = 0; f < 6; ++f)
+    {
+        const int *idx = CUBE_FACES[order[f]];
+        Vec3 a = Mat4TransformPoint(world, CUBE_CORNERS[idx[0]]);
+        Vec3 b = Mat4TransformPoint(world, CUBE_CORNERS[idx[1]]);
+        Vec3 c = Mat4TransformPoint(world, CUBE_CORNERS[idx[2]]);
+        Vec3 e1 = { b.x - a.x, b.y - a.y, b.z - a.z };
+        Vec3 e2 = { c.x - a.x, c.y - a.y, c.z - a.z };
+        Vec3 n = { e1.y * e2.z - e1.z * e2.y,
+                   e1.z * e2.x - e1.x * e2.z,
+                   e1.x * e2.y - e1.y * e2.x };
+        float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (len > 1e-6f)
+        {
+            n.x /= len;  n.y /= len;  n.z /= len;
+        }
+        float shade = 0.62f + 0.38f * std::max(0.0f, n.x * LIGHT.x + n.y * LIGHT.y + n.z * LIGHT.z);
+
+        SDL_Color col = {
+            (Uint8)(base_r * shade),
+            (Uint8)(base_g * shade),
+            (Uint8)(base_b * shade),
+            255
+        };
+        SDL_FPoint uv = { 0.0f, 0.0f };
+        verts[v++] = { { (float)sx[idx[0]], (float)sy[idx[0]] }, col, uv };
+        verts[v++] = { { (float)sx[idx[1]], (float)sy[idx[1]] }, col, uv };
+        verts[v++] = { { (float)sx[idx[2]], (float)sy[idx[2]] }, col, uv };
+        verts[v++] = { { (float)sx[idx[0]], (float)sy[idx[0]] }, col, uv };
+        verts[v++] = { { (float)sx[idx[2]], (float)sy[idx[2]] }, col, uv };
+        verts[v++] = { { (float)sx[idx[3]], (float)sy[idx[3]] }, col, uv };
+    }
+
+    SDL_RenderGeometry(renderer, nullptr, verts, 36, nullptr, 0);
+}
+
 void Application::RenderViewportTarget()
 {
     if (!m_viewport_target || !m_viewport)
@@ -164,7 +326,13 @@ void Application::RenderViewportTarget()
 
     SDL_Renderer *renderer = m_window->GetNativeRenderer();
 
-    SDL_SetRenderTarget(renderer, m_viewport_target);
+    // If the GPU can no longer bind this texture (lost after minimize/restore),
+    // flag it for recreation and skip the frame instead of rendering garbage.
+    if (SDL_SetRenderTarget(renderer, m_viewport_target) != 0)
+    {
+        m_recreate_viewport = true;
+        return;
+    }
 
     SDL_SetRenderDrawColor(renderer, 18, 18, 24, 255);
     SDL_RenderClear(renderer);
@@ -187,9 +355,10 @@ void Application::RenderViewportTarget()
 
         if (camera_entity)
         {
-            cam_pos.x = camera_entity->transform.position[0];
-            cam_pos.y = camera_entity->transform.position[1];
-            cam_pos.z = camera_entity->transform.position[2];
+            Mat4 cam_world = m_scene->ComputeWorldMatrix(*camera_entity);
+            cam_pos.x = cam_world.m[12];
+            cam_pos.y = cam_world.m[13];
+            cam_pos.z = cam_world.m[14];
             if (camera_entity->camera.fov > 1.0f)
                 fov = camera_entity->camera.fov;
             pitch = camera_entity->camera.pitch;
@@ -211,62 +380,35 @@ void Application::RenderViewportTarget()
         Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
         Mat4 view_proj = Mat4Mul(proj, view);
 
-        // Focal length in pixels: screen height / (2 * tan(fov/2)).
-        float focal = (float)h / (2.0f * std::tan(fov * 3.1415926535f / 360.0f));
-
         // Ground-plane grid first so entities draw on top of it.
         RenderGroundGrid(renderer, view_proj, near_p, w, h);
 
-        // --- Render each entity ---
-        for (auto &entity : m_scene->GetEntities())
+        // --- Render each entity as a 3D cube mesh ---
+        for (auto &entity_ptr : m_scene->GetEntities())
         {
+            Entity &entity = *entity_ptr;
             if (&entity == camera_entity)
                 continue;
 
-            float r = entity.material.color[0];
-            float g = entity.material.color[1];
-            float b = entity.material.color[2];
-
-            Uint8 ur = (Uint8)(r * 255.0f);
-            Uint8 ug = (Uint8)(g * 255.0f);
-            Uint8 ub = (Uint8)(b * 255.0f);
-
-            Vec3 world_pos = {
-                entity.transform.position[0],
-                entity.transform.position[1],
-                entity.transform.position[2]
-            };
-
-            float w_out;
-            Vec3 clip = Mat4MulVec3(view_proj, world_pos, w_out);
-
-            // For the perspective matrix, w_out == -z_view (positive depth in
-            // front of the camera). Cull anything behind or inside the near plane.
-            if (w_out < near_p)
-                continue;
-
-            float ndc_x = clip.x / w_out;
-            float ndc_y = clip.y / w_out;
-
-            int sx = (int)((ndc_x + 1.0f) * 0.5f * w);
-            int sy = (int)((1.0f - ndc_y) * 0.5f * h);
-
-            // Perspective foreshortening: apparent size shrinks with depth.
-            int sw = (int)(entity.transform.scale[0] * focal / w_out);
-            int sh = (int)(entity.transform.scale[1] * focal / w_out);
-            if (sw < 1) sw = 1;
-            if (sh < 1) sh = 1;
+            Mat4 world = m_scene->ComputeWorldMatrix(entity);
 
             if (entity.material.active)
-            {
-                SDL_SetRenderDrawColor(renderer, ur, ug, ub, 200);
-                SDL_Rect fill = { sx - sw / 2, sy - sh / 2, sw, sh };
-                SDL_RenderFillRect(renderer, &fill);
-            }
+                RenderCubeSolid(renderer, view_proj, near_p, w, h, world, entity.material.color);
 
-            SDL_SetRenderDrawColor(renderer, ur, ug, ub, 255);
-            SDL_Rect outline = { sx - sw / 2, sy - sh / 2, sw, sh };
-            SDL_RenderDrawRect(renderer, &outline);
+            RenderCubeWireframe(renderer, view_proj, near_p, w, h, world,
+                                entity.material.color, true);
+        }
+
+        // --- Selection outline: wireframe bounding box around the selection ---
+        if (m_selection && m_selection->entity_id >= 0)
+        {
+            Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
+            if (selected && selected != camera_entity)
+            {
+                static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
+                Mat4 world = m_scene->ComputeWorldMatrix(*selected);
+                RenderCubeWireframe(renderer, view_proj, near_p, w, h, world, OUTLINE, false);
+            }
         }
     }
 
@@ -279,12 +421,12 @@ Entity *Application::FindActiveCamera()
         return nullptr;
 
     for (auto &e : m_scene->GetEntities())
-        if (e.camera.primary)
-            return &e;
+        if (e->camera.primary)
+            return e.get();
 
     for (auto &e : m_scene->GetEntities())
-        if (e.camera.fov > 0.0f)
-            return &e;
+        if (e->camera.fov > 0.0f)
+            return e.get();
 
     return nullptr;
 }
@@ -398,10 +540,14 @@ bool Application::Init(int width, int height, const char *title)
     if (!m_window->GetNativeWindow() || !m_window->GetNativeRenderer())
         return false;
 
+    // Protect the editor layout: below this size the docked panels collapse
+    // and the viewport becomes unusable.
+    SDL_SetWindowMinimumSize(m_window->GetNativeWindow(), 1024, 768);
+
     ImGui::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
-    ConfigureImGuiStyle();
+    ConfigureImGuiStyle(1.0f);
     ImGui_ImplSDL2_InitForSDLRenderer(
         m_window->GetNativeWindow(),
         m_window->GetNativeRenderer()
@@ -416,7 +562,14 @@ bool Application::Init(int width, int height, const char *title)
     camera.transform.position[2] = 8.0f;
     camera.camera.pitch = -14.0f;
     m_scene->CreateEntity("Directional Light");
-    m_scene->CreateEntity("Cube Object");
+    Entity &cube = m_scene->CreateEntity("Cube Object");
+    // Parented child: its local position is relative to the parent's transform,
+    // demonstrating the WorldMatrix = ParentWorld * LocalMatrix pipeline.
+    Entity &cube_child = m_scene->CreateEntity("Cube Child", &cube);
+    cube_child.transform.position[0] = 1.5f;
+    cube_child.transform.scale[0] = 0.5f;
+    cube_child.transform.scale[1] = 0.5f;
+    cube_child.transform.scale[2] = 0.5f;
 
     m_viewport = new ViewportPanel();
 
@@ -483,11 +636,41 @@ void Application::Run()
                 m_running = false;
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
+            if (event.type == SDL_WINDOWEVENT)
+            {
+                // Any of these can invalidate the off-screen render target's
+                // GPU resources; force a fresh texture on the next frame.
+                if (event.window.event == SDL_WINDOWEVENT_RESTORED ||
+                    event.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+                    event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    m_recreate_viewport = true;
+            }
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // --- Main menu bar (global UI settings) ---
+        if (ImGui::BeginMainMenuBar())
+        {
+            if (ImGui::BeginMenu("View"))
+            {
+                ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
+                if (ImGui::Button("Reset##UiScale"))
+                    m_ui_scale = 1.0f;
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        // Apply a changed UI scale: rebuild style metrics and font scale.
+        if (m_ui_scale != m_applied_ui_scale)
+        {
+            ConfigureImGuiStyle(m_ui_scale);
+            ImGui::GetIO().FontGlobalScale = m_ui_scale;
+            m_applied_ui_scale = m_ui_scale;
+        }
 
         if (!m_layout_initialized)
         {
@@ -506,12 +689,26 @@ void Application::Run()
 
         int vp_w = m_viewport ? m_viewport->GetWidth() : 0;
         int vp_h = m_viewport ? m_viewport->GetHeight() : 0;
-        if (vp_w != m_viewport_target_w || vp_h != m_viewport_target_h)
+        Uint32 win_flags = SDL_GetWindowFlags(m_window->GetNativeWindow());
+        const bool minimized = (win_flags & SDL_WINDOW_MINIMIZED) != 0;
+
+        // Recreate the off-screen target when it is missing, its size is stale,
+        // or a window event invalidated its GPU resources. Never recreate while
+        // minimized: the GPU may refuse to build targets for a hidden window.
+        if (!minimized &&
+            (m_recreate_viewport || !m_viewport_target ||
+             vp_w != m_viewport_target_w || vp_h != m_viewport_target_h))
+        {
+            m_recreate_viewport = false;
             RecreateViewportTarget(vp_w, vp_h);
+        }
 
         UpdateCameraControls((float)dt);
 
-        RenderViewportTarget();
+        // Skip the 3D render pass while minimized; the restore event already
+        // queued a target recreation for the frame we come back.
+        if (!minimized)
+            RenderViewportTarget();
 
         SDL_Renderer *renderer = m_window->GetNativeRenderer();
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);

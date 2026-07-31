@@ -41,6 +41,7 @@ bin/
 .DS_Store
 Thumbs.db
 nul
+imgui.ini
 
 # VS Code workspace files (optional, but good for clean repos)
 .vscode/
