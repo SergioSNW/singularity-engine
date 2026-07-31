@@ -13,8 +13,28 @@ void ViewportPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
-    ImGui::Begin("Viewport", nullptr,
-        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
+
+    if (m_isolated)
+    {
+        // Detach from the dockspace and pin the window to the full area below
+        // the main menu bar, undecorated and immovable: a true game viewport.
+        const float menu_h = ImGui::GetFrameHeight();
+        ImGui::SetNextWindowPos(ImVec2(0.0f, menu_h));
+        ImGui::SetNextWindowSize(
+            ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - menu_h)
+        );
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        flags |= ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                 ImGuiWindowFlags_NoSavedSettings;
+    }
+
+    ImGui::Begin("Viewport", nullptr, flags);
+
+    if (m_isolated)
+        ImGui::PopStyleVar(2);
 
     m_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 

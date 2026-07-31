@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0-alpha] — 2026-08-01
+
+### Added
+
+- Play/Stop runtime state machine (`enum class EngineState { Editor, Play }`) driving a toolbar Play button and a red Stop button.
+- In-memory scene snapshot on Enter → Play (reuses the JSON serializer) and full scene graph restoration on Stop → Editor, discarding all runtime mutations (moves, spawns, deletes, reparenting).
+- Runtime viewport isolation: in play mode the dockspace and editor panels (Hierarchy, Inspector, Stats) are hidden and the viewport detaches to fill the whole window below the menu bar as a true game view.
+- Selection outlines and gizmos are suppressed while playing.
+- `Esc` exits play mode in-game (still quits the editor outside of play); Stop button force-releases fly-mode mouse capture.
+- `ViewportPanel::SetIsolated()` switches the panel between docked and fullscreen game-view rendering.
+
+### Changed
+
+- Version bump from 0.8.0-alpha to 0.9.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.8.0-alpha] — 2026-08-01
 
 ### Added

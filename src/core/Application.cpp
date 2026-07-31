@@ -74,6 +74,8 @@ Application::Application()
     , m_recreate_viewport(false)
     , m_scene_path("assets/scenes/default.json")
     , m_scene_status()
+    , m_state(EngineState::Editor)
+    , m_scene_snapshot()
 {
 }
 
@@ -404,7 +406,9 @@ void Application::RenderViewportTarget()
         }
 
         // --- Selection outline: wireframe bounding box around the selection ---
-        if (m_selection && m_selection->entity_id >= 0)
+        // Editor-only: in play mode the game view is clean, with no gizmos.
+        if (m_state == EngineState::Editor &&
+            m_selection && m_selection->entity_id >= 0)
         {
             Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
             if (selected && selected != camera_entity)
@@ -457,6 +461,62 @@ void Application::OpenScene()
     {
         m_scene_status = "Open failed: " + error;
     }
+}
+
+void Application::EnterPlayMode()
+{
+    if (m_state == EngineState::Play)
+        return;
+
+    // Snapshot the whole scene graph in-memory (reuses the JSON serializer).
+    // Any mutation made during play — flythrough camera moves, transform
+    // edits, scene changes — is thrown away on Stop.
+    m_scene_snapshot = SceneSerializer::SerializeScene(*m_scene);
+
+    // Leave flight mode first so the captured mouse / hidden cursor never leak
+    // into the play session (the Stop button needs a free cursor).
+    if (m_flying)
+    {
+        m_flying = false;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+    }
+
+    m_selection->entity_id = -1;
+    m_selection->entity_name.clear();
+    m_scene_status = "Play mode: scene snapshotted; Esc or Stop to exit";
+    m_state = EngineState::Play;
+}
+
+void Application::ExitPlayMode()
+{
+    if (m_state != EngineState::Play)
+        return;
+
+    if (m_flying)
+    {
+        m_flying = false;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+    }
+
+    if (m_scene_snapshot.IsObject())
+    {
+        std::string error;
+        if (SceneSerializer::DeserializeScene(*m_scene, m_scene_snapshot, &error))
+            m_scene_status = "Stopped: scene restored to pre-play snapshot";
+        else
+            m_scene_status = "Stop failed: " + error;
+    }
+    else
+    {
+        m_scene_status = "Stopped: no snapshot to restore";
+    }
+
+    m_scene_snapshot = json::Value();
+    m_selection->entity_id = -1;
+    m_selection->entity_name.clear();
+    m_state = EngineState::Editor;
 }
 
 void Application::UpdateCameraControls(float dt)
@@ -661,7 +721,13 @@ void Application::Run()
             if (event.type == SDL_QUIT)
                 m_running = false;
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)
-                m_running = false;
+            {
+                // In play mode Esc exits the game view; in the editor it quits.
+                if (m_state == EngineState::Play)
+                    ExitPlayMode();
+                else
+                    m_running = false;
+            }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
             if (event.type == SDL_WINDOWEVENT)
@@ -684,26 +750,49 @@ void Application::Run()
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // --- Main menu bar (file operations + global UI settings) ---
+        // --- Main menu bar (transport controls + editor chrome) ---
+        const bool playing = (m_state == EngineState::Play);
+
         if (ImGui::BeginMainMenuBar())
         {
-            if (ImGui::BeginMenu("File"))
+            if (playing)
             {
-                if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
-                    SaveScene();
-                if (ImGui::MenuItem("Open Scene", "Ctrl+O"))
-                    OpenScene();
-                ImGui::Separator();
-                if (ImGui::MenuItem("Exit"))
-                    m_running = false;
-                ImGui::EndMenu();
+                // Game view: only the Stop button and status remain visible.
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.18f, 0.18f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.25f, 0.25f, 1.00f));
+                if (ImGui::Button(" Stop "))
+                    ExitPlayMode();
+                ImGui::PopStyleColor(2);
+                ImGui::SameLine();
+                ImGui::TextDisabled("PLAYING");
             }
-            if (ImGui::BeginMenu("View"))
+            else
             {
-                ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
-                if (ImGui::Button("Reset##UiScale"))
-                    m_ui_scale = 1.0f;
-                ImGui::EndMenu();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.25f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.68f, 0.34f, 1.00f));
+                if (ImGui::Button(" Play "))
+                    EnterPlayMode();
+                ImGui::PopStyleColor(2);
+                ImGui::SameLine();
+
+                if (ImGui::BeginMenu("File"))
+                {
+                    if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
+                        SaveScene();
+                    if (ImGui::MenuItem("Open Scene", "Ctrl+O"))
+                        OpenScene();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Exit"))
+                        m_running = false;
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("View"))
+                {
+                    ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
+                    if (ImGui::Button("Reset##UiScale"))
+                        m_ui_scale = 1.0f;
+                    ImGui::EndMenu();
+                }
             }
 
             // Right-aligned save/open status message.
@@ -724,18 +813,30 @@ void Application::Run()
             m_applied_ui_scale = m_ui_scale;
         }
 
-        if (!m_layout_initialized)
+        if (!m_layout_initialized && !playing)
         {
             SetupDockingLayout();
             m_layout_initialized = true;
         }
 
-        ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-        ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
-        ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), dockspace_flags);
+        if (playing)
+        {
+            // Runtime viewport isolation: no dockspace, no editor panels, no
+            // selection outlines. The viewport fills the window as a game view.
+            m_viewport->SetIsolated(true);
+            m_viewport->OnImGuiRender((float)dt);
+        }
+        else
+        {
+            m_viewport->SetIsolated(false);
 
-        for (auto &panel : m_panels)
-            panel->OnImGuiRender((float)dt);
+            ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
+            ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
+            ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), dockspace_flags);
+
+            for (auto &panel : m_panels)
+                panel->OnImGuiRender((float)dt);
+        }
 
         ImGui::Render();
 

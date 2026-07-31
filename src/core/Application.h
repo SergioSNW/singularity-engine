@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "Json.h"
+
 struct SDL_Texture;
 class Window;
 class EditorPanel;
@@ -11,6 +13,14 @@ struct SelectionState;
 class ViewportPanel;
 class Scene;
 struct Entity;
+
+// Editor runtime state machine. Play mode isolates the viewport as a full-window
+// game view and snapshots the scene so Stop restores it exactly.
+enum class EngineState
+{
+    Editor,
+    Play,
+};
 
 class Application
 {
@@ -29,6 +39,8 @@ private:
     Entity *FindActiveCamera();
     void SaveScene();
     void OpenScene();
+    void EnterPlayMode();
+    void ExitPlayMode();
 
     Window *m_window;
     bool m_running;
@@ -46,5 +58,7 @@ private:
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;
+    EngineState m_state;
+    json::Value m_scene_snapshot;   // pre-play backup; restored on Stop
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };

@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.8.0-alpha — Scene serialization and persistence with a JSON scene graph format.
+> **Current version:** v0.9.0-alpha — Game mode / playtest toggle with scene snapshot restoration.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document
