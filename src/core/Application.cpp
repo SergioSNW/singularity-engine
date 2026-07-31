@@ -574,7 +574,7 @@ bool Application::Init(int width, int height, const char *title)
     m_viewport = new ViewportPanel();
 
     m_panels.push_back(
-        std::make_shared<StatsPanel>(m_window->GetWidth(), m_window->GetHeight())
+        std::make_shared<StatsPanel>(m_window)
     );
     m_panels.push_back(
         std::make_shared<SceneHierarchyPanel>(m_selection, m_scene)
@@ -638,6 +638,11 @@ void Application::Run()
                 m_camera_scroll += (float)event.wheel.preciseY;
             if (event.type == SDL_WINDOWEVENT)
             {
+                // Keep the cached window size in sync so GetWidth/GetHeight and
+                // the stats readout report the current dimensions.
+                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    m_window->OnResize(event.window.data1, event.window.data2);
+
                 // Any of these can invalidate the off-screen render target's
                 // GPU resources; force a fresh texture on the next frame.
                 if (event.window.event == SDL_WINDOWEVENT_RESTORED ||

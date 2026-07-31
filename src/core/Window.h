@@ -12,6 +12,9 @@ public:
     int GetWidth()  const;
     int GetHeight() const;
 
+    // Keep the cached client size in sync with the OS-reported window size.
+    void OnResize(int width, int height);
+
     SDL_Window*   GetNativeWindow()   const;
     SDL_Renderer* GetNativeRenderer() const;
 

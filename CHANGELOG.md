@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0-alpha] — 2026-08-01
+
+### Added
+
+- Resizable main window: `SDL_WINDOW_RESIZABLE` and `SDL_WINDOW_ALLOW_HIGHDPI` flags applied at `SDL_CreateWindow` time.
+- `Window::OnResize()` keeps the cached client size in sync with `SDL_WINDOWEVENT_SIZE_CHANGED`.
+- `StatsPanel` reads window dimensions live from the `Window` so the Resolution readout stays correct after resizing.
+
+### Changed
+
+- Version bump from 0.6.2-alpha to 0.7.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.1.0-alpha] — 2026-07-09
 
 ### Added

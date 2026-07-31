@@ -3,9 +3,10 @@
 #include <imgui.h>
 #include <cstdio>
 
-StatsPanel::StatsPanel(int window_width, int window_height)
-    : m_window_width(window_width)
-    , m_window_height(window_height)
+#include "Window.h"
+
+StatsPanel::StatsPanel(const Window *window)
+    : m_window(window)
 {
 }
 
@@ -20,7 +21,9 @@ void StatsPanel::OnImGuiRender(float dt)
     ImGui::Text("Delta Time: %.4f ms", dt * 1000.0f);
     ImGui::Text("FPS: %s", fps_buffer);
     ImGui::Separator();
-    ImGui::Text("Resolution: %dx%d", m_window_width, m_window_height);
+    ImGui::Text("Resolution: %dx%d",
+        m_window ? m_window->GetWidth() : 0,
+        m_window ? m_window->GetHeight() : 0);
     ImGui::Text("V-Sync: ON");
     ImGui::End();
 

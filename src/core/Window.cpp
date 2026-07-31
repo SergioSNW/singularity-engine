@@ -13,7 +13,7 @@ Window::Window(int width, int height, const char *title)
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         width, height,
-        SDL_WINDOW_SHOWN
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
     );
 
     if (m_window)
@@ -36,6 +36,12 @@ Window::~Window()
 
 int Window::GetWidth()  const { return m_width; }
 int Window::GetHeight() const { return m_height; }
+
+void Window::OnResize(int width, int height)
+{
+    m_width = width;
+    m_height = height;
+}
 
 SDL_Window*   Window::GetNativeWindow()   const { return m_window; }
 SDL_Renderer* Window::GetNativeRenderer() const { return m_renderer; }

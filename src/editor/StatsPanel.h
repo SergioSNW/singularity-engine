@@ -2,13 +2,14 @@
 
 #include "EditorPanel.h"
 
+class Window;
+
 class StatsPanel : public EditorPanel
 {
 public:
-    StatsPanel(int window_width, int window_height);
+    StatsPanel(const Window *window);
     void OnImGuiRender(float dt) override;
 
 private:
-    int m_window_width;
-    int m_window_height;
+    const Window *m_window;
 };

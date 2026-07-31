@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.5.1-alpha — Locked Layout, Viewport Upgrade
+v0.7.0-alpha — Resizable Window, High-DPI Support
 
 ## Dependencies
 

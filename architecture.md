@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.2.0-alpha — Modular architecture with Window and Application classes.
+> **Current version:** v0.7.0-alpha — Resizable window with high-DPI support, scene graph rendering, and editor hardening.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document
