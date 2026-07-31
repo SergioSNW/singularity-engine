@@ -3,9 +3,17 @@ project(singularity-engine VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 include(FetchContent)
+
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_TEST OFF CACHE BOOL "" FORCE)
+set(SDL_VULKAN OFF)
+set(SDL_METAL OFF)
+set(SDL_X11 OFF)
+set(SDL_WAYLAND OFF)
 
 FetchContent_Declare(
   SDL2
@@ -14,14 +22,6 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
   OVERRIDE_FIND_PACKAGE
 )
-
-set(SDL_STATIC ON)
-set(SDL_SHARED OFF)
-set(SDL_TEST OFF)
-set(SDL_VULKAN OFF)
-set(SDL_METAL OFF)
-set(SDL_X11 OFF)
-set(SDL_WAYLAND OFF)
 
 FetchContent_Declare(
   imgui
@@ -75,4 +75,8 @@ set_target_properties(singularity-engine PROPERTIES
   CXX_STANDARD 20
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF
+  ENABLE_EXPORTS OFF
 )
+
+target_compile_definitions(singularity-engine PRIVATE _USE_MATH_DEFINES _CRT_DECLARE_NONSTDC_NAMES=1)
+target_link_options(singularity-engine PRIVATE -static)

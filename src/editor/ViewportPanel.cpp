@@ -4,6 +4,7 @@
 ViewportPanel::ViewportPanel()
     : m_viewport_width(0)
     , m_viewport_height(0)
+    , m_hovered(false)
     , m_texture(nullptr)
 {
 }
@@ -14,6 +15,8 @@ void ViewportPanel::OnImGuiRender(float dt)
 
     ImGui::Begin("Viewport", nullptr,
         ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+
+    m_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
     ImVec2 size = ImGui::GetContentRegionAvail();
     m_viewport_width  = (int)size.x;

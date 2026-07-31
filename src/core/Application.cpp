@@ -8,6 +8,7 @@
 #include "editor/ViewportPanel.h"
 
 #include "Scene.h"
+#include "EngineMath.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -46,6 +47,7 @@ void ConfigureImGuiStyle()
 Application::Application()
     : m_window(nullptr)
     , m_running(false)
+    , m_flying(false)
     , m_layout_initialized(false)
     , m_selection(nullptr)
     , m_viewport(nullptr)
@@ -53,6 +55,7 @@ Application::Application()
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
+    , m_camera_scroll(0.0f)
 {
 }
 
@@ -88,6 +91,72 @@ void Application::RecreateViewportTarget(int width, int height)
         m_viewport->SetTexture(m_viewport_target);
 }
 
+static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
+                              float near_p, int w, int h, Vec3 a, Vec3 b)
+{
+    // For the perspective matrix, w_out == -z_view (depth in front of camera).
+    float wa, wb;
+    Mat4MulVec3(view_proj, a, wa);
+    Mat4MulVec3(view_proj, b, wb);
+
+    if (wa < near_p && wb < near_p)
+        return; // segment entirely behind / inside the near plane
+
+    // Clip the segment against the near plane. The clip parameter t is the
+    // same in view and world space (affine transform), so interpolate the
+    // world endpoints directly.
+    if (wa < near_p)
+    {
+        float t = (near_p - wa) / (wb - wa);
+        a.x += (b.x - a.x) * t;
+        a.y += (b.y - a.y) * t;
+        a.z += (b.z - a.z) * t;
+    }
+    else if (wb < near_p)
+    {
+        float t = (near_p - wb) / (wa - wb);
+        b.x += (a.x - b.x) * t;
+        b.y += (a.y - b.y) * t;
+        b.z += (a.z - b.z) * t;
+    }
+
+    Vec3 ca = Mat4MulVec3(view_proj, a, wa);
+    Vec3 cb = Mat4MulVec3(view_proj, b, wb);
+
+    int ax = (int)((ca.x / wa + 1.0f) * 0.5f * w);
+    int ay = (int)((1.0f - ca.y / wa) * 0.5f * h);
+    int bx = (int)((cb.x / wb + 1.0f) * 0.5f * w);
+    int by = (int)((1.0f - cb.y / wb) * 0.5f * h);
+
+    SDL_RenderDrawLine(renderer, ax, ay, bx, by);
+}
+
+static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
+                             float near_p, int w, int h)
+{
+    const float extent = 20.0f;
+
+    // Minor grid lines on the y=0 (XZ) plane; the axis lines are drawn below.
+    SDL_SetRenderDrawColor(renderer, 45, 45, 55, 255);
+    for (int k = -(int)extent; k <= (int)extent; ++k)
+    {
+        if (k == 0)
+            continue;
+        DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                          { (float)k, 0.0f, -extent }, { (float)k, 0.0f, extent });
+        DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                          { -extent, 0.0f, (float)k }, { extent, 0.0f, (float)k });
+    }
+
+    // Highlighted world axes: X = red, Z = blue.
+    SDL_SetRenderDrawColor(renderer, 220, 70, 70, 255);
+    DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                      { -extent, 0.0f, 0.0f }, { extent, 0.0f, 0.0f });
+    SDL_SetRenderDrawColor(renderer, 70, 110, 230, 255);
+    DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                      { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent });
+}
+
 void Application::RenderViewportTarget()
 {
     if (!m_viewport_target || !m_viewport)
@@ -103,23 +172,57 @@ void Application::RenderViewportTarget()
     int w = m_viewport_target_w;
     int h = m_viewport_target_h;
 
-    SDL_SetRenderDrawColor(renderer, 40, 40, 50, 255);
-    int grid_step = 40;
-    for (int x = 0; x <= w; x += grid_step)
-        SDL_RenderDrawLine(renderer, x, 0, x, h);
-    for (int y = 0; y <= h; y += grid_step)
-        SDL_RenderDrawLine(renderer, 0, y, w, y);
-
-    int cx = w / 2;
-    int cy = h / 2;
-    SDL_SetRenderDrawColor(renderer, 80, 80, 100, 255);
-    SDL_RenderDrawLine(renderer, cx, 0, cx, h);
-    SDL_RenderDrawLine(renderer, 0, cy, w, cy);
-
     if (m_scene)
     {
+        // --- Locate active camera ---
+        Entity *camera_entity = FindActiveCamera();
+
+        // --- Build perspective view-projection from active camera ---
+        Vec3 cam_pos = { 0.0f, 0.0f, 0.0f };
+        float fov    = 60.0f;
+        float pitch  = 0.0f;
+        float yaw    = 0.0f;
+        float near_p = 0.1f;
+        float far_p  = 100.0f;
+
+        if (camera_entity)
+        {
+            cam_pos.x = camera_entity->transform.position[0];
+            cam_pos.y = camera_entity->transform.position[1];
+            cam_pos.z = camera_entity->transform.position[2];
+            if (camera_entity->camera.fov > 1.0f)
+                fov = camera_entity->camera.fov;
+            pitch = camera_entity->camera.pitch;
+            yaw   = camera_entity->camera.yaw;
+            near_p = camera_entity->camera.near_plane;
+            far_p  = camera_entity->camera.far_plane;
+        }
+
+        // View = RotX(-pitch) * RotY(-yaw) * Translate(-cam_pos): the inverse
+        // of the camera's world orientation. Yaw first about world up, then
+        // pitch about the camera's local right axis, so roll stays locked to
+        // zero for any yaw/pitch combination.
+        Mat4 view = Mat4Mul(
+            Mat4RotateX(-pitch),
+            Mat4Mul(Mat4RotateY(-yaw), Mat4Translate(-cam_pos.x, -cam_pos.y, -cam_pos.z))
+        );
+
+        float aspect = (float)w / (float)h;
+        Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
+        Mat4 view_proj = Mat4Mul(proj, view);
+
+        // Focal length in pixels: screen height / (2 * tan(fov/2)).
+        float focal = (float)h / (2.0f * std::tan(fov * 3.1415926535f / 360.0f));
+
+        // Ground-plane grid first so entities draw on top of it.
+        RenderGroundGrid(renderer, view_proj, near_p, w, h);
+
+        // --- Render each entity ---
         for (auto &entity : m_scene->GetEntities())
         {
+            if (&entity == camera_entity)
+                continue;
+
             float r = entity.material.color[0];
             float g = entity.material.color[1];
             float b = entity.material.color[2];
@@ -128,30 +231,161 @@ void Application::RenderViewportTarget()
             Uint8 ug = (Uint8)(g * 255.0f);
             Uint8 ub = (Uint8)(b * 255.0f);
 
+            Vec3 world_pos = {
+                entity.transform.position[0],
+                entity.transform.position[1],
+                entity.transform.position[2]
+            };
+
+            float w_out;
+            Vec3 clip = Mat4MulVec3(view_proj, world_pos, w_out);
+
+            // For the perspective matrix, w_out == -z_view (positive depth in
+            // front of the camera). Cull anything behind or inside the near plane.
+            if (w_out < near_p)
+                continue;
+
+            float ndc_x = clip.x / w_out;
+            float ndc_y = clip.y / w_out;
+
+            int sx = (int)((ndc_x + 1.0f) * 0.5f * w);
+            int sy = (int)((1.0f - ndc_y) * 0.5f * h);
+
+            // Perspective foreshortening: apparent size shrinks with depth.
+            int sw = (int)(entity.transform.scale[0] * focal / w_out);
+            int sh = (int)(entity.transform.scale[1] * focal / w_out);
+            if (sw < 1) sw = 1;
+            if (sh < 1) sh = 1;
+
             if (entity.material.active)
             {
                 SDL_SetRenderDrawColor(renderer, ur, ug, ub, 200);
-                SDL_Rect fill = {
-                    cx + (int)entity.transform.position[0] - (int)entity.transform.scale[0] / 2,
-                    cy + (int)entity.transform.position[1] - (int)entity.transform.scale[1] / 2,
-                    (int)entity.transform.scale[0],
-                    (int)entity.transform.scale[1]
-                };
+                SDL_Rect fill = { sx - sw / 2, sy - sh / 2, sw, sh };
                 SDL_RenderFillRect(renderer, &fill);
             }
 
             SDL_SetRenderDrawColor(renderer, ur, ug, ub, 255);
-            SDL_Rect outline = {
-                cx + (int)entity.transform.position[0] - (int)entity.transform.scale[0] / 2,
-                cy + (int)entity.transform.position[1] - (int)entity.transform.scale[1] / 2,
-                (int)entity.transform.scale[0],
-                (int)entity.transform.scale[1]
-            };
+            SDL_Rect outline = { sx - sw / 2, sy - sh / 2, sw, sh };
             SDL_RenderDrawRect(renderer, &outline);
         }
     }
 
     SDL_SetRenderTarget(renderer, nullptr);
+}
+
+Entity *Application::FindActiveCamera()
+{
+    if (!m_scene)
+        return nullptr;
+
+    for (auto &e : m_scene->GetEntities())
+        if (e.camera.primary)
+            return &e;
+
+    for (auto &e : m_scene->GetEntities())
+        if (e.camera.fov > 0.0f)
+            return &e;
+
+    return nullptr;
+}
+
+void Application::UpdateCameraControls(float dt)
+{
+    if (!m_scene || !m_viewport)
+        return;
+
+    Entity *cam = FindActiveCamera();
+    if (!cam)
+        return;
+
+    // Consume the accumulators every frame so no stale motion leaks into a
+    // later navigation session (drag deltas, scroll deltas).
+    int rel_x = 0, rel_y = 0;
+    SDL_GetRelativeMouseState(&rel_x, &rel_y);
+    const float scroll = m_camera_scroll;
+    m_camera_scroll = 0.0f;
+
+    const bool over_viewport = m_viewport->IsHovered();
+    const bool rmb_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+
+    // Enter fly mode: RMB pressed while hovering the viewport. The OS cursor
+    // is captured (relative mode) for unlimited rotation and ImGui is told to
+    // ignore the mouse so the hidden cursor never triggers a panel.
+    if (!m_flying && over_viewport && rmb_down)
+    {
+        m_flying = true;
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        SDL_GetRelativeMouseState(nullptr, nullptr); // drain pre-capture motion
+    }
+
+    // Exit fly mode as soon as RMB is released; the normal cursor returns.
+    if (m_flying && !rmb_down)
+    {
+        m_flying = false;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+    }
+
+    if (!m_flying)
+    {
+        // Hover-only action: scroll wheel zoom.
+        if (over_viewport && scroll != 0.0f)
+        {
+            cam->camera.fov *= std::pow(0.9f, scroll);
+            if (cam->camera.fov < 10.0f)  cam->camera.fov = 10.0f;
+            if (cam->camera.fov > 120.0f) cam->camera.fov = 120.0f;
+        }
+        return;
+    }
+
+    const float pitch = cam->camera.pitch;
+    const float yaw   = cam->camera.yaw;
+    const float fov   = (cam->camera.fov > 1.0f) ? cam->camera.fov : 60.0f;
+
+    // --- Keyboard movement (WASD / arrows) ---
+    // Horizontal forward/right from yaw only; pitch only tilts the view.
+    float fx = -std::sin(yaw * 3.1415926535f / 180.0f);
+    float fz = -std::cos(yaw * 3.1415926535f / 180.0f);
+    float fwd_len = std::sqrt(fx * fx + fz * fz);
+    if (fwd_len > 1e-6f)
+    {
+        fx /= fwd_len;
+        fz /= fwd_len;
+    }
+    const float rx = -fz;  // right = cross(forward, world_up)
+    const float rz =  fx;
+
+    const Uint8 *keys = SDL_GetKeyboardState(nullptr);
+    const float move_speed = fov * 0.1f; // world-units per second
+    float mv_f = 0.0f, mv_r = 0.0f, mv_u = 0.0f;
+    if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP])    mv_f += 1.0f;
+    if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])  mv_f -= 1.0f;
+    if (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT])  mv_r -= 1.0f;
+    if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) mv_r += 1.0f;
+    if (keys[SDL_SCANCODE_E]) mv_u += 1.0f;
+    if (keys[SDL_SCANCODE_Q]) mv_u -= 1.0f;
+
+    if (mv_f != 0.0f || mv_r != 0.0f || mv_u != 0.0f)
+    {
+        cam->transform.position[0] += (fx * mv_f + rx * mv_r) * move_speed * dt;
+        cam->transform.position[1] += mv_u * move_speed * dt;
+        cam->transform.position[2] += (fz * mv_f + rz * mv_r) * move_speed * dt;
+    }
+
+    // --- Mouse look (pitch/yaw), FPS-style ---
+    cam->camera.yaw   -= rel_x * 0.2f;
+    cam->camera.pitch -= rel_y * 0.2f;
+    if (cam->camera.pitch >  89.0f) cam->camera.pitch =  89.0f;
+    if (cam->camera.pitch < -89.0f) cam->camera.pitch = -89.0f;
+
+    // --- Scroll wheel zoom (fov = vertical field of view in degrees) ---
+    if (scroll != 0.0f)
+    {
+        cam->camera.fov *= std::pow(0.9f, scroll);
+        if (cam->camera.fov < 10.0f)  cam->camera.fov = 10.0f;
+        if (cam->camera.fov > 120.0f) cam->camera.fov = 120.0f;
+    }
 }
 
 bool Application::Init(int width, int height, const char *title)
@@ -177,7 +411,10 @@ bool Application::Init(int width, int height, const char *title)
     m_selection = new SelectionState();
 
     m_scene = new Scene();
-    m_scene->CreateEntity("Camera");
+    Entity &camera = m_scene->CreateEntity("Camera");
+    camera.transform.position[1] = 2.0f;
+    camera.transform.position[2] = 8.0f;
+    camera.camera.pitch = -14.0f;
     m_scene->CreateEntity("Directional Light");
     m_scene->CreateEntity("Cube Object");
 
@@ -244,6 +481,8 @@ void Application::Run()
                 m_running = false;
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)
                 m_running = false;
+            if (event.type == SDL_MOUSEWHEEL)
+                m_camera_scroll += (float)event.wheel.preciseY;
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -269,6 +508,8 @@ void Application::Run()
         int vp_h = m_viewport ? m_viewport->GetHeight() : 0;
         if (vp_w != m_viewport_target_w || vp_h != m_viewport_target_h)
             RecreateViewportTarget(vp_w, vp_h);
+
+        UpdateCameraControls((float)dt);
 
         RenderViewportTarget();
 

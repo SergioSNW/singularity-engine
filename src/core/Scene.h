@@ -12,6 +12,7 @@ public:
     ~Scene();
 
     Entity& CreateEntity(const std::string &name);
+    void DestroyEntity(int entity_id);
     std::vector<Entity>& GetEntities();
     Entity* GetEntityById(int id);
 

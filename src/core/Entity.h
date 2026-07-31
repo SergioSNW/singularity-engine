@@ -8,4 +8,5 @@ struct Entity
     TagComponent tag;
     TransformComponent transform;
     MaterialComponent material;
+    CameraComponent camera;
 };

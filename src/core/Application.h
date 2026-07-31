@@ -9,6 +9,7 @@ class EditorPanel;
 struct SelectionState;
 class ViewportPanel;
 class Scene;
+struct Entity;
 
 class Application
 {
@@ -23,9 +24,12 @@ public:
 private:
     void RecreateViewportTarget(int width, int height);
     void RenderViewportTarget();
+    void UpdateCameraControls(float dt);
+    Entity *FindActiveCamera();
 
     Window *m_window;
     bool m_running;
+    bool m_flying;
     bool m_layout_initialized;
     SelectionState *m_selection;
     ViewportPanel *m_viewport;
@@ -33,5 +37,6 @@ private:
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
+    float m_camera_scroll;
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };

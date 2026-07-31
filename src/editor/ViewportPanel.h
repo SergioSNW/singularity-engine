@@ -13,6 +13,7 @@ public:
 
     int GetWidth()  const { return m_viewport_width; }
     int GetHeight() const { return m_viewport_height; }
+    bool IsHovered() const { return m_hovered; }
 
     void       SetTexture(SDL_Texture *texture) { m_texture = texture; }
     SDL_Texture* GetTexture() const             { return m_texture; }
@@ -20,5 +21,6 @@ public:
 private:
     int m_viewport_width;
     int m_viewport_height;
+    bool m_hovered;
     SDL_Texture *m_texture;
 };
