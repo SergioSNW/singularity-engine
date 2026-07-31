@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0-alpha] — 2026-08-01
+
+### Added
+
+- `src/core/Json.h` / `Json.cpp` — minimal self-contained JSON value type, recursive-descent parser, and compact/pretty writer (no third-party dependency, no exceptions).
+- `src/core/SceneSerializer.h` / `.cpp` — serializes the full scene graph (name, UUID, parent links, local transform, material, camera) to and from a JSON scene file.
+- Persistent entity identity: each `Entity` now carries a version-4 UUID generated at creation; scene files link parents by UUID, so hierarchy survives any array reordering on load.
+- `Scene::Clear()` and a const `GetEntities()` accessor to support reloading.
+- **File → Save Scene** / **File → Open Scene** menu items (default path `assets/scenes/default.json`, directory auto-created), plus **File → Exit**.
+- Right-aligned status message in the menu bar reporting save/open results and errors.
+
+### Changed
+
+- Version bump from 0.7.0-alpha to 0.8.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.7.0-alpha] — 2026-08-01
 
 ### Added

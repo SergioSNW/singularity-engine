@@ -17,7 +17,9 @@ public:
     Entity& CreateEntity(const std::string &name, Entity *parent = nullptr);
     void DestroyEntity(int entity_id);
     void SetParent(int entity_id, int parent_id);
+    void Clear();
     std::vector<std::unique_ptr<Entity>>& GetEntities();
+    const std::vector<std::unique_ptr<Entity>>& GetEntities() const;
     Entity* GetEntityById(int id);
     bool IsDescendantOf(int entity_id, int ancestor_id) const;
 

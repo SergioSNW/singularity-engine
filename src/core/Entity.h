@@ -2,11 +2,13 @@
 
 #include "Components.h"
 
+#include <string>
 #include <vector>
 
 struct Entity
 {
     int id;
+    std::string uuid;   // stable persistent identity (scene serialization)
     TagComponent tag;
     TransformComponent transform;
     MaterialComponent material;

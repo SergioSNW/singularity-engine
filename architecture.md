@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.7.0-alpha — Resizable window with high-DPI support, scene graph rendering, and editor hardening.
+> **Current version:** v0.8.0-alpha — Scene serialization and persistence with a JSON scene graph format.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

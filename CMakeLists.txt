@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.7.0 LANGUAGES CXX)
+project(singularity-engine VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +49,8 @@ target_sources(singularity-engine PRIVATE
   src/core/Window.cpp
   src/core/Application.cpp
   src/core/Scene.cpp
+  src/core/Json.cpp
+  src/core/SceneSerializer.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
   src/editor/InspectorPanel.cpp

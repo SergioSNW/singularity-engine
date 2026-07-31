@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 struct SDL_Texture;
@@ -26,6 +27,8 @@ private:
     void RenderViewportTarget();
     void UpdateCameraControls(float dt);
     Entity *FindActiveCamera();
+    void SaveScene();
+    void OpenScene();
 
     Window *m_window;
     bool m_running;
@@ -41,5 +44,7 @@ private:
     float m_ui_scale;
     float m_applied_ui_scale;
     bool m_recreate_viewport;
+    std::string m_scene_path;
+    std::string m_scene_status;
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
 };

@@ -2,6 +2,43 @@
 
 #include "EngineMath.h"
 
+#include <chrono>
+#include <cstdio>
+#include <random>
+
+namespace {
+
+// Version-4 style UUID: 16 random bytes with the version/variant bits set,
+// rendered as 8-4-4-4-12 lowercase hex. Persistent entity identity across
+// save/load cycles; runtime int ids are internal and get reassigned on load.
+std::string GenerateUUID()
+{
+    static std::mt19937_64 rng(
+        std::random_device{}() ^
+        (uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count()
+    );
+
+    uint64_t a = rng();
+    uint64_t b = rng();
+    unsigned char bytes[16];
+    for (int i = 0; i < 8; ++i) bytes[i]     = (unsigned char)(a >> (i * 8));
+    for (int i = 0; i < 8; ++i) bytes[i + 8] = (unsigned char)(b >> (i * 8));
+
+    bytes[6] = (unsigned char)((bytes[6] & 0x0F) | 0x40); // version 4
+    bytes[8] = (unsigned char)((bytes[8] & 0x3F) | 0x80); // RFC 4122 variant
+
+    char buf[37];
+    snprintf(buf, sizeof(buf),
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15]);
+    return std::string(buf);
+}
+
+} // namespace
+
 Scene::Scene()
     : m_next_id(0)
 {
@@ -13,6 +50,7 @@ Entity& Scene::CreateEntity(const std::string &name, Entity *parent)
 {
     auto entity = std::make_unique<Entity>();
     entity->id = m_next_id++;
+    entity->uuid = GenerateUUID();
     entity->tag.tag = name;
     entity->parent = parent;
     if (name == "Camera")
@@ -101,7 +139,18 @@ void Scene::SetParent(int entity_id, int parent_id)
     new_parent->children.push_back(child);
 }
 
+void Scene::Clear()
+{
+    m_entities.clear();
+    m_next_id = 0;
+}
+
 std::vector<std::unique_ptr<Entity>>& Scene::GetEntities()
+{
+    return m_entities;
+}
+
+const std::vector<std::unique_ptr<Entity>>& Scene::GetEntities() const
 {
     return m_entities;
 }

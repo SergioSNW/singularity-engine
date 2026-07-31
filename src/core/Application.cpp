@@ -8,6 +8,7 @@
 #include "editor/ViewportPanel.h"
 
 #include "Scene.h"
+#include "SceneSerializer.h"
 #include "EngineMath.h"
 
 #include <SDL.h>
@@ -17,6 +18,7 @@
 #include <backends/imgui_impl_sdlrenderer2.h>
 
 #include <algorithm>
+#include <filesystem>
 
 static const double TARGET_FRAME_TIME = 1.0 / 60.0;
 
@@ -70,6 +72,8 @@ Application::Application()
     , m_ui_scale(1.0f)
     , m_applied_ui_scale(1.0f)
     , m_recreate_viewport(false)
+    , m_scene_path("assets/scenes/default.json")
+    , m_scene_status()
 {
 }
 
@@ -431,6 +435,30 @@ Entity *Application::FindActiveCamera()
     return nullptr;
 }
 
+void Application::SaveScene()
+{
+    std::string error;
+    if (SceneSerializer::SaveToFile(*m_scene, m_scene_path, &error))
+        m_scene_status = "Scene saved to " + std::filesystem::absolute(m_scene_path).string();
+    else
+        m_scene_status = "Save failed: " + error;
+}
+
+void Application::OpenScene()
+{
+    std::string error;
+    if (SceneSerializer::LoadFromFile(*m_scene, m_scene_path, &error))
+    {
+        m_selection->entity_id = -1;
+        m_selection->entity_name.clear();
+        m_scene_status = "Scene loaded from " + std::filesystem::absolute(m_scene_path).string();
+    }
+    else
+    {
+        m_scene_status = "Open failed: " + error;
+    }
+}
+
 void Application::UpdateCameraControls(float dt)
 {
     if (!m_scene || !m_viewport)
@@ -656,15 +684,34 @@ void Application::Run()
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // --- Main menu bar (global UI settings) ---
+        // --- Main menu bar (file operations + global UI settings) ---
         if (ImGui::BeginMainMenuBar())
         {
+            if (ImGui::BeginMenu("File"))
+            {
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
+                    SaveScene();
+                if (ImGui::MenuItem("Open Scene", "Ctrl+O"))
+                    OpenScene();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Exit"))
+                    m_running = false;
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("View"))
             {
                 ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
                 if (ImGui::Button("Reset##UiScale"))
                     m_ui_scale = 1.0f;
                 ImGui::EndMenu();
+            }
+
+            // Right-aligned save/open status message.
+            if (!m_scene_status.empty())
+            {
+                float status_w = ImGui::CalcTextSize(m_scene_status.c_str()).x + 20.0f;
+                ImGui::SameLine(ImGui::GetWindowWidth() - status_w);
+                ImGui::TextUnformatted(m_scene_status.c_str());
             }
             ImGui::EndMainMenuBar();
         }
