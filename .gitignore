@@ -33,12 +33,14 @@
 
 # CMake build directories
 build/
+build_new/
 out/
 bin/
 
 # OS generated files
 .DS_Store
 Thumbs.db
+nul
 
 # VS Code workspace files (optional, but good for clean repos)
 .vscode/
@@ -46,3 +48,4 @@ Thumbs.db
 # Other files and directories to ignore
 first-steps.md
 ENGINE_TEXTBOOK.md
+test_math.cpp
