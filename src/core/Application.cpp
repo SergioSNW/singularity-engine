@@ -517,6 +517,15 @@ void Application::ExitPlayMode()
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
     m_state = EngineState::Editor;
+
+    // Editor panel restoration. During play the viewport was force-undocked
+    // (isolated fullscreen) and the dockspace + Hierarchy/Inspector/Stats were
+    // never submitted, leaving their ImGui docking associations stale. Force
+    // the dock layout to rebuild next frame: DockBuilder removes and re-creates
+    // the node tree and explicitly re-docks every editor panel, so the full
+    // editor UI deterministically comes back into view.
+    m_viewport->SetIsolated(false);
+    m_layout_initialized = false;
 }
 
 void Application::UpdateCameraControls(float dt)

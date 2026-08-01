@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.9.0-alpha — Game mode / playtest toggle with scene snapshot restoration.
+> **Current version:** v0.9.1-alpha — Game mode / playtest toggle with scene snapshot restoration and editor panel restoration on exit.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

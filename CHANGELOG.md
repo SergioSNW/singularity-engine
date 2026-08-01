@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.1-alpha] — 2026-08-01
+
+### Fixed
+
+- Editor panels (Hierarchy, Inspector, Stats) now return after exiting Play mode. Play mode force-undocks the viewport and stops submitting the dockspace, which left the editor panels' docking associations stale. `ExitPlayMode()` now explicitly un-isolates the viewport and forces the dock layout to rebuild on the next editor frame, re-docking every editor panel deterministically.
+
+### Changed
+
+- Version bump from 0.9.0-alpha to 0.9.1-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.9.0-alpha] — 2026-08-01
 
 ### Added
