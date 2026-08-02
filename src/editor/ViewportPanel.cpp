@@ -42,6 +42,11 @@ void ViewportPanel::OnImGuiRender(float dt)
     m_viewport_width  = (int)size.x;
     m_viewport_height = (int)size.y;
 
+    // Record the on-screen rect the 3D image occupies so the gizmo controller
+    // can map the mouse cursor into viewport-pixel space for picking/dragging.
+    m_image_min  = ImGui::GetCursorScreenPos();
+    m_image_size = size;
+
     if (m_texture)
     {
         ImGui::Image((ImTextureID)m_texture, size);

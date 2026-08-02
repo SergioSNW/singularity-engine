@@ -136,6 +136,106 @@ static inline Mat4 Mat4Perspective(float fov_deg, float aspect, float near_, flo
     return r;
 }
 
+// --- Vector helpers (used by gizmo math and mesh pipeline) ---
+
+static inline Vec3 Vec3Add(const Vec3 &a, const Vec3 &b)
+{
+    return { a.x + b.x, a.y + b.y, a.z + b.z };
+}
+
+static inline Vec3 Vec3Sub(const Vec3 &a, const Vec3 &b)
+{
+    return { a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+static inline Vec3 Vec3Scale(const Vec3 &v, float s)
+{
+    return { v.x * s, v.y * s, v.z * s };
+}
+
+static inline float Vec3Dot(const Vec3 &a, const Vec3 &b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static inline Vec3 Vec3Cross(const Vec3 &a, const Vec3 &b)
+{
+    return { a.y * b.z - a.z * b.y,
+             a.z * b.x - a.x * b.z,
+             a.x * b.y - a.y * b.x };
+}
+
+static inline float Vec3Length(const Vec3 &v)
+{
+    return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+static inline Vec3 Vec3Normalize(const Vec3 &v)
+{
+    float len = Vec3Length(v);
+    if (len < 1e-8f)
+        return { 0.0f, 0.0f, 0.0f };
+    float inv = 1.0f / len;
+    return { v.x * inv, v.y * inv, v.z * inv };
+}
+
+// Right-handed axis-angle rotation matrix (matches the convention of the
+// Mat4RotateX/Y/Z helpers: positive angles rotate X -> Y -> Z). `axis` is
+// normalized internally, so it may be passed un-normalized.
+static inline Mat4 Mat4RotateAxis(Vec3 axis, float deg)
+{
+    axis = Vec3Normalize(axis);
+    float rad = deg * 3.1415926535f / 180.0f;
+    float c = std::cos(rad), s = std::sin(rad);
+    float ux = axis.x, uy = axis.y, uz = axis.z;
+    float k = 1.0f - c;
+
+    Mat4 r = Mat4Identity();
+    r.m[0]  = c + ux * ux * k;
+    r.m[1]  = ux * uy * k + s * uz;
+    r.m[2]  = ux * uz * k - s * uy;
+    r.m[4]  = ux * uy * k - s * uz;
+    r.m[5]  = c + uy * uy * k;
+    r.m[6]  = uy * uz * k + s * ux;
+    r.m[8]  = ux * uz * k + s * uy;
+    r.m[9]  = uy * uz * k - s * ux;
+    r.m[10] = c + uz * uz * k;
+    return r;
+}
+
+// Extract the pure rotation of a transform (world) matrix. Column scaling
+// (from local or inherited parent scale) is removed by normalizing each of the
+// three rotation columns, so the result is orthonormal.
+static inline Mat4 Mat4RotateOnly(const Mat4 &m)
+{
+    Mat4 r = Mat4Identity();
+    for (int col = 0; col < 3; ++col)
+    {
+        Vec3 v = { m.m[col * 4 + 0], m.m[col * 4 + 1], m.m[col * 4 + 2] };
+        Vec3 n = Vec3Normalize(v);
+        r.m[col * 4 + 0] = n.x;
+        r.m[col * 4 + 1] = n.y;
+        r.m[col * 4 + 2] = n.z;
+    }
+    return r;
+}
+
+// Recover Euler angles (degrees, X/Y/Z = rotation[0/1/2]) from an orthonormal
+// rotation matrix built as M = Rx(rot.x) * Ry(rot.y) * Rz(rot.z). This is the
+// inverse of the Mat4TRS rotation composition. Derived directly from the matrix
+// entries (gimbal lock at |rot.y| ~= 90 deg is unhandled but degrades smoothly).
+static inline Vec3 Mat4ExtractEuler(const Mat4 &m)
+{
+    const float rad2deg = 180.0f / 3.1415926535f;
+    float sy = m.m[8]; // M[0][2] = sin(rot.y)
+    if (sy >  1.0f) sy =  1.0f;
+    if (sy < -1.0f) sy = -1.0f;
+    float rot_y = std::asin(sy);
+    float rot_z = std::atan2(-m.m[4], m.m[0]);
+    float rot_x = std::atan2(-m.m[9], m.m[10]);
+    return { rot_x * rad2deg, rot_y * rad2deg, rot_z * rad2deg };
+}
+
 static inline Mat4 Mat4LookAt(const Vec3 &eye, const Vec3 &target, const Vec3 &up)
 {
     Vec3 fwd = { target.x - eye.x, target.y - eye.y, target.z - eye.z };

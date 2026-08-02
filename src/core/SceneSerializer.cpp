@@ -77,6 +77,10 @@ json::Value SceneSerializer::SerializeScene(const Scene &scene)
         material.object.emplace_back("active", json::Value::MakeBool(e.material.active));
         ent.object.emplace_back("material", std::move(material));
 
+        json::Value mesh = json::Value::MakeObject();
+        mesh.object.emplace_back("path", json::Value::MakeString(e.mesh.path));
+        ent.object.emplace_back("mesh", std::move(mesh));
+
         json::Value camera = json::Value::MakeObject();
         camera.object.emplace_back("fov", json::Value::MakeNumber(e.camera.fov));
         camera.object.emplace_back("near_plane", json::Value::MakeNumber(e.camera.near_plane));
@@ -132,6 +136,9 @@ bool SceneSerializer::DeserializeScene(Scene &scene, const json::Value &root, st
             Vec4FromJson(e.material.color, mat->Find("color"));
             e.material.active = mat->Bool("active", e.material.active);
         }
+
+        if (const json::Value *mesh = ent.Find("mesh"); mesh && mesh->IsObject())
+            e.mesh.path = mesh->String("path", "");
 
         if (const json::Value *cam = ent.Find("camera"); cam && cam->IsObject())
         {

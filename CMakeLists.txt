@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.9.1 LANGUAGES CXX)
+project(singularity-engine VERSION 0.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,10 +51,12 @@ target_sources(singularity-engine PRIVATE
   src/core/Scene.cpp
   src/core/Json.cpp
   src/core/SceneSerializer.cpp
+  src/core/Mesh.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
   src/editor/InspectorPanel.cpp
   src/editor/ViewportPanel.cpp
+  src/editor/GizmoController.cpp
   ${IMGUI_SOURCES}
 )
 
@@ -82,3 +84,11 @@ set_target_properties(singularity-engine PROPERTIES
 
 target_compile_definitions(singularity-engine PRIVATE _USE_MATH_DEFINES _CRT_DECLARE_NONSTDC_NAMES=1)
 target_link_options(singularity-engine PRIVATE -static)
+
+# Keep runtime assets (mesh library, default scenes) next to the executable so
+# relative "assets/..." paths resolve regardless of the working directory.
+add_custom_command(TARGET singularity-engine POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          ${CMAKE_CURRENT_SOURCE_DIR}/assets
+          $<TARGET_FILE_DIR:singularity-engine>/assets
+)

@@ -5,7 +5,31 @@
 #include "EngineMath.h"
 
 #include <imgui.h>
+#include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <vector>
+
+namespace {
+
+// Discover loadable .obj assets under assets/meshes/ (sorted for stable UI).
+std::vector<std::string> ListMeshAssets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("assets/meshes", ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::string path = entry.path().filename().string();
+        if (path.size() > 4 && path.substr(path.size() - 4) == ".obj")
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+} // namespace
 
 InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene)
     : m_selection(selection)
@@ -40,6 +64,8 @@ void InspectorPanel::OnImGuiRender(float dt)
         m_last_selected_id = m_selection->entity_id;
         std::strncpy(m_tag_buffer, entity->tag.tag.c_str(), sizeof(m_tag_buffer) - 1);
         m_tag_buffer[sizeof(m_tag_buffer) - 1] = '\0';
+        std::strncpy(m_mesh_buffer, entity->mesh.path.c_str(), sizeof(m_mesh_buffer) - 1);
+        m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
     }
 
     if (ImGui::InputText("Tag", m_tag_buffer, sizeof(m_tag_buffer)))
@@ -90,6 +116,44 @@ void InspectorPanel::OnImGuiRender(float dt)
     {
         ImGui::ColorEdit4("Albedo", entity->material.color);
         ImGui::Checkbox("Active", &entity->material.active);
+    }
+
+    if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        const char *preview = entity->mesh.path.empty()
+            ? "Cube Primitive"
+            : entity->mesh.path.c_str();
+        if (ImGui::BeginCombo("Asset", preview))
+        {
+            if (ImGui::Selectable("Cube Primitive", entity->mesh.path.empty()))
+                entity->mesh.path.clear();
+            for (const std::string &path : ListMeshAssets())
+            {
+                bool selected = (entity->mesh.path == path);
+                if (ImGui::Selectable(path.c_str(), selected))
+                {
+                    entity->mesh.path = path;
+                    std::strncpy(m_mesh_buffer, path.c_str(), sizeof(m_mesh_buffer) - 1);
+                    m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (ImGui::InputText("Path", m_mesh_buffer, sizeof(m_mesh_buffer)))
+        {
+            if (m_mesh_buffer[0] == '\0')
+                entity->mesh.path.clear();
+        }
+        if (ImGui::Button("Apply Path"))
+            entity->mesh.path = m_mesh_buffer;
+        ImGui::SameLine();
+        if (ImGui::Button("Reset to Cube"))
+        {
+            entity->mesh.path.clear();
+            m_mesh_buffer[0] = '\0';
+        }
+        ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
     }
 
     if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))

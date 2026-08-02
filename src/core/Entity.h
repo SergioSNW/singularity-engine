@@ -12,6 +12,7 @@ struct Entity
     TagComponent tag;
     TransformComponent transform;
     MaterialComponent material;
+    MeshComponent mesh;
     CameraComponent camera;
 
     // Scene graph links. Entities are stored in the Scene by stable address

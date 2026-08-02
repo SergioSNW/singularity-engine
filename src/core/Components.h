@@ -20,6 +20,13 @@ struct MaterialComponent
     bool active = true;
 };
 
+// Geometry reference. An empty `path` selects the built-in cube primitive;
+// any other value names an asset resolved by MeshLibrary (assets/meshes/...).
+struct MeshComponent
+{
+    std::string path;
+};
+
 struct CameraComponent
 {
     float fov = 60.0f;

@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.9.1-alpha — Game mode / playtest toggle with scene snapshot restoration and editor panel restoration on exit.
+> **Current version:** v0.10.0-alpha — Custom OBJ asset pipeline with per-entity mesh assets, global painter's-pass rendering, click-to-pick selection, and viewport translate/rotate/scale gizmos.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

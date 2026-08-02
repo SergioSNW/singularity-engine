@@ -15,6 +15,11 @@ public:
     int GetHeight() const { return m_viewport_height; }
     bool IsHovered() const { return m_hovered; }
 
+    // Screen-space rect of the rendered 3D image inside the ImGui window.
+    // Used to map the mouse cursor into viewport-pixel space for picking.
+    ImVec2 GetImageMin()  const { return m_image_min; }
+    ImVec2 GetImageSize() const { return m_image_size; }
+
     void       SetTexture(SDL_Texture *texture) { m_texture = texture; }
     SDL_Texture* GetTexture() const             { return m_texture; }
 
@@ -27,5 +32,7 @@ private:
     int m_viewport_height;
     bool m_hovered;
     bool m_isolated = false;
+    ImVec2 m_image_min{0.0f, 0.0f};
+    ImVec2 m_image_size{0.0f, 0.0f};
     SDL_Texture *m_texture;
 };

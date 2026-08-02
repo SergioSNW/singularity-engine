@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.9.1-alpha — Play Mode Editor Panel Restoration
+v0.10.0-alpha — Asset Pipeline (OBJ Meshes) & Viewport Transform Gizmos
 
 ## Dependencies
 

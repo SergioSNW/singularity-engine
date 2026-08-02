@@ -7,6 +7,10 @@
 *.o
 *.obj
 
+# Wavefront mesh assets are source content, not compiled objects
+!assets/meshes/
+!assets/meshes/*.obj
+
 # Precompiled Headers
 *.gch
 *.pch

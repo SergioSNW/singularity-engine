@@ -6,9 +6,11 @@
 #include "editor/SceneHierarchyPanel.h"
 #include "editor/InspectorPanel.h"
 #include "editor/ViewportPanel.h"
+#include "editor/GizmoController.h"
 
 #include "Scene.h"
 #include "SceneSerializer.h"
+#include "Mesh.h"
 #include "EngineMath.h"
 
 #include <SDL.h>
@@ -65,6 +67,8 @@ Application::Application()
     , m_selection(nullptr)
     , m_viewport(nullptr)
     , m_scene(nullptr)
+    , m_mesh_library(nullptr)
+    , m_gizmo(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -74,6 +78,7 @@ Application::Application()
     , m_recreate_viewport(false)
     , m_scene_path("assets/scenes/default.json")
     , m_scene_status()
+    , m_mesh_error()
     , m_state(EngineState::Editor)
     , m_scene_snapshot()
 {
@@ -180,35 +185,11 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                       { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent });
 }
 
-// --- Cube mesh data (unit cube, corners at +-0.5 in local space) ---
-static const Vec3 CUBE_CORNERS[8] = {
-    { -0.5f, -0.5f, -0.5f },  // 0
-    {  0.5f, -0.5f, -0.5f },  // 1
-    {  0.5f,  0.5f, -0.5f },  // 2
-    { -0.5f,  0.5f, -0.5f },  // 3
-    { -0.5f, -0.5f,  0.5f },  // 4
-    {  0.5f, -0.5f,  0.5f },  // 5
-    {  0.5f,  0.5f,  0.5f },  // 6
-    { -0.5f,  0.5f,  0.5f },  // 7
-};
-
-// 12 edges of the cube; each pair indexes CUBE_CORNERS.
-static const int CUBE_EDGES[12][2] = {
-    { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 },  // back  face (z = -0.5)
-    { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 },  // front face (z = +0.5)
-    { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 },  // depth connectors
-};
-
-// 6 faces, 4 corners each, wound counter-clockwise when viewed from outside
-// so the cross product of the first three corners points outward.
-static const int CUBE_FACES[6][4] = {
-    { 4, 5, 6, 7 },  // front  (z = +0.5)
-    { 1, 0, 3, 2 },  // back   (z = -0.5)
-    { 2, 3, 7, 6 },  // top    (y = +0.5)
-    { 1, 5, 4, 0 },  // bottom (y = -0.5)
-    { 5, 1, 2, 6 },  // right  (x = +0.5)
-    { 0, 4, 7, 3 },  // left   (x = -0.5)
-};
+// --- Mesh rendering ---------------------------------------------------------
+// All geometry (procedural cubes and loaded .obj assets) goes through the same
+// path: transform the mesh's local triangle soup to world space, project to
+// screen, shade by face normal, then depth-sort all triangles globally (one
+// painter's pass across every entity) before rasterizing.
 
 static inline Vec3 Mat4TransformPoint(const Mat4 &m, const Vec3 &p)
 {
@@ -216,9 +197,83 @@ static inline Vec3 Mat4TransformPoint(const Mat4 &m, const Vec3 &p)
     return Mat4MulVec3(m, p, w);
 }
 
-static void RenderCubeWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
+static bool ProjectToScreen(const Mat4 &view_proj, float near_p, int w, int h,
+                            const Vec3 &p, int &sx, int &sy, float &depth)
+{
+    float w_out;
+    Vec3 clip = Mat4MulVec3(view_proj, p, w_out);
+    if (w_out < near_p)
+        return false;
+    sx = (int)((clip.x / w_out + 1.0f) * 0.5f * w);
+    sy = (int)((1.0f - clip.y / w_out) * 0.5f * h);
+    depth = w_out;
+    return true;
+}
+
+// One screen-space shaded triangle, collected for the global painter pass.
+struct FillTri
+{
+    float depth;
+    int x0, y0, x1, y1, x2, y2;
+    Uint8 r, g, b;
+};
+
+static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
+                           const Mat4 &world, const Mat4 &view_proj, float near_p,
+                           int w, int h, const float color[3])
+{
+    static const Vec3 LIGHT = { 0.45f, 0.78f, 0.44f };
+    Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
+    Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
+    Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
+
+    const std::vector<Vec3> &pos = mesh.positions;
+    for (size_t i = 0; i + 2 < pos.size(); i += 3)
+    {
+        Vec3 a = Mat4TransformPoint(world, pos[i]);
+        Vec3 b = Mat4TransformPoint(world, pos[i + 1]);
+        Vec3 c = Mat4TransformPoint(world, pos[i + 2]);
+
+        int ax, ay, bx, by, cx, cy;
+        float da, db, dc;
+        if (!ProjectToScreen(view_proj, near_p, w, h, a, ax, ay, da) ||
+            !ProjectToScreen(view_proj, near_p, w, h, b, bx, by, db) ||
+            !ProjectToScreen(view_proj, near_p, w, h, c, cx, cy, dc))
+            continue;
+
+        // Directional shading from the world-space face normal.
+        Vec3 e1 = Vec3Sub(b, a);
+        Vec3 e2 = Vec3Sub(c, a);
+        Vec3 n = Vec3Normalize(Vec3Cross(e1, e2));
+        float shade = 0.62f + 0.38f * std::max(0.0f, Vec3Dot(n, LIGHT));
+
+        tris.push_back({
+            (da + db + dc) / 3.0f,
+            ax, ay, bx, by, cx, cy,
+            (Uint8)(base_r * shade), (Uint8)(base_g * shade), (Uint8)(base_b * shade),
+        });
+    }
+}
+
+static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts)
+{
+    if (verts.empty())
+        return;
+    // Chunked so very large meshes stay well under any renderer vertex limit.
+    static const size_t MAX_VERTS = 6000;
+    size_t offset = 0;
+    while (offset < verts.size())
+    {
+        size_t count = std::min(MAX_VERTS, verts.size() - offset);
+        SDL_RenderGeometry(renderer, nullptr, verts.data() + offset, (int)count, nullptr, 0);
+        offset += count;
+    }
+    verts.clear();
+}
+
+static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
                                 float near_p, int w, int h, const Mat4 &world,
-                                const float color[3], bool brighten)
+                                const Mesh &mesh, const float color[3], bool brighten)
 {
     float gain = brighten ? 1.35f : 1.0f;
     Uint8 r = (Uint8)std::min(255.0f, color[0] * 255.0f * gain);
@@ -226,103 +281,34 @@ static void RenderCubeWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
     Uint8 b = (Uint8)std::min(255.0f, color[2] * 255.0f * gain);
     SDL_SetRenderDrawColor(renderer, r, g, b, 255);
 
-    for (int i = 0; i < 12; ++i)
+    for (size_t i = 0; i + 1 < mesh.edge_lines.size(); i += 2)
     {
-        Vec3 a = Mat4TransformPoint(world, CUBE_CORNERS[CUBE_EDGES[i][0]]);
-        Vec3 b2 = Mat4TransformPoint(world, CUBE_CORNERS[CUBE_EDGES[i][1]]);
+        Vec3 a = Mat4TransformPoint(world, mesh.edge_lines[i]);
+        Vec3 b2 = Mat4TransformPoint(world, mesh.edge_lines[i + 1]);
         DrawProjectedLine(renderer, view_proj, near_p, w, h, a, b2);
     }
 }
 
-static void RenderCubeSolid(SDL_Renderer *renderer, const Mat4 &view_proj,
-                            float near_p, int w, int h, const Mat4 &world,
-                            const float color[3])
+static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, int w, int h)
 {
-    int sx[8], sy[8];
-    float depth[8];
-    bool behind = false;
+    // Painter's algorithm across all entities: farthest triangles first.
+    std::stable_sort(tris.begin(), tris.end(),
+        [](const FillTri &a, const FillTri &b) { return a.depth > b.depth; });
 
-    for (int i = 0; i < 8; ++i)
+    std::vector<SDL_Vertex> verts;
+    verts.reserve(tris.size() * 3);
+    for (const FillTri &t : tris)
     {
-        Vec3 corner = Mat4TransformPoint(world, CUBE_CORNERS[i]);
-        float w_out;
-        Vec3 clip = Mat4MulVec3(view_proj, corner, w_out);
-        depth[i] = w_out;
-        if (w_out < near_p)
-            behind = true;
-        sx[i] = (int)((clip.x / w_out + 1.0f) * 0.5f * w);
-        sy[i] = (int)((1.0f - clip.y / w_out) * 0.5f * h);
-    }
-
-    // A face straddling the near plane would project to garbage; the wireframe
-    // pass clips per-edge and carries the silhouette in that case.
-    if (behind)
-        return;
-
-    // Painter's algorithm: draw faces farthest first, so nearer faces overlap.
-    float face_depth[6];
-    for (int f = 0; f < 6; ++f)
-    {
-        const int *idx = CUBE_FACES[f];
-        face_depth[f] = (depth[idx[0]] + depth[idx[1]] + depth[idx[2]] + depth[idx[3]]) * 0.25f;
-    }
-    int order[6] = { 0, 1, 2, 3, 4, 5 };
-    for (int i = 1; i < 6; ++i)
-    {
-        int key = order[i];
-        int j = i - 1;
-        while (j >= 0 && face_depth[order[j]] < face_depth[key])
-        {
-            order[j + 1] = order[j];
-            --j;
-        }
-        order[j + 1] = key;
-    }
-
-    // Directional shading: brightness follows the face normal against a fixed
-    // light direction so the cube's planes read as distinct in 3D.
-    static const Vec3 LIGHT = { 0.45f, 0.78f, 0.44f };
-
-    Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
-    Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
-    Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
-
-    SDL_Vertex verts[36];
-    int v = 0;
-    for (int f = 0; f < 6; ++f)
-    {
-        const int *idx = CUBE_FACES[order[f]];
-        Vec3 a = Mat4TransformPoint(world, CUBE_CORNERS[idx[0]]);
-        Vec3 b = Mat4TransformPoint(world, CUBE_CORNERS[idx[1]]);
-        Vec3 c = Mat4TransformPoint(world, CUBE_CORNERS[idx[2]]);
-        Vec3 e1 = { b.x - a.x, b.y - a.y, b.z - a.z };
-        Vec3 e2 = { c.x - a.x, c.y - a.y, c.z - a.z };
-        Vec3 n = { e1.y * e2.z - e1.z * e2.y,
-                   e1.z * e2.x - e1.x * e2.z,
-                   e1.x * e2.y - e1.y * e2.x };
-        float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
-        if (len > 1e-6f)
-        {
-            n.x /= len;  n.y /= len;  n.z /= len;
-        }
-        float shade = 0.62f + 0.38f * std::max(0.0f, n.x * LIGHT.x + n.y * LIGHT.y + n.z * LIGHT.z);
-
-        SDL_Color col = {
-            (Uint8)(base_r * shade),
-            (Uint8)(base_g * shade),
-            (Uint8)(base_b * shade),
-            255
-        };
+        SDL_Color col = { t.r, t.g, t.b, 255 };
         SDL_FPoint uv = { 0.0f, 0.0f };
-        verts[v++] = { { (float)sx[idx[0]], (float)sy[idx[0]] }, col, uv };
-        verts[v++] = { { (float)sx[idx[1]], (float)sy[idx[1]] }, col, uv };
-        verts[v++] = { { (float)sx[idx[2]], (float)sy[idx[2]] }, col, uv };
-        verts[v++] = { { (float)sx[idx[0]], (float)sy[idx[0]] }, col, uv };
-        verts[v++] = { { (float)sx[idx[2]], (float)sy[idx[2]] }, col, uv };
-        verts[v++] = { { (float)sx[idx[3]], (float)sy[idx[3]] }, col, uv };
+        verts.push_back({ { (float)t.x0, (float)t.y0 }, col, uv });
+        verts.push_back({ { (float)t.x1, (float)t.y1 }, col, uv });
+        verts.push_back({ { (float)t.x2, (float)t.y2 }, col, uv });
+        if (verts.size() >= 6000)
+            FlushTriBatch(renderer, verts);
     }
-
-    SDL_RenderGeometry(renderer, nullptr, verts, 36, nullptr, 0);
+    FlushTriBatch(renderer, verts);
+    tris.clear();
 }
 
 void Application::RenderViewportTarget()
@@ -348,74 +334,92 @@ void Application::RenderViewportTarget()
 
     if (m_scene)
     {
-        // --- Locate active camera ---
-        Entity *camera_entity = FindActiveCamera();
-
-        // --- Build perspective view-projection from active camera ---
-        Vec3 cam_pos = { 0.0f, 0.0f, 0.0f };
-        float fov    = 60.0f;
-        float pitch  = 0.0f;
-        float yaw    = 0.0f;
-        float near_p = 0.1f;
-        float far_p  = 100.0f;
-
-        if (camera_entity)
+        Vec3 cam_pos{ 0.0f, 0.0f, 0.0f };
+        float fov = 60.0f, pitch = 0.0f, yaw = 0.0f;
+        float near_p = 0.1f, far_p = 100.0f;
+        Mat4 view_proj;
+        if (BuildViewProj(view_proj, cam_pos, fov, pitch, yaw, near_p, far_p))
         {
-            Mat4 cam_world = m_scene->ComputeWorldMatrix(*camera_entity);
-            cam_pos.x = cam_world.m[12];
-            cam_pos.y = cam_world.m[13];
-            cam_pos.z = cam_world.m[14];
-            if (camera_entity->camera.fov > 1.0f)
-                fov = camera_entity->camera.fov;
-            pitch = camera_entity->camera.pitch;
-            yaw   = camera_entity->camera.yaw;
-            near_p = camera_entity->camera.near_plane;
-            far_p  = camera_entity->camera.far_plane;
-        }
+            // Ground-plane grid first so entities draw on top of it.
+            RenderGroundGrid(renderer, view_proj, near_p, w, h);
 
-        // View = RotX(-pitch) * RotY(-yaw) * Translate(-cam_pos): the inverse
-        // of the camera's world orientation. Yaw first about world up, then
-        // pitch about the camera's local right axis, so roll stays locked to
-        // zero for any yaw/pitch combination.
-        Mat4 view = Mat4Mul(
-            Mat4RotateX(-pitch),
-            Mat4Mul(Mat4RotateY(-yaw), Mat4Translate(-cam_pos.x, -cam_pos.y, -cam_pos.z))
-        );
+            Entity *camera_entity = FindActiveCamera();
 
-        float aspect = (float)w / (float)h;
-        Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
-        Mat4 view_proj = Mat4Mul(proj, view);
-
-        // Ground-plane grid first so entities draw on top of it.
-        RenderGroundGrid(renderer, view_proj, near_p, w, h);
-
-        // --- Render each entity as a 3D cube mesh ---
-        for (auto &entity_ptr : m_scene->GetEntities())
-        {
-            Entity &entity = *entity_ptr;
-            if (&entity == camera_entity)
-                continue;
-
-            Mat4 world = m_scene->ComputeWorldMatrix(entity);
-
-            if (entity.material.active)
-                RenderCubeSolid(renderer, view_proj, near_p, w, h, world, entity.material.color);
-
-            RenderCubeWireframe(renderer, view_proj, near_p, w, h, world,
-                                entity.material.color, true);
-        }
-
-        // --- Selection outline: wireframe bounding box around the selection ---
-        // Editor-only: in play mode the game view is clean, with no gizmos.
-        if (m_state == EngineState::Editor &&
-            m_selection && m_selection->entity_id >= 0)
-        {
-            Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
-            if (selected && selected != camera_entity)
+            // --- Pass 1: solid fills, one global painter's pass ---
+            std::vector<FillTri> tris;
+            for (auto &entity_ptr : m_scene->GetEntities())
             {
-                static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
-                Mat4 world = m_scene->ComputeWorldMatrix(*selected);
-                RenderCubeWireframe(renderer, view_proj, near_p, w, h, world, OUTLINE, false);
+                Entity &entity = *entity_ptr;
+                if (&entity == camera_entity || !entity.material.active)
+                    continue;
+
+                std::string mesh_error;
+                const Mesh *mesh = ResolveMesh(entity, mesh_error);
+                if (!mesh_error.empty() && mesh_error != m_mesh_error)
+                {
+                    m_mesh_error = mesh_error;
+                    m_scene_status = "Mesh load failed: " + mesh_error;
+                }
+                if (!mesh)
+                    continue;
+
+                Mat4 world = m_scene->ComputeWorldMatrix(entity);
+                EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
+                               entity.material.color);
+            }
+            DrawTriangles(renderer, tris, w, h);
+
+            // --- Pass 2: wireframe overlay for every visible entity ---
+            for (auto &entity_ptr : m_scene->GetEntities())
+            {
+                Entity &entity = *entity_ptr;
+                if (&entity == camera_entity)
+                    continue;
+
+                std::string mesh_error;
+                const Mesh *mesh = ResolveMesh(entity, mesh_error);
+                if (!mesh)
+                    continue;
+
+                Mat4 world = m_scene->ComputeWorldMatrix(entity);
+                RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
+                                    *mesh, entity.material.color, true);
+            }
+
+            // --- Pass 3: selection outline + gizmo overlay (editor only) ---
+            if (m_state == EngineState::Editor &&
+                m_selection && m_selection->entity_id >= 0)
+            {
+                Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
+                if (selected && selected != camera_entity)
+                {
+                    std::string mesh_error;
+                    const Mesh *mesh = ResolveMesh(*selected, mesh_error);
+                    static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
+                    if (mesh)
+                    {
+                        Mat4 world = m_scene->ComputeWorldMatrix(*selected);
+                        RenderMeshWireframe(renderer, view_proj, near_p, w, h,
+                                            world, *mesh, OUTLINE, false);
+                    }
+                }
+
+                GizmoFrame gf;
+                gf.scene = m_scene;
+                gf.selection = m_selection;
+                gf.meshes = m_mesh_library;
+                gf.active_camera_id = camera_entity ? camera_entity->id : -1;
+                gf.vp_width = (float)w;
+                gf.vp_height = (float)h;
+                gf.hovered = m_viewport->IsHovered();
+                gf.cam_pos = cam_pos;
+                gf.cam_pitch = pitch;
+                gf.cam_yaw = yaw;
+                gf.cam_fov = fov;
+                gf.near_p = near_p;
+                gf.view_proj = view_proj;
+                gf.dt = 0.0f;
+                m_gizmo->Draw(renderer, gf);
             }
         }
     }
@@ -437,6 +441,63 @@ Entity *Application::FindActiveCamera()
             return e.get();
 
     return nullptr;
+}
+
+bool Application::BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov,
+                                float &pitch, float &yaw, float &near_p,
+                                float &far_p)
+{
+    if (!m_scene || !m_viewport || m_viewport_target_w <= 0 || m_viewport_target_h <= 0)
+        return false;
+
+    Entity *camera_entity = FindActiveCamera();
+
+    cam_pos = { 0.0f, 0.0f, 0.0f };
+    fov   = 60.0f;
+    pitch = 0.0f;
+    yaw   = 0.0f;
+    near_p = 0.1f;
+    far_p  = 100.0f;
+
+    if (camera_entity)
+    {
+        Mat4 cam_world = m_scene->ComputeWorldMatrix(*camera_entity);
+        cam_pos.x = cam_world.m[12];
+        cam_pos.y = cam_world.m[13];
+        cam_pos.z = cam_world.m[14];
+        if (camera_entity->camera.fov > 1.0f)
+            fov = camera_entity->camera.fov;
+        pitch = camera_entity->camera.pitch;
+        yaw   = camera_entity->camera.yaw;
+        near_p = camera_entity->camera.near_plane;
+        far_p  = camera_entity->camera.far_plane;
+    }
+
+    // View = RotX(-pitch) * RotY(-yaw) * Translate(-cam_pos): the inverse
+    // of the camera's world orientation. Yaw first about world up, then
+    // pitch about the camera's local right axis, so roll stays locked to
+    // zero for any yaw/pitch combination.
+    Mat4 view = Mat4Mul(
+        Mat4RotateX(-pitch),
+        Mat4Mul(Mat4RotateY(-yaw), Mat4Translate(-cam_pos.x, -cam_pos.y, -cam_pos.z))
+    );
+
+    float aspect = (float)m_viewport_target_w / (float)m_viewport_target_h;
+    Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
+    view_proj = Mat4Mul(proj, view);
+    return true;
+}
+
+const Mesh *Application::ResolveMesh(const Entity &entity, std::string &error)
+{
+    if (!m_mesh_library)
+        return nullptr;
+    if (entity.mesh.path.empty())
+        return m_mesh_library->GetBuiltinCube();
+    const Mesh *mesh = m_mesh_library->GetOrLoad(entity.mesh.path, &error);
+    if (mesh)
+        return mesh;
+    return m_mesh_library->GetBuiltinCube();
 }
 
 void Application::SaveScene()
@@ -652,6 +713,8 @@ bool Application::Init(int width, int height, const char *title)
     ImGui_ImplSDLRenderer2_Init(m_window->GetNativeRenderer());
 
     m_selection = new SelectionState();
+    m_mesh_library = new MeshLibrary();
+    m_gizmo = new GizmoController();
 
     m_scene = new Scene();
     Entity &camera = m_scene->CreateEntity("Camera");
@@ -667,6 +730,37 @@ bool Application::Init(int width, int height, const char *title)
     cube_child.transform.scale[0] = 0.5f;
     cube_child.transform.scale[1] = 0.5f;
     cube_child.transform.scale[2] = 0.5f;
+
+    // Loaded-asset meshes: entities reference .obj files by name; MeshLibrary
+    // resolves them under assets/meshes/ on first use.
+    Entity &octahedron = m_scene->CreateEntity("Octahedron");
+    octahedron.mesh.path = "octahedron.obj";
+    octahedron.transform.position[1] = 1.5f;
+    octahedron.transform.position[2] = 2.0f;
+    octahedron.transform.scale[0] = 1.5f;
+    octahedron.transform.scale[1] = 1.5f;
+    octahedron.transform.scale[2] = 1.5f;
+    octahedron.material.color[0] = 0.95f;
+    octahedron.material.color[1] = 0.80f;
+    octahedron.material.color[2] = 0.40f;
+
+    Entity &icosahedron = m_scene->CreateEntity("Icosahedron");
+    icosahedron.mesh.path = "icosahedron.obj";
+    icosahedron.transform.position[0] = 3.0f;
+    icosahedron.transform.position[1] = 1.1f;
+    icosahedron.transform.position[2] = 1.0f;
+    icosahedron.material.color[0] = 0.45f;
+    icosahedron.material.color[1] = 0.85f;
+    icosahedron.material.color[2] = 0.95f;
+
+    Entity &pyramid = m_scene->CreateEntity("Pyramid");
+    pyramid.mesh.path = "pyramid.obj";
+    pyramid.transform.position[0] = -3.2f;
+    pyramid.transform.position[1] = 0.75f;
+    pyramid.transform.position[2] = 1.0f;
+    pyramid.material.color[0] = 0.85f;
+    pyramid.material.color[1] = 0.45f;
+    pyramid.material.color[2] = 0.80f;
 
     m_viewport = new ViewportPanel();
 
@@ -737,6 +831,16 @@ void Application::Run()
                 else
                     m_running = false;
             }
+            if (event.type == SDL_KEYDOWN && m_state == EngineState::Editor && m_gizmo)
+            {
+                // Gizmo mode hotkeys: 1 = translate, 2 = rotate, 3 = scale.
+                if (event.key.keysym.sym == SDLK_1)
+                    m_gizmo->mode = GizmoMode::Translate;
+                else if (event.key.keysym.sym == SDLK_2)
+                    m_gizmo->mode = GizmoMode::Rotate;
+                else if (event.key.keysym.sym == SDLK_3)
+                    m_gizmo->mode = GizmoMode::Scale;
+            }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
             if (event.type == SDL_WINDOWEVENT)
@@ -783,6 +887,30 @@ void Application::Run()
                     EnterPlayMode();
                 ImGui::PopStyleColor(2);
                 ImGui::SameLine();
+
+                // Gizmo mode selector (1/2/3 also work while hovering the editor).
+                if (m_gizmo)
+                {
+                    const char *mode_names[3] = { "Move", "Rotate", "Scale" };
+                    GizmoMode modes[3] = { GizmoMode::Translate, GizmoMode::Rotate, GizmoMode::Scale };
+                    ImGui::TextUnformatted("Gizmo:");
+                    ImGui::SameLine();
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        if (i > 0)
+                            ImGui::SameLine();
+                        if (m_gizmo->mode == modes[i])
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
+                        }
+                        if (ImGui::Button(mode_names[i]))
+                            m_gizmo->mode = modes[i];
+                        if (m_gizmo->mode == modes[i])
+                            ImGui::PopStyleColor(2);
+                    }
+                    ImGui::SameLine();
+                }
 
                 if (ImGui::BeginMenu("File"))
                 {
@@ -867,6 +995,41 @@ void Application::Run()
 
         UpdateCameraControls((float)dt);
 
+        // Editor interaction: viewport picking + gizmo dragging. Skipped in
+        // play mode and while the RMB fly camera is active (cursor captured).
+        if (m_state == EngineState::Editor && !m_flying && m_gizmo && m_viewport)
+        {
+            Vec3 cam_pos;
+            float fov, pitch, yaw, near_p, far_p;
+            Mat4 view_proj;
+            if (BuildViewProj(view_proj, cam_pos, fov, pitch, yaw, near_p, far_p))
+            {
+                GizmoFrame gf;
+                gf.scene = m_scene;
+                gf.selection = m_selection;
+                gf.meshes = m_mesh_library;
+                gf.active_camera_id = FindActiveCamera() ? FindActiveCamera()->id : -1;
+                gf.vp_width = (float)m_viewport_target_w;
+                gf.vp_height = (float)m_viewport_target_h;
+                gf.hovered = m_viewport->IsHovered();
+                ImVec2 img_min = m_viewport->GetImageMin();
+                ImVec2 img_size = m_viewport->GetImageSize();
+                ImVec2 mouse = ImGui::GetMousePos();
+                gf.mouse_x = (img_size.x > 1.0f)
+                    ? (mouse.x - img_min.x) * (gf.vp_width / img_size.x) : 0.0f;
+                gf.mouse_y = (img_size.y > 1.0f)
+                    ? (mouse.y - img_min.y) * (gf.vp_height / img_size.y) : 0.0f;
+                gf.cam_pos = cam_pos;
+                gf.cam_pitch = pitch;
+                gf.cam_yaw = yaw;
+                gf.cam_fov = fov;
+                gf.near_p = near_p;
+                gf.view_proj = view_proj;
+                gf.dt = (float)dt;
+                m_gizmo->Update(gf);
+            }
+        }
+
         // Skip the 3D render pass while minimized; the restore event already
         // queued a target recreation for the frame we come back.
         if (!minimized)
@@ -899,6 +1062,12 @@ void Application::Shutdown()
         SDL_DestroyTexture(m_viewport_target);
         m_viewport_target = nullptr;
     }
+
+    delete m_gizmo;
+    m_gizmo = nullptr;
+
+    delete m_mesh_library;
+    m_mesh_library = nullptr;
 
     delete m_selection;
     m_selection = nullptr;

@@ -7,11 +7,16 @@
 #include "Json.h"
 
 struct SDL_Texture;
+struct Mat4;
+struct Vec3;
+struct Mesh;
 class Window;
 class EditorPanel;
 struct SelectionState;
 class ViewportPanel;
 class Scene;
+class MeshLibrary;
+class GizmoController;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -37,6 +42,9 @@ private:
     void RenderViewportTarget();
     void UpdateCameraControls(float dt);
     Entity *FindActiveCamera();
+    bool BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov, float &pitch,
+                       float &yaw, float &near_p, float &far_p);
+    const Mesh *ResolveMesh(const Entity &entity, std::string &error);
     void SaveScene();
     void OpenScene();
     void EnterPlayMode();
@@ -49,6 +57,8 @@ private:
     SelectionState *m_selection;
     ViewportPanel *m_viewport;
     Scene *m_scene;
+    MeshLibrary *m_mesh_library;
+    GizmoController *m_gizmo;
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
@@ -58,6 +68,7 @@ private:
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;
+    std::string m_mesh_error;
     EngineState m_state;
     json::Value m_scene_snapshot;   // pre-play backup; restored on Stop
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
