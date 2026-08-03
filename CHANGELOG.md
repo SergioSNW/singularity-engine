@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.2-alpha] — 2026-08-01
+
+### Fixed
+
+- Fixed an immediate crash when switching the gizmo mode via the toolbar buttons (Move/Rotate/Scale). The active-button style push/pop in `Application.cpp` was asymmetric: the highlight was pushed based on the mode state *before* the click but popped based on the state *after* the click. Clicking a button whose mode differed from the current one therefore called `ImGui::PopStyleColor(2)` without a matching push, underflowing ImGui's style-color stack and aborting the process via `IM_ASSERT_USER_ERROR` ("Calling PopStyleColor() too many times!"). The push and pop now both use a single pre-click `is_active` flag, so they are always balanced.
+- Switching gizmo modes (toolbar buttons or the 1/2/3 hotkeys) now goes through a new `GizmoController::SetMode()` that cancels any in-progress drag (`m_dragging = false`, `m_drag_axis = -1`), so a mid-drag mode change can never leave stale cached axis/center values that the next mode's hit-testing re-reads.
+
+### Changed
+
+- Version bump from 0.10.1-alpha to 0.10.2-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.10.1-alpha] — 2026-08-01
 
 ### Fixed

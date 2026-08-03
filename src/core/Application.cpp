@@ -835,11 +835,11 @@ void Application::Run()
             {
                 // Gizmo mode hotkeys: 1 = translate, 2 = rotate, 3 = scale.
                 if (event.key.keysym.sym == SDLK_1)
-                    m_gizmo->mode = GizmoMode::Translate;
+                    m_gizmo->SetMode(GizmoMode::Translate);
                 else if (event.key.keysym.sym == SDLK_2)
-                    m_gizmo->mode = GizmoMode::Rotate;
+                    m_gizmo->SetMode(GizmoMode::Rotate);
                 else if (event.key.keysym.sym == SDLK_3)
-                    m_gizmo->mode = GizmoMode::Scale;
+                    m_gizmo->SetMode(GizmoMode::Scale);
             }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
@@ -899,14 +899,15 @@ void Application::Run()
                     {
                         if (i > 0)
                             ImGui::SameLine();
-                        if (m_gizmo->mode == modes[i])
+                        const bool is_active = (m_gizmo->mode == modes[i]);
+                        if (is_active)
                         {
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
                         }
                         if (ImGui::Button(mode_names[i]))
-                            m_gizmo->mode = modes[i];
-                        if (m_gizmo->mode == modes[i])
+                            m_gizmo->SetMode(modes[i]);
+                        if (is_active)
                             ImGui::PopStyleColor(2);
                     }
                     ImGui::SameLine();

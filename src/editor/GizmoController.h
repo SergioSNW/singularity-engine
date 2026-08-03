@@ -46,6 +46,19 @@ class GizmoController
 public:
     GizmoMode mode = GizmoMode::Translate;
 
+    // Switch the active operation. Any in-progress drag is cancelled so a
+    // mid-drag mode change can never leave a stale axis/drag_axis referring to
+    // the previous operation's handles (e.g. a rotate ring handle being
+    // dragged while the mode is switched to Scale).
+    void SetMode(GizmoMode new_mode)
+    {
+        if (mode == new_mode)
+            return;
+        mode = new_mode;
+        m_dragging = false;
+        m_drag_axis = -1;
+    }
+
     // Process input: hover highlighting, click-to-pick, and axis dragging.
     // Must be called once per editor frame after the viewport has rendered.
     void Update(const GizmoFrame &frame);

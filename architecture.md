@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.10.1-alpha — Rotate/Scale gizmo stability fixes: hardened euler writeback and guarded scale-factor math in the viewport transform gizmo.
+> **Current version:** v0.10.2-alpha — fixed the gizmo mode-switch crash (asymmetric ImGui style push/pop) and reset drag state when switching gizmo modes.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document
