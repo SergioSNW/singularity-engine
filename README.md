@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.10.2-alpha — Gizmo Mode-Switch Crash Fix
+v0.10.3-alpha — 3D Rotation Rings, Trackball & High-DPI Viewport Sharpness
 
 ## Dependencies
 

@@ -14,11 +14,28 @@
 namespace {
 
 const float PI = 3.1415926535f;
-const float AXIS_PX   = 90.0f;  // gizmo arm length on screen
-const float HANDLE_PX = 10.0f;  // axis hit-test tolerance
+const float AXIS_PX   = 90.0f;  // gizmo arm length on screen (logical points)
+const float HANDLE_PX = 10.0f;  // axis hit-test tolerance (logical points)
 const float CENTER_PX = 9.0f;   // center (planar) handle hit radius
-const float RING_PX   = 64.0f;  // rotation ring radius
-const float RING_TOL  = 9.0f;   // rotation ring hit tolerance
+const float RING_PX   = 84.0f;  // outer trackball ring radius (logical points)
+const float RING_TOL  = 9.0f;   // rotation ring hit tolerance (logical points)
+const float RING_SCALE = 0.78f; // 3D axis ring radius, as a fraction of the arm length
+
+// Orthonormal basis (u, v, n) for the plane perpendicular to n. The frame is
+// right-handed: cross(u, v) == n. Used to build ring points and to measure a
+// cursor angle around a ring's axis.
+void RingBasis(const Vec3 &n, Vec3 &u, Vec3 &v)
+{
+    Vec3 ref = (std::fabs(n.x) < 0.9f) ? Vec3{1.0f, 0.0f, 0.0f} : Vec3{0.0f, 1.0f, 0.0f};
+    u = Vec3Normalize(Vec3Cross(ref, n));
+    v = Vec3Cross(n, u);
+}
+
+Vec3 RingPoint(const Vec3 &center, const Vec3 &u, const Vec3 &v, float radius, float a)
+{
+    return Vec3Add(center, Vec3Add(Vec3Scale(u, std::cos(a) * radius),
+                                   Vec3Scale(v, std::sin(a) * radius)));
+}
 
 // Project a world point to viewport-pixel space. Returns false when the point
 // is at or behind the near plane.
@@ -57,9 +74,9 @@ void CameraBasis(float pitch, float yaw, Vec3 &right, Vec3 &up, Vec3 &fwd)
     float p = pitch * PI / 180.0f, y = yaw * PI / 180.0f;
     float sp = std::sin(p), cp = std::cos(p);
     float sy = std::sin(y), cy = std::cos(y);
-    right = {  cy, 0.0f, -sy };
-    up    = { -sy * sp, cp, -cy * sp };
-    fwd   = { -sy * cp, -sp, -cy * cp };
+    right = { cy, 0.0f, -sy };
+    up    = { sp * sy, cp, sp * cy };
+    fwd   = { cp * sy, -sp, cp * cy };
 }
 
 struct Ray { Vec3 o, d; };
@@ -103,6 +120,103 @@ bool RayPlane(const Ray &r, const Vec3 &p, const Vec3 &n, Vec3 &hit)
     return true;
 }
 
+// Minimum screen-space distance from the cursor to a ring's projected ellipse.
+// The ring is sampled as N world-space points and tested as a polyline, which
+// is robust for any viewing angle (the ellipse may collapse to a line).
+float RingScreenDistance(const GizmoFrame &f, const Vec3 &center, const Vec3 &normal,
+                         float radius)
+{
+    Vec3 u, v;
+    RingBasis(normal, u, v);
+    const int SEG = 48;
+    float best = FLT_MAX;
+    float px = 0.0f, py = 0.0f;
+    bool have = false;
+    for (int i = 0; i <= SEG; ++i)
+    {
+        float a = (float)i / (float)SEG * 2.0f * PI;
+        Vec3 pt = RingPoint(center, u, v, radius, a);
+        float sx, sy, d;
+        if (!Project(f, pt, sx, sy, d))
+        {
+            have = false;
+            continue;
+        }
+        if (have)
+            best = std::min(best, DistPointSegment(f.mouse_x, f.mouse_y, px, py, sx, sy));
+        px = sx; py = sy;
+        have = true;
+    }
+    return best;
+}
+
+// Draw a 3D rotation ring: a circle in the plane perpendicular to `normal`,
+// drawn as a projected polyline. The half facing the camera is bright, the far
+// half is dimmed so the ring's 3D orientation reads at any angle.
+void DrawRing3D(SDL_Renderer *renderer, const GizmoFrame &f, const Vec3 &center,
+                const Vec3 &normal, float radius, const Uint8 color[3], bool hot)
+{
+    Vec3 u, v;
+    RingBasis(normal, u, v);
+    const int SEG = 48;
+    float px = 0.0f, py = 0.0f;
+    bool have = false;
+    for (int i = 0; i <= SEG; ++i)
+    {
+        float a = (float)i / (float)SEG * 2.0f * PI;
+        Vec3 pt = RingPoint(center, u, v, radius, a);
+        float sx, sy, d;
+        if (!Project(f, pt, sx, sy, d))
+        {
+            have = false;
+            continue;
+        }
+
+        bool front = Vec3Dot(Vec3Sub(pt, center), Vec3Sub(f.cam_pos, center)) >= 0.0f;
+        Uint8 cr = color[0], cg = color[1], cb = color[2];
+        if (hot)
+        {
+            cr = (Uint8)std::min(255, cr + 70);
+            cg = (Uint8)std::min(255, cg + 70);
+            cb = (Uint8)std::min(255, cb + 70);
+        }
+        if (!front)
+        {
+            cr = (Uint8)(cr * 0.30f);
+            cg = (Uint8)(cg * 0.30f);
+            cb = (Uint8)(cb * 0.30f);
+        }
+
+        if (have)
+        {
+            SDL_SetRenderDrawColor(renderer, cr, cg, cb, 255);
+            SDL_RenderDrawLine(renderer, (int)px, (int)py, (int)sx, (int)sy);
+        }
+        px = sx; py = sy;
+        have = true;
+    }
+}
+
+// Compose a delta rotation (degrees about a world-space axis) on top of the
+// drag-start orientation, decompose back to euler, and write it into the
+// entity. Non-finite euler output is rejected so a poisoned start orientation
+// can never propagate garbage into the renderer.
+void ApplyRotationAboutAxis(Entity &entity, const Vec3 &axis, float delta_deg,
+                            const float start_rot[3])
+{
+    Mat4 r = Mat4Mul(
+        Mat4RotateX(start_rot[0]),
+        Mat4Mul(Mat4RotateY(start_rot[1]), Mat4RotateZ(start_rot[2])));
+    Mat4 rn = Mat4Mul(Mat4RotateAxis(axis, delta_deg), r);
+    Vec3 e = Mat4ExtractEuler(rn);
+    if (std::isfinite(e.x) && std::isfinite(e.y) && std::isfinite(e.z))
+    {
+        entity.transform.rotation[0] = e.x;
+        entity.transform.rotation[1] = e.y;
+        entity.transform.rotation[2] = e.z;
+    }
+}
+
 // Local unit axis (0=X, 1=Y, 2=Z) of a transform, in world space.
 Vec3 AxisOf(const Mat4 &world, int i)
 {
@@ -140,7 +254,7 @@ void GizmoController::Update(const GizmoFrame &f)
 {
     m_hover_axis = -1;
     m_hover_center = false;
-    m_hover_ring = false;
+    m_hover_ring_axis = -1;
 
     if (!f.scene || !f.selection)
         return;
@@ -181,33 +295,49 @@ void GizmoController::Update(const GizmoFrame &f)
         float tan_half = std::tan(f.cam_fov * PI / 360.0f);
         float world_per_px = (f.vp_height > 0.0f)
             ? (2.0f * dist * tan_half) / f.vp_height : 1.0f;
-        m_radius_world = std::max(AXIS_PX * world_per_px, 1e-6f);
+        m_radius_world = std::max(AXIS_PX * f.dpi_scale * world_per_px, 1e-6f);
         m_axis_world[0] = AxisOf(world, 0);
         m_axis_world[1] = AxisOf(world, 1);
         m_axis_world[2] = AxisOf(world, 2);
 
         if (mode == GizmoMode::Rotate)
         {
-            float dx = f.mouse_x - m_center_sx;
-            float dy = f.mouse_y - m_center_sy;
-            float dist_c = std::sqrt(dx * dx + dy * dy);
-            if (std::fabs(dist_c - RING_PX) < RING_TOL)
-                m_hover_ring = true;
+            // Three orthogonal 3D rings, one per local axis. The cursor is
+            // tested against each ring's projected ellipse; the first ring
+            // within tolerance wins (axis-specific rotation beats the outer
+            // trackball when they overlap).
+            const float ring_radius = m_radius_world * RING_SCALE;
+            const float ring_tol = RING_TOL * f.dpi_scale;
+            for (int i = 0; i < 3 && m_hover_ring_axis < 0; ++i)
+            {
+                if (RingScreenDistance(f, m_center, m_axis_world[i], ring_radius) < ring_tol)
+                    m_hover_ring_axis = i;
+            }
+
+            // Outer screen-facing trackball ring.
+            if (m_hover_ring_axis < 0)
+            {
+                float dx = f.mouse_x - m_center_sx;
+                float dy = f.mouse_y - m_center_sy;
+                if (std::fabs(std::sqrt(dx * dx + dy * dy) - RING_PX * f.dpi_scale) < ring_tol)
+                    m_hover_ring_axis = 3;
+            }
         }
         else
         {
+            const float handle_px = HANDLE_PX * f.dpi_scale;
             for (int i = 0; i < 3; ++i)
             {
                 Vec3 tip = Vec3Add(m_center, Vec3Scale(m_axis_world[i], m_radius_world));
                 float tx, ty, td;
                 if (!Project(f, tip, tx, ty, td))
                     continue;
-                if (DistPointSegment(f.mouse_x, f.mouse_y, m_center_sx, m_center_sy, tx, ty) < HANDLE_PX)
+                if (DistPointSegment(f.mouse_x, f.mouse_y, m_center_sx, m_center_sy, tx, ty) < handle_px)
                     m_hover_axis = i;
             }
             float dx = f.mouse_x - m_center_sx;
             float dy = f.mouse_y - m_center_sy;
-            if (std::sqrt(dx * dx + dy * dy) < CENTER_PX)
+            if (std::sqrt(dx * dx + dy * dy) < CENTER_PX * f.dpi_scale)
                 m_hover_center = true;
         }
     }
@@ -215,7 +345,7 @@ void GizmoController::Update(const GizmoFrame &f)
     if (!ImGui::IsMouseClicked(0))
         return;
 
-    if (sel && (m_hover_axis >= 0 || m_hover_center || m_hover_ring))
+    if (sel && (m_hover_axis >= 0 || m_hover_center || m_hover_ring_axis >= 0))
         StartDrag(f, *sel);
     else
         Pick(f);
@@ -228,8 +358,8 @@ void GizmoController::StartDrag(const GizmoFrame &f, Entity &entity)
         m_drag_axis = m_hover_axis;
     else if (m_hover_center)
         m_drag_axis = 3;
-    else if (m_hover_ring)
-        m_drag_axis = 4;
+    else if (m_hover_ring_axis >= 0)
+        m_drag_axis = (m_hover_ring_axis == 3) ? 4 : m_hover_ring_axis;
 
     m_start_pos[0] = entity.transform.position[0];
     m_start_pos[1] = entity.transform.position[1];
@@ -249,7 +379,21 @@ void GizmoController::StartDrag(const GizmoFrame &f, Entity &entity)
     }
     else if (m_drag_axis == 4)
     {
+        // Outer trackball: angle of the cursor around the projected center.
         m_angle_start = std::atan2(f.mouse_y - m_center_sy, f.mouse_x - m_center_sx);
+    }
+    else if (mode == GizmoMode::Rotate)
+    {
+        // 3D ring: intersect the mouse ray with the ring's plane and measure
+        // the initial cursor angle around the ring axis.
+        Vec3 u, v;
+        RingBasis(m_axis_world[m_drag_axis], u, v);
+        Vec3 hit;
+        if (RayPlane(MakeRay(f), m_center, m_axis_world[m_drag_axis], hit))
+        {
+            Vec3 d = Vec3Sub(hit, m_center);
+            m_angle_start = std::atan2(Vec3Dot(d, v), Vec3Dot(d, u));
+        }
     }
     else
     {
@@ -278,26 +422,32 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
     }
     else if (m_drag_axis == 4)
     {
-        // Rotation: drag around the projected center, rotating about the
-        // camera's view axis. delta = current angle - start angle.
+        // Outer trackball: free rotation about the camera's view axis, driven
+        // by the cursor angle around the projected center.
         float ang = std::atan2(f.mouse_y - m_center_sy, f.mouse_x - m_center_sx);
         float delta = ang - m_angle_start;
         Vec3 right, up, fwd;
         CameraBasis(f.cam_pitch, f.cam_yaw, right, up, fwd);
-        Mat4 r = Mat4Mul(
-            Mat4RotateX(m_start_rot[0]),
-            Mat4Mul(Mat4RotateY(m_start_rot[1]), Mat4RotateZ(m_start_rot[2])));
-        Mat4 rn = Mat4Mul(Mat4RotateAxis(fwd, delta * 180.0f / PI), r);
-        Vec3 e = Mat4ExtractEuler(rn);
-        // Reject a corrupt decomposition: if any euler came out non-finite
-        // (NaN/Inf can only appear if the start orientation was already
-        // poisoned), keep the previous rotation instead of writing garbage
-        // into the transform that would propagate through the renderer.
-        if (std::isfinite(e.x) && std::isfinite(e.y) && std::isfinite(e.z))
+        ApplyRotationAboutAxis(entity, fwd, delta * 180.0f / PI, m_start_rot);
+    }
+    else if (mode == GizmoMode::Rotate)
+    {
+        // 3D ring: rotate about the ring's world-space axis. The cursor angle
+        // is measured in the ring's plane (u/v basis) and delta is wrapped to
+        // [-PI, PI] so the object tracks the cursor without snapping at the
+        // atan2 discontinuity.
+        Vec3 n = m_axis_world[m_drag_axis];
+        Vec3 u, v;
+        RingBasis(n, u, v);
+        Vec3 hit;
+        if (RayPlane(MakeRay(f), m_center, n, hit))
         {
-            entity.transform.rotation[0] = e.x;
-            entity.transform.rotation[1] = e.y;
-            entity.transform.rotation[2] = e.z;
+            Vec3 d = Vec3Sub(hit, m_center);
+            float ang = std::atan2(Vec3Dot(d, v), Vec3Dot(d, u));
+            float delta = ang - m_angle_start;
+            while (delta >  PI) delta -= 2.0f * PI;
+            while (delta < -PI) delta += 2.0f * PI;
+            ApplyRotationAboutAxis(entity, n, delta * 180.0f / PI, m_start_rot);
         }
     }
     else if (mode == GizmoMode::Translate)
@@ -417,28 +567,81 @@ void GizmoController::Draw(SDL_Renderer *renderer, const GizmoFrame &f)
 
     if (mode == GizmoMode::Rotate)
     {
-        bool hot = (m_dragging && m_drag_axis == 4) || (!m_dragging && m_hover_ring);
-        Uint8 cr = hot ? 255 : 120;
-        Uint8 cg = hot ? 235 : 200;
-        Uint8 cb = hot ? 235 : 255;
-        SDL_SetRenderDrawColor(renderer, cr, cg, cb, 255);
+        const float ring_px = RING_PX * f.dpi_scale;
+        const float ring_radius = m_radius_world * RING_SCALE;
+
+        // While dragging an axis ring, freeze the gizmo at the drag-start
+        // orientation so the ring stays fixed in space while the object
+        // rotates beneath it (the dragged ring IS the axis of rotation).
+        const bool freeze = m_dragging && m_drag_axis >= 0 && m_drag_axis <= 2;
+        Vec3 axes[3];
+        if (freeze)
+        {
+            axes[0] = m_axis_world[0];
+            axes[1] = m_axis_world[1];
+            axes[2] = m_axis_world[2];
+        }
+        else
+        {
+            axes[0] = AxisOf(world, 0);
+            axes[1] = AxisOf(world, 1);
+            axes[2] = AxisOf(world, 2);
+        }
+
+        int active = m_dragging ? ((m_drag_axis == 4) ? 3 : m_drag_axis) : m_hover_ring_axis;
+
+        static const Uint8 AXIS_COLOR[3][3] = {
+            { 232, 80,  80  },  // X red
+            { 90,  200, 100 },  // Y green
+            { 80,  140, 255 },  // Z blue
+        };
+        for (int i = 0; i < 3; ++i)
+            DrawRing3D(renderer, f, center, axes[i], ring_radius, AXIS_COLOR[i], active == i);
+
+        // Outer screen-facing trackball ring.
+        Uint8 or_c = 200, og = 235, ob = 255;
+        if (active == 3)
+        {
+            or_c = 255; og = 255; ob = 255;
+        }
+        SDL_SetRenderDrawColor(renderer, or_c, og, ob, 255);
         const int SEGMENTS = 64;
         float px = 0.0f, py = 0.0f;
         for (int i = 0; i <= SEGMENTS; ++i)
         {
             float a = (float)i / (float)SEGMENTS * 2.0f * PI;
-            float qx = cx + std::cos(a) * RING_PX;
-            float qy = cy + std::sin(a) * RING_PX;
+            float qx = cx + std::cos(a) * ring_px;
+            float qy = cy + std::sin(a) * ring_px;
             if (i > 0)
                 SDL_RenderDrawLine(renderer, (int)px, (int)py, (int)qx, (int)qy);
             px = qx; py = qy;
         }
         if (m_dragging)
         {
-            float ang = std::atan2(f.mouse_y - cy, f.mouse_x - cx);
-            SDL_RenderDrawLine(renderer, (int)cx, (int)cy,
-                               (int)(cx + std::cos(ang) * RING_PX),
-                               (int)(cy + std::sin(ang) * RING_PX));
+            // Radius indicator on the active ring tracks the cursor.
+            if (m_drag_axis == 4)
+            {
+                float ang = std::atan2(f.mouse_y - cy, f.mouse_x - cx);
+                SDL_RenderDrawLine(renderer, (int)cx, (int)cy,
+                                   (int)(cx + std::cos(ang) * ring_px),
+                                   (int)(cy + std::sin(ang) * ring_px));
+            }
+            else if (m_drag_axis >= 0 && m_drag_axis <= 2)
+            {
+                Vec3 n = m_axis_world[m_drag_axis];
+                Vec3 u, v;
+                RingBasis(n, u, v);
+                Vec3 hit;
+                if (RayPlane(MakeRay(f), center, n, hit))
+                {
+                    Vec3 d = Vec3Sub(hit, center);
+                    float ang = std::atan2(Vec3Dot(d, v), Vec3Dot(d, u));
+                    Vec3 pt = RingPoint(center, u, v, ring_radius, ang);
+                    float sx, sy, sd;
+                    if (Project(f, pt, sx, sy, sd))
+                        SDL_RenderDrawLine(renderer, (int)cx, (int)cy, (int)sx, (int)sy);
+                }
+            }
         }
         return;
     }

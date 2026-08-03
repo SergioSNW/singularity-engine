@@ -37,6 +37,12 @@ struct GizmoFrame
     float near_p = 0.1f;
     Mat4 view_proj;
     float dt = 0.0f;
+
+    // Physical / logical pixel ratio of the viewport render target. On a 2x
+    // high-DPI display the target is created at physical resolution while all
+    // gizmo pixel metrics (arm length, hit tolerances, ring radii) are expressed
+    // in logical points, so they are multiplied by this factor before use.
+    float dpi_scale = 1.0f;
 };
 
 // Viewport transform gizmo (translate / rotate / scale) plus screen-space
@@ -84,7 +90,7 @@ private:
     Vec3 m_axis_world[3];        // local axes of the selection, in world space
     int m_hover_axis = -1;
     bool m_hover_center = false;
-    bool m_hover_ring = false;
+    int m_hover_ring_axis = -1;  // rotate mode: -1 none, 0/1/2 axis ring, 3 outer trackball
 
     void StartDrag(const GizmoFrame &frame, Entity &entity);
     void ApplyDrag(const GizmoFrame &frame, Entity &entity);

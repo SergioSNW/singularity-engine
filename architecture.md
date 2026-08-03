@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.10.2-alpha — fixed the gizmo mode-switch crash (asymmetric ImGui style push/pop) and reset drag state when switching gizmo modes.
+> **Current version:** v0.10.3-alpha — 3D rotation rings + trackball for the rotate gizmo, and a high-DPI viewport render target (physical-pixel resolution) for sharp 3D output on scaled displays.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

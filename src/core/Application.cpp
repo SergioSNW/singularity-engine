@@ -411,6 +411,9 @@ void Application::RenderViewportTarget()
                 gf.active_camera_id = camera_entity ? camera_entity->id : -1;
                 gf.vp_width = (float)w;
                 gf.vp_height = (float)h;
+                ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+                gf.dpi_scale = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
+                    ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
                 gf.hovered = m_viewport->IsHovered();
                 gf.cam_pos = cam_pos;
                 gf.cam_pitch = pitch;
@@ -983,15 +986,28 @@ void Application::Run()
         Uint32 win_flags = SDL_GetWindowFlags(m_window->GetNativeWindow());
         const bool minimized = (win_flags & SDL_WINDOW_MINIMIZED) != 0;
 
+        // The viewport render target must match the window's *physical* pixel
+        // size, not the ImGui logical size. On a high-DPI display the renderer
+        // output is a multiple of the logical window size
+        // (io.DisplayFramebufferScale, e.g. 2.0 on a 200% display): rendering
+        // the 3D pass at logical resolution and letting the final present scale
+        // it up produces a blurry, "upscaled" image. Creating the target at
+        // physical resolution keeps the 3D geometry 1:1 with the framebuffer.
+        ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+        const float dpi = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
+            ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
+        int target_w = (int)std::ceil(vp_w * dpi);
+        int target_h = (int)std::ceil(vp_h * dpi);
+
         // Recreate the off-screen target when it is missing, its size is stale,
         // or a window event invalidated its GPU resources. Never recreate while
         // minimized: the GPU may refuse to build targets for a hidden window.
         if (!minimized &&
             (m_recreate_viewport || !m_viewport_target ||
-             vp_w != m_viewport_target_w || vp_h != m_viewport_target_h))
+             target_w != m_viewport_target_w || target_h != m_viewport_target_h))
         {
             m_recreate_viewport = false;
-            RecreateViewportTarget(vp_w, vp_h);
+            RecreateViewportTarget(target_w, target_h);
         }
 
         UpdateCameraControls((float)dt);
@@ -1012,6 +1028,7 @@ void Application::Run()
                 gf.active_camera_id = FindActiveCamera() ? FindActiveCamera()->id : -1;
                 gf.vp_width = (float)m_viewport_target_w;
                 gf.vp_height = (float)m_viewport_target_h;
+                gf.dpi_scale = dpi;
                 gf.hovered = m_viewport->IsHovered();
                 ImVec2 img_min = m_viewport->GetImageMin();
                 ImVec2 img_size = m_viewport->GetImageSize();

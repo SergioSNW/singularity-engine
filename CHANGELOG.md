@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.3-alpha] — 2026-08-03
+
+### Added
+
+- The rotate gizmo now has three full 3D orthogonal rotation rings (X red, Y green, Z blue) plus an outer, screen-facing trackball ring. Each ring is drawn as a projected 48-segment polyline with the far half dimmed (×0.30) so its 3D orientation reads at any angle, and the hovered/active ring is brightened.
+- Ring drags rotate the entity about the actual axis of the grabbed ring: the mouse ray is intersected with the ring's plane, the cursor angle is measured against an orthonormal `RingBasis(u, v, n)` frame, the delta is wrapped to [-π, π], and the rotation is composed on top of the drag-start orientation via `ApplyRotationAboutAxis` (with non-finite euler rejection). The trackball ring rotates about the camera forward for a pure screen-space spin.
+- Hit-testing uses the minimum distance from the cursor to the ring's projected polyline (`RingScreenDistance`), which is robust even when the ellipse collapses to a line at edge-on angles.
+
+### Fixed
+
+- Fixed a mirror bug in `GizmoController::CameraBasis`: `up` and `fwd` had their z components negated relative to the `RotX(-pitch) * RotY(-yaw)` view matrix, so cursor rays were mirrored about the camera plane once the camera pitched. It was invisible for the old flat screen-space rotate ring and masked for axis picking, but it made the new ring drags collapse (~6° of rotation for a 90° sweep). The vectors are now read directly from the view matrix rows (`right {cy,0,-sy}`, `up {sp·sy,cp,sp·cy}`, `fwd {cp·sy,-sp,cp·cy}`). Verified with a standalone ray/unproject probe and the fuzz harness's new Z-ring sweep test (now yields |roll| ≈ 90).
+
+### Changed
+
+- The 3D viewport render target is now created at *physical* pixel resolution instead of ImGui logical size: `Run()` derives the scale from `io.DisplayFramebufferScale` and sizes the off-screen texture accordingly, so on high-DPI displays the 3D pass is rendered 1:1 with the framebuffer instead of being bilinearly upscaled (blurry).
+- Gizmo screen metrics (`AXIS_PX`, `HANDLE_PX`, `RING_PX`, `RING_TOL`) are now declared in logical points and multiplied by a new `GizmoFrame::dpi_scale` in the controller, keeping handles a constant on-screen size while hit-testing/drawing run in physical viewport pixels.
+- Version bump from 0.10.2-alpha to 0.10.3-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.10.2-alpha] — 2026-08-01
 
 ### Fixed
