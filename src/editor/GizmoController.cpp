@@ -181,7 +181,7 @@ void GizmoController::Update(const GizmoFrame &f)
         float tan_half = std::tan(f.cam_fov * PI / 360.0f);
         float world_per_px = (f.vp_height > 0.0f)
             ? (2.0f * dist * tan_half) / f.vp_height : 1.0f;
-        m_radius_world = AXIS_PX * world_per_px;
+        m_radius_world = std::max(AXIS_PX * world_per_px, 1e-6f);
         m_axis_world[0] = AxisOf(world, 0);
         m_axis_world[1] = AxisOf(world, 1);
         m_axis_world[2] = AxisOf(world, 2);
@@ -289,9 +289,16 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
             Mat4Mul(Mat4RotateY(m_start_rot[1]), Mat4RotateZ(m_start_rot[2])));
         Mat4 rn = Mat4Mul(Mat4RotateAxis(fwd, delta * 180.0f / PI), r);
         Vec3 e = Mat4ExtractEuler(rn);
-        entity.transform.rotation[0] = e.x;
-        entity.transform.rotation[1] = e.y;
-        entity.transform.rotation[2] = e.z;
+        // Reject a corrupt decomposition: if any euler came out non-finite
+        // (NaN/Inf can only appear if the start orientation was already
+        // poisoned), keep the previous rotation instead of writing garbage
+        // into the transform that would propagate through the renderer.
+        if (std::isfinite(e.x) && std::isfinite(e.y) && std::isfinite(e.z))
+        {
+            entity.transform.rotation[0] = e.x;
+            entity.transform.rotation[1] = e.y;
+            entity.transform.rotation[2] = e.z;
+        }
     }
     else if (mode == GizmoMode::Translate)
     {
@@ -308,11 +315,18 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
     }
     else if (mode == GizmoMode::Scale)
     {
+        // factor = 1 + delta / radius_world converts the axis parameter
+        // distance (world units) into a scale multiplier. Guard radius_world:
+        // at extreme zoom it can be near zero, and a zero denominator would
+        // turn the multiplier into Inf. Clamp the result to a sane range.
         float t;
-        if (AxisTFromRay(m_center, m_axis_world[m_drag_axis], MakeRay(f), t))
+        if (m_radius_world > 1e-6f &&
+            AxisTFromRay(m_center, m_axis_world[m_drag_axis], MakeRay(f), t))
         {
             float factor = 1.0f + (t - m_t_start) / m_radius_world;
             float v = m_start_scale[m_drag_axis] * factor;
+            if (!std::isfinite(v) || v > 10000.0f)
+                v = 10000.0f;
             if (v < 0.01f)
                 v = 0.01f;
             entity.transform.scale[m_drag_axis] = v;

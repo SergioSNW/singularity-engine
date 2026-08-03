@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.10.0-alpha — Custom OBJ asset pipeline with per-entity mesh assets, global painter's-pass rendering, click-to-pick selection, and viewport translate/rotate/scale gizmos.
+> **Current version:** v0.10.1-alpha — Rotate/Scale gizmo stability fixes: hardened euler writeback and guarded scale-factor math in the viewport transform gizmo.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document
