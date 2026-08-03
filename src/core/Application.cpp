@@ -24,6 +24,15 @@
 
 static const double TARGET_FRAME_TIME = 1.0 / 60.0;
 
+// Viewport anti-aliasing factor. The off-screen 3D pass is rasterized by the
+// SDL2 renderer, which offers no multisampling for render-target textures, so
+// edges are anti-aliased by supersampling: the target is created at this
+// multiple of the physical window resolution and ImGui downscales it to the
+// viewport rect with linear filtering (2x factor = 4x samples per output
+// pixel). Must stay >= 1.0; multiplied into both the target size and the
+// gizmo's dpi_scale so screen-constant metrics keep their on-screen size.
+static const float kViewportSupersample = 2.0f;
+
 void ConfigureImGuiStyle(float ui_scale)
 {
     // Rebuild the style from scratch so scaling never drifts: reset to the
@@ -107,6 +116,12 @@ void Application::RecreateViewportTarget(int width, int height)
     );
     if (!texture)
         return;
+
+    // The target is supersampled relative to the viewport rect, so it must be
+    // sampled with linear filtering when ImGui draws it (the default is
+    // nearest, which would drop texels on the downscale and reintroduce
+    // aliasing / uneven pixels at fractional DPI).
+    SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
 
     if (m_viewport_target)
         SDL_DestroyTexture(m_viewport_target);
@@ -412,8 +427,9 @@ void Application::RenderViewportTarget()
                 gf.vp_width = (float)w;
                 gf.vp_height = (float)h;
                 ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
-                gf.dpi_scale = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
+                const float dpi = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
                     ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
+                gf.dpi_scale = dpi * kViewportSupersample;
                 gf.hovered = m_viewport->IsHovered();
                 gf.cam_pos = cam_pos;
                 gf.cam_pitch = pitch;
@@ -986,18 +1002,21 @@ void Application::Run()
         Uint32 win_flags = SDL_GetWindowFlags(m_window->GetNativeWindow());
         const bool minimized = (win_flags & SDL_WINDOW_MINIMIZED) != 0;
 
-        // The viewport render target must match the window's *physical* pixel
-        // size, not the ImGui logical size. On a high-DPI display the renderer
-        // output is a multiple of the logical window size
+        // The viewport render target is supersampled to the window's *physical*
+        // pixel size, not the ImGui logical size. On a high-DPI display the
+        // renderer output is a multiple of the logical window size
         // (io.DisplayFramebufferScale, e.g. 2.0 on a 200% display): rendering
         // the 3D pass at logical resolution and letting the final present scale
         // it up produces a blurry, "upscaled" image. Creating the target at
-        // physical resolution keeps the 3D geometry 1:1 with the framebuffer.
+        // physical resolution keeps the 3D geometry 1:1 with the framebuffer,
+        // and the extra kViewportSupersample factor anti-aliases edges when
+        // ImGui downscales it into the viewport rect (SDL2 renderer has no
+        // MSAA for off-screen targets, so this is the AA strategy).
         ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
         const float dpi = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
             ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
-        int target_w = (int)std::ceil(vp_w * dpi);
-        int target_h = (int)std::ceil(vp_h * dpi);
+        int target_w = (int)std::ceil(vp_w * dpi * kViewportSupersample);
+        int target_h = (int)std::ceil(vp_h * dpi * kViewportSupersample);
 
         // Recreate the off-screen target when it is missing, its size is stale,
         // or a window event invalidated its GPU resources. Never recreate while
@@ -1028,7 +1047,7 @@ void Application::Run()
                 gf.active_camera_id = FindActiveCamera() ? FindActiveCamera()->id : -1;
                 gf.vp_width = (float)m_viewport_target_w;
                 gf.vp_height = (float)m_viewport_target_h;
-                gf.dpi_scale = dpi;
+                gf.dpi_scale = dpi * kViewportSupersample;
                 gf.hovered = m_viewport->IsHovered();
                 ImVec2 img_min = m_viewport->GetImageMin();
                 ImVec2 img_size = m_viewport->GetImageSize();

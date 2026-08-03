@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.4-alpha] — 2026-08-03
+
+### Changed
+
+- Anti-aliased the 3D viewport via supersampling. The SDL2 renderer API exposes no MSAA for off-screen render-target textures (it only multisamples a window's backbuffer, too late to help the composited 3D pass), so the off-screen target is now created at `kViewportSupersample = 2.0` times the physical window resolution (`logical × DisplayFramebufferScale × 2`, i.e. 4 samples per output pixel) and ImGui downscales it into the viewport rect with linear filtering. Triangle edges, wireframes, the grid, and the gizmo itself are all rasterized at 4x texel density and smoothed on the downscale.
+- `RecreateViewportTarget()` now calls `SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear)`. The target previously used the SDL default nearest sampling, which dropped texels on the downscale and produced uneven, aliased pixels at fractional DPI scales; linear sampling makes the physical→logical mapping smooth at any ratio.
+- The gizmo's `dpi_scale` (in `Run()` and `RenderViewportTarget()`) is now `DisplayFramebufferScale × kViewportSupersample`, keeping all gizmo screen metrics (`AXIS_PX`, `HANDLE_PX`, `RING_PX`, `RING_TOL`, `CENTER_PX`) a constant on-screen size while hit-testing and drawing run at supersampled resolution. The cursor-to-target mapping is unchanged because both the target size and the gizmo scale grow by the same factor.
+- Verified with the existing fuzz harness (all 810 gizmo frames pass; Z-ring sweep still yields |roll| ≈ 90) and a live smoke test of the rebuilt engine.
+- Version bump from 0.10.3-alpha to 0.10.4-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.10.3-alpha] — 2026-08-03
 
 ### Added

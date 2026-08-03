@@ -38,10 +38,12 @@ struct GizmoFrame
     Mat4 view_proj;
     float dt = 0.0f;
 
-    // Physical / logical pixel ratio of the viewport render target. On a 2x
-    // high-DPI display the target is created at physical resolution while all
-    // gizmo pixel metrics (arm length, hit tolerances, ring radii) are expressed
-    // in logical points, so they are multiplied by this factor before use.
+    // Pixels of the viewport render target per logical point (UI point) on
+    // screen. This is the display's framebuffer scale (e.g. 2.0 on a 200%
+    // high-DPI display) times the viewport supersample factor: the target is
+    // created at that multiple of the logical viewport size, so all gizmo pixel
+    // metrics (arm length, hit tolerances, ring radii) expressed in logical
+    // points are multiplied by this factor to keep a constant on-screen size.
     float dpi_scale = 1.0f;
 };
 

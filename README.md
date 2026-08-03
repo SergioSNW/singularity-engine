@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.10.3-alpha — 3D Rotation Rings, Trackball & High-DPI Viewport Sharpness
+v0.10.4-alpha — Viewport High-Definition & Anti-Aliasing Polish
 
 ## Dependencies
 

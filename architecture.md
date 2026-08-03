@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.10.3-alpha — 3D rotation rings + trackball for the rotate gizmo, and a high-DPI viewport render target (physical-pixel resolution) for sharp 3D output on scaled displays.
+> **Current version:** v0.10.4-alpha — viewport high-definition & anti-aliasing polish: the 3D off-screen target is supersampled (2x physical resolution, linear-filtered downscale) to smooth geometry/wireframe/gizmo edges, since the SDL2 renderer exposes no MSAA for off-screen render targets.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document
