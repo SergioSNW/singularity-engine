@@ -9,10 +9,12 @@
 class TextEditor;
 struct ImFont;
 
-// In-editor Lua script editor. A sidebar browses assets/scripts/ while a
-// syntax-highlighting buffer holds the open file. Unsaved edits mark the
-// filename with an asterisk; "Save & Reload" writes the file to disk and, when
-// a play session is live, hot-swaps the running session via
+// In-editor Lua script editor. The "Script Editor" window is a file-browser
+// sidebar over assets/scripts/; selecting a script spawns a dedicated floating
+// "Script Editor: <file>" code window (resizable, minimizable, dockable) that
+// hosts the syntax-highlighting buffer, a Save / Save & Reload toolbar, and a
+// dirty marker. "Save & Reload" writes the file to disk and, when a play
+// session is live, hot-swaps the running session via
 // ScriptEngine::ReloadSession so OnStart re-runs against the new text.
 class ScriptEditorPanel : public EditorPanel
 {
@@ -26,7 +28,8 @@ public:
 
     void OnImGuiRender(float dt) override;
 
-    bool &VisibleRef() { return m_visible; }
+    bool IsVisible() const { return m_visible; }
+    void ToggleVisible();
 
 private:
     void RefreshFileList();
@@ -35,7 +38,7 @@ private:
     void RequestOpen(const std::string &path);
     void ConfirmUnsavedModal();
     void DrawFileBrowser();
-    void DrawEditor();
+    void DrawCodeWindow();
 
     ReloadCallback m_reload;
     TextEditor *m_editor;
@@ -47,6 +50,11 @@ private:
     std::string m_status;        // last-action feedback line
     char m_new_name[256];        // "New Script" name input buffer
     std::string m_pending_open;  // switch target waiting on the unsaved-changes dialog
-    bool m_visible;
+    bool m_visible;              // sidebar (file browser) window visible
+    bool m_editor_open;          // dedicated code window visible
     bool m_modal_requested;      // open the unsaved-changes dialog this frame
+    bool m_focus_code_window;    // focus the code window next frame
+    float m_editor_pos[2];       // remembered code-window position
+    float m_editor_size[2];      // remembered code-window size
+    bool m_editor_pos_valid;     // remembered code-window geometry exists
 };

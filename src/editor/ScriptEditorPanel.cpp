@@ -29,7 +29,10 @@ ScriptEditorPanel::ScriptEditorPanel(ReloadCallback reload)
     , m_editor(new TextEditor())
     , m_mono_font(nullptr)
     , m_visible(true)
+    , m_editor_open(false)
     , m_modal_requested(false)
+    , m_focus_code_window(false)
+    , m_editor_pos_valid(false)
 {
     m_new_name[0] = '\0';
 
@@ -50,6 +53,18 @@ ScriptEditorPanel::ScriptEditorPanel(ReloadCallback reload)
 ScriptEditorPanel::~ScriptEditorPanel()
 {
     delete m_editor;
+}
+
+void ScriptEditorPanel::ToggleVisible()
+{
+    m_visible = !m_visible;
+    // The View-menu toggle and F4 control the whole script-editing UI: hiding
+    // the sidebar also hides the floating code window, and re-showing it
+    // brings the code window back when a file is already loaded.
+    if (!m_visible)
+        m_editor_open = false;
+    else if (!m_current.empty())
+        m_editor_open = true;
 }
 
 void ScriptEditorPanel::RefreshFileList()
@@ -78,11 +93,21 @@ bool ScriptEditorPanel::OpenFile(const std::string &path, std::string *error)
             *error = "cannot open '" + path + "'";
         return false;
     }
+
+    // The code-window title embeds the file name, so switching files changes
+    // the ImGui window identity. If a code window is already showing a
+    // different file, remember its geometry so the retitled window reappears
+    // in the same spot instead of bouncing around.
+    if (m_editor_open && !m_current.empty() && m_current != path)
+        m_editor_pos_valid = true;
+
     std::ostringstream ss;
     ss << in.rdbuf();
     m_current = path;
     m_saved_text = ss.str();
     m_editor->SetText(m_saved_text);
+    m_editor_open = true;
+    m_focus_code_window = true;
     m_status = "Opened " + path;
     return true;
 }
@@ -178,8 +203,6 @@ void ScriptEditorPanel::ConfirmUnsavedModal()
 
 void ScriptEditorPanel::DrawFileBrowser()
 {
-    ImGui::BeginChild("ScriptsSidebar", ImVec2(200.0f, 0.0f), true);
-
     ImGui::TextUnformatted("Scripts (assets/scripts)");
     ImGui::Separator();
 
@@ -237,30 +260,46 @@ void ScriptEditorPanel::DrawFileBrowser()
             }
         }
     }
-
-    ImGui::EndChild();
 }
 
-void ScriptEditorPanel::DrawEditor()
+void ScriptEditorPanel::DrawCodeWindow()
 {
-    if (m_current.empty())
+    if (!m_editor_open || m_current.empty())
+        return;
+
+    // The title embeds the file name (window identity changes on switch), so a
+    // remembered geometry is re-applied before Begin to keep the window put.
+    if (m_editor_pos_valid)
     {
-        ImGui::BeginChild("EditorEmpty", ImVec2(0.0f, 0.0f));
-        ImGui::TextUnformatted("Select or create a script in the sidebar to begin.");
-        ImGui::EndChild();
+        ImGui::SetNextWindowPos(ImVec2(m_editor_pos[0], m_editor_pos[1]));
+        ImGui::SetNextWindowSize(ImVec2(m_editor_size[0], m_editor_size[1]));
+        m_editor_pos_valid = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(720.0f, 480.0f), ImGuiCond_FirstUseEver);
+
+    const std::string name = std::filesystem::path(m_current).filename().string();
+    const std::string title = "Script Editor: " + name;
+    if (!ImGui::Begin(title.c_str(), &m_editor_open))
+    {
+        ImGui::End();
         return;
     }
+    if (m_focus_code_window)
+    {
+        ImGui::SetWindowFocus();
+        m_focus_code_window = false;
+    }
+    m_editor_pos[0] = ImGui::GetWindowPos().x;
+    m_editor_pos[1] = ImGui::GetWindowPos().y;
+    m_editor_size[0] = ImGui::GetWindowSize().x;
+    m_editor_size[1] = ImGui::GetWindowSize().y;
 
+    // Toolbar: dirty marker, save actions, last-action status.
     const bool dirty = (m_editor->GetText() != m_saved_text);
-
-    // Header: filename with the dirty marker, then the save actions.
     if (dirty)
-        ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1.00f), "* %s", m_current.c_str());
+        ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1.00f), "* %s", name.c_str());
     else
-        ImGui::TextUnformatted(m_current.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d lines", m_editor->GetTotalLines());
-
+        ImGui::TextUnformatted(name.c_str());
     ImGui::SameLine();
     ImGui::BeginDisabled(!dirty);
     if (ImGui::Button("Save"))
@@ -282,35 +321,12 @@ void ScriptEditorPanel::DrawEditor()
             m_status = error;
     }
     ImGui::EndDisabled();
-
-    // Buffer body, leaving one line for the status feedback.
-    ImGui::BeginChild("EditorBody", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), false,
-                      ImGuiWindowFlags_NoScrollbar);
-    ImGui::PushFont(m_mono_font ? m_mono_font : ImGui::GetFont());
-    m_editor->Render("##ScriptBuffer", ImVec2(0.0f, 0.0f), false);
-    ImGui::PopFont();
-    ImGui::EndChild();
-
+    ImGui::SameLine();
     if (!m_status.empty())
         ImGui::TextDisabled("%s", m_status.c_str());
-}
+    ImGui::Separator();
 
-void ScriptEditorPanel::OnImGuiRender(float dt)
-{
-    (void)dt;
-    if (!m_visible)
-        return;
-
-    if (!ImGui::Begin("Script Editor", &m_visible, ImGuiWindowFlags_NoCollapse))
-    {
-        ImGui::End();
-        return;
-    }
-
-    RefreshFileList();
-    ConfirmUnsavedModal();
-
-    // Ctrl+S saves the open file while this window has keyboard focus.
+    // Ctrl+S saves while this window has keyboard focus.
     if (ImGui::GetIO().KeyCtrl && ImGui::IsWindowFocused() &&
         ImGui::GetIO().WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
@@ -319,17 +335,39 @@ void ScriptEditorPanel::OnImGuiRender(float dt)
             m_status = error;
     }
 
-    // Open the first script the first time the editor appears.
-    if (m_current.empty() && !m_files.empty())
-    {
-        std::string error;
-        if (!OpenFile(m_files.front(), &error))
-            m_status = error;
-    }
-
-    DrawFileBrowser();
-    ImGui::SameLine();
-    DrawEditor();
+    // The syntax-highlighting buffer fills the remaining content region.
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImGui::PushFont(m_mono_font ? m_mono_font : ImGui::GetFont());
+    m_editor->Render("##ScriptBuffer", avail, false);
+    ImGui::PopFont();
 
     ImGui::End();
+}
+
+void ScriptEditorPanel::OnImGuiRender(float dt)
+{
+    (void)dt;
+    RefreshFileList();
+
+    if (m_visible)
+    {
+        if (ImGui::Begin("Script Editor", &m_visible, ImGuiWindowFlags_NoCollapse))
+        {
+            ConfirmUnsavedModal();
+
+            // Open the first script the first time the editor appears.
+            if (m_current.empty() && !m_files.empty())
+            {
+                std::string error;
+                if (!OpenFile(m_files.front(), &error))
+                    m_status = error;
+            }
+
+            DrawFileBrowser();
+        }
+        ImGui::End();
+    }
+
+    // The dedicated code window floats independently of the sidebar.
+    DrawCodeWindow();
 }

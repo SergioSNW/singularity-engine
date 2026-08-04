@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.3-alpha] — 2026-08-04
+
+### Changed
+
+- The script editor now renders the Lua buffer in a dedicated floating `Script Editor: <file>` window (resizable, minimizable, dockable) instead of a fixed pane beside the sidebar. The title embeds the file name (dirty buffer flags it with `*`), and a top toolbar holds Save and Save & Reload buttons plus the last-action status line; `ImGui::GetContentRegionAvail()` makes the `TextEditor` buffer fill the remaining space on any resize.
+- Opening a file in the sidebar focuses the dedicated code window. Because the ImGui window identity changes with the file name, the window's position/size are remembered and re-applied across file switches so the retitled window stays put.
+- `ScriptEditorPanel` now exposes `IsVisible()`/`ToggleVisible()`; F4 and the View-menu item toggle the whole script-editing UI (hiding the sidebar also closes the code window, re-showing restores it when a file is loaded).
+- Version bump from 0.12.1-alpha to 0.12.3-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.12.1-alpha] — 2026-08-04
 
 ### Added

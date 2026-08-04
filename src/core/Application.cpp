@@ -889,9 +889,9 @@ bool Application::Init(int width, int height, const char *title)
     );
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
-    // Script editor: sidebar over assets/scripts/ + syntax-highlighting buffer.
-    // Its reload callback hot-swaps the running play session after a save so
-    // script edits apply without leaving play mode.
+    // Script editor: sidebar over assets/scripts/ + dedicated floating code
+    // window. Its reload callback hot-swaps the running play session after a
+    // save so script edits apply without leaving play mode.
     m_script_editor = new ScriptEditorPanel([this]() -> bool {
         if (m_state != EngineState::Play)
             return false;
@@ -974,7 +974,7 @@ void Application::Run()
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F4 && m_script_editor)
             {
                 // F4 toggles the script editor in any mode (View menu equivalent).
-                m_script_editor->VisibleRef() = !m_script_editor->VisibleRef();
+                m_script_editor->ToggleVisible();
             }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
@@ -1067,7 +1067,8 @@ void Application::Run()
                     if (m_script_editor)
                     {
                         ImGui::Separator();
-                        ImGui::MenuItem("Script Editor", "F4", &m_script_editor->VisibleRef());
+                        if (ImGui::MenuItem("Script Editor", "F4", m_script_editor->IsVisible()))
+                            m_script_editor->ToggleVisible();
                     }
                     ImGui::EndMenu();
                 }

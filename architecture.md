@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.12.1-alpha — In-editor script IDE & live reload: a dockable `ScriptEditorPanel` (vendored ImGuiColorTextEdit with Lua syntax highlighting) browses `assets/scripts/` in a sidebar, loads/saves `.lua` files, flags unsaved edits with a `*` on the filename, and its "Save & Reload" action hot-swaps the running play session via `ScriptEngine::ReloadSession` (tear down + re-bind + re-fire `OnStart` from disk); script paths already round-trip through the scene JSON serializer via `ScriptComponent.path`.
+> **Current version:** v0.12.3-alpha — Dedicated floating script editor window: the script editor now splits into a compact file-browser sidebar and an independent, resizable/minimizable/dockable `Script Editor: <file>` code window that hosts the syntax-highlighting Lua buffer plus a Save / Save & Reload toolbar (`ImGui::GetContentRegionAvail()` fills the buffer, window identity is keyed by filename and geometry is preserved across file switches). Opening a sidebar file focuses the dedicated window; F4/View-menu toggle hides both. Unsaved edits flag the title with `*`; "Save & Reload" hot-swaps the running play session via `ScriptEngine::ReloadSession` (tear down + re-bind + re-fire `OnStart` from disk); script paths round-trip through the scene JSON serializer via `ScriptComponent.path`.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

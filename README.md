@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.12.1-alpha — In-Editor Script IDE & Live Reload
+v0.12.3-alpha — Dedicated Floating Script Editor Window
 
 ## Dependencies
 
