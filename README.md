@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.12.0-alpha — Lua Scripting Engine & Component Bindings
+v0.12.1-alpha — In-Editor Script IDE & Live Reload
 
 ## Dependencies
 

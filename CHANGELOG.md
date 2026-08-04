@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.1-alpha] — 2026-08-04
+
+### Added
+
+- In-editor script IDE: a dockable `ScriptEditorPanel` (`src/editor/ScriptEditorPanel.{h,cpp}`) built on vendored [ImGuiColorTextEdit](https://github.com/BalazsJako/ImGuiColorTextEdit) (MIT, `third_party/ImGuiColorTextEdit/`). The left sidebar scans `assets/scripts/` dynamically (sorted `.lua` list with a "New script" field and a Refresh button); the right side is a syntax-highlighting Lua buffer on a monospace font. Unsaved edits mark the filename with an asterisk `*`; switching files with a dirty buffer opens a Save/Discard/Cancel dialog; `Ctrl+S` (or Save) writes the file.
+- "Save & Reload": writes the current script to disk and, when a play session is live, hot-swaps it through `ScriptEngine::ReloadSession` so `OnStart` re-runs against the new text without leaving play mode. In the editor it saves and reports "loads on next Play".
+- `ScriptEngine::ReloadSession(scene, errors)`: tears down the current session (releases registry refs, closes the Lua VM) and starts a fresh one, re-reading every script file from disk.
+- Script editor is reachable from the View menu (`F4` toggles) and stays visible during play mode (floating over the game view) for live editing; it docks to the bottom strip on first launch.
+
+### Changed
+
+- `Application` owns a `ScriptEditorPanel`, renders it during both Editor and Play states, and hooks its reload callback to `ReloadSession` only while playing.
+- Vendored `ImGuiColorTextEdit` TextEditor (BalazsJako fork, ~ca2f9f14) and wired it into CMake (`target_sources` + `third_party` include dir). Lua language definition ships with the vendored widget.
+- Verified script-path persistence with a standalone SceneSerializer round-trip test (serialize → deserialize keeps `ScriptComponent.path`) and the reload path with a standalone harness (edit file between sessions, `ReloadSession`, OnStart re-runs with new constants, new OnUpdate active, broken-script reload surfaces an error). The 18-check ScriptEngine harness and the `player.lua` spin check still pass.
+- Version bump from 0.12.0-alpha to 0.12.1-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.12.0-alpha] — 2026-08-04
 
 ### Added

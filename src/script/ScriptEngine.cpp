@@ -581,6 +581,12 @@ void ScriptEngine::UpdateSession(Scene &scene, float dt)
         std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
 }
 
+bool ScriptEngine::ReloadSession(Scene &scene, std::string &errors)
+{
+    StopSession();                      // releases refs + VM from the old run
+    return StartSession(scene, errors); // re-reads every script file from disk
+}
+
 void ScriptEngine::StopSession()
 {
     if (!m_lua)

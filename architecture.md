@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.12.0-alpha — Lua scripting engine & component bindings: Lua 5.4 is embedded via CMake FetchContent and compiled into the engine; a `ScriptEngine` binds each entity's `Transform` (live `Vector3` views over `position`/`rotation`/`scale`), `Entity` (name/id/transform), and a `Vector3` constructor into a per-entity Lua `_ENV`; the `ScriptComponent` names a `.lua` file that is bound on play start and driven by `OnStart` / `OnUpdate(dt)` during play mode.
+> **Current version:** v0.12.1-alpha — In-editor script IDE & live reload: a dockable `ScriptEditorPanel` (vendored ImGuiColorTextEdit with Lua syntax highlighting) browses `assets/scripts/` in a sidebar, loads/saves `.lua` files, flags unsaved edits with a `*` on the filename, and its "Save & Reload" action hot-swaps the running play session via `ScriptEngine::ReloadSession` (tear down + re-bind + re-fire `OnStart` from disk); script paths already round-trip through the scene JSON serializer via `ScriptComponent.path`.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

@@ -32,6 +32,12 @@ public:
     // alive. Runtime errors are recorded in LastError() and printed to stderr.
     void UpdateSession(Scene &scene, float dt);
 
+    // Tear the running session down and bind every scripted entity again,
+    // re-reading each script file from disk and re-firing OnStart. Used by the
+    // script editor's Save & Reload to apply edits to the live play session.
+    // Returns false only if a fresh VM could not be created.
+    bool ReloadSession(Scene &scene, std::string &errors);
+
     // Tear the VM down and release all per-entity references.
     void StopSession();
 

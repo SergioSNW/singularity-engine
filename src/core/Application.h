@@ -18,6 +18,7 @@ class Scene;
 class MeshLibrary;
 class GizmoController;
 class ScriptEngine;
+class ScriptEditorPanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -61,6 +62,7 @@ private:
     MeshLibrary *m_mesh_library;
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
+    ScriptEditorPanel *m_script_editor;
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;

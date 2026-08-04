@@ -7,6 +7,7 @@
 #include "editor/InspectorPanel.h"
 #include "editor/ViewportPanel.h"
 #include "editor/GizmoController.h"
+#include "editor/ScriptEditorPanel.h"
 
 #include "Scene.h"
 #include "SceneSerializer.h"
@@ -80,6 +81,7 @@ Application::Application()
     , m_mesh_library(nullptr)
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
+    , m_script_editor(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -887,6 +889,21 @@ bool Application::Init(int width, int height, const char *title)
     );
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
+    // Script editor: sidebar over assets/scripts/ + syntax-highlighting buffer.
+    // Its reload callback hot-swaps the running play session after a save so
+    // script edits apply without leaving play mode.
+    m_script_editor = new ScriptEditorPanel([this]() -> bool {
+        if (m_state != EngineState::Play)
+            return false;
+        std::string script_errors;
+        m_script_engine->ReloadSession(*m_scene, script_errors);
+        m_scene_status = script_errors.empty()
+                             ? "Script session reloaded (OnStart re-ran)"
+                             : "Reload errors -> " + script_errors;
+        return true;
+    });
+    m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
+
     RecreateViewportTarget(800, 600);
 
     m_running = true;
@@ -910,6 +927,7 @@ void SetupDockingLayout()
     ImGui::DockBuilderDockWindow("Hierarchy", left);
     ImGui::DockBuilderDockWindow("Viewport", center);
     ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Script Editor", bottom);
     ImGui::DockBuilderDockWindow("Singularity Engine Stats", bottom);
 
     ImGui::DockBuilderFinish(dockspace_id);
@@ -952,6 +970,11 @@ void Application::Run()
                     m_gizmo->SetMode(GizmoMode::Rotate);
                 else if (event.key.keysym.sym == SDLK_3)
                     m_gizmo->SetMode(GizmoMode::Scale);
+            }
+            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F4 && m_script_editor)
+            {
+                // F4 toggles the script editor in any mode (View menu equivalent).
+                m_script_editor->VisibleRef() = !m_script_editor->VisibleRef();
             }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
@@ -1041,6 +1064,11 @@ void Application::Run()
                     ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
                     if (ImGui::Button("Reset##UiScale"))
                         m_ui_scale = 1.0f;
+                    if (m_script_editor)
+                    {
+                        ImGui::Separator();
+                        ImGui::MenuItem("Script Editor", "F4", &m_script_editor->VisibleRef());
+                    }
                     ImGui::EndMenu();
                 }
             }
@@ -1073,8 +1101,12 @@ void Application::Run()
         {
             // Runtime viewport isolation: no dockspace, no editor panels, no
             // selection outlines. The viewport fills the window as a game view.
+            // The script editor stays up so gameplay scripts can be edited and
+            // hot-reloaded live (F4 or the View menu hide it).
             m_viewport->SetIsolated(true);
             m_viewport->OnImGuiRender((float)dt);
+            if (m_script_editor)
+                m_script_editor->OnImGuiRender((float)dt);
         }
         else
         {
@@ -1191,6 +1223,7 @@ void Application::Shutdown()
 
     m_panels.clear();
     m_viewport = nullptr;
+    m_script_editor = nullptr;
 
     if (m_viewport_target)
     {
