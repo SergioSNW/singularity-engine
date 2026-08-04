@@ -255,6 +255,7 @@ void GizmoController::Update(const GizmoFrame &f)
     m_hover_axis = -1;
     m_hover_center = false;
     m_hover_ring_axis = -1;
+    m_hover_entity = -1;
 
     if (!f.scene || !f.selection)
         return;
@@ -278,6 +279,10 @@ void GizmoController::Update(const GizmoFrame &f)
 
     if (!f.hovered)
         return;
+
+    // The entity under the cursor (ray / world-AABB test) drives the hover
+    // bounds box and is reported to the editor; selection is left untouched.
+    m_hover_entity = RaycastEntity(f);
 
     Entity *sel = (f.selection->entity_id >= 0)
         ? f.scene->GetEntityById(f.selection->entity_id)
@@ -486,57 +491,7 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
 
 void GizmoController::Pick(const GizmoFrame &f)
 {
-    int best = -1;
-    float best_depth = FLT_MAX;
-
-    for (const auto &ep : f.scene->GetEntities())
-    {
-        const Entity &e = *ep;
-        if (e.id == f.active_camera_id)
-            continue;
-
-        Mat4 world = f.scene->ComputeWorldMatrix(e);
-        const Mesh *mesh = ResolveMesh(e, f.meshes);
-        if (!mesh)
-            continue;
-
-        const Vec3 &mn = mesh->bounds_min;
-        const Vec3 &mx = mesh->bounds_max;
-        const Vec3 corners[8] = {
-            { mn.x, mn.y, mn.z }, { mx.x, mn.y, mn.z },
-            { mx.x, mx.y, mn.z }, { mn.x, mx.y, mn.z },
-            { mn.x, mn.y, mx.z }, { mx.x, mn.y, mx.z },
-            { mx.x, mx.y, mx.z }, { mn.x, mx.y, mx.z },
-        };
-
-        float minx = FLT_MAX, miny = FLT_MAX, maxx = -FLT_MAX, maxy = -FLT_MAX;
-        float depth_sum = 0.0f;
-        int count = 0;
-        for (int i = 0; i < 8; ++i)
-        {
-            float sx, sy, depth;
-            float w;
-            Vec3 wp = Mat4MulVec3(world, corners[i], w);
-            if (!Project(f, wp, sx, sy, depth))
-                continue;
-            minx = std::min(minx, sx); maxx = std::max(maxx, sx);
-            miny = std::min(miny, sy); maxy = std::max(maxy, sy);
-            depth_sum += depth;
-            ++count;
-        }
-        if (count == 0)
-            continue;
-
-        if (f.mouse_x < minx || f.mouse_x > maxx || f.mouse_y < miny || f.mouse_y > maxy)
-            continue;
-
-        float center_depth = depth_sum / (float)count;
-        if (center_depth < best_depth)
-        {
-            best = e.id;
-            best_depth = center_depth;
-        }
-    }
+    int best = RaycastEntity(f);
 
     if (best >= 0)
     {
@@ -549,6 +504,44 @@ void GizmoController::Pick(const GizmoFrame &f)
         f.selection->entity_id = -1;
         f.selection->entity_name.clear();
     }
+}
+
+// Raycast the cursor ray (MakeRay) against every entity's world-space AABB and
+// return the id of the nearest hit, or -1. Exact 3D intersection: unlike a
+// screen-space rectangle test, overlapping boxes are resolved by true depth
+// along the ray instead of by projected-corner averages.
+int GizmoController::RaycastEntity(const GizmoFrame &f)
+{
+    if (!f.scene || !f.meshes)
+        return -1;
+
+    Ray ray = MakeRay(f);
+    int best = -1;
+    float best_t = FLT_MAX;
+
+    for (const auto &ep : f.scene->GetEntities())
+    {
+        const Entity &e = *ep;
+        if (e.id == f.active_camera_id)
+            continue;
+
+        const Mesh *mesh = ResolveMesh(e, f.meshes);
+        if (!mesh)
+            continue;
+
+        Mat4 world = f.scene->ComputeWorldMatrix(e);
+        Vec3 wmin, wmax;
+        TransformAABB(mesh->bounds_min, mesh->bounds_max, world, wmin, wmax);
+
+        float t_near, t_far;
+        if (RayAABB(ray.o, ray.d, wmin, wmax, t_near, t_far) && t_near < best_t)
+        {
+            best = e.id;
+            best_t = t_near;
+        }
+    }
+
+    return best;
 }
 
 void GizmoController::Draw(SDL_Renderer *renderer, const GizmoFrame &f)

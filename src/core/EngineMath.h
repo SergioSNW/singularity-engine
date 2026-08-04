@@ -269,3 +269,75 @@ static inline Mat4 Mat4LookAt(const Vec3 &eye, const Vec3 &target, const Vec3 &u
     r.m[14] = -(r.m[2]*eye.x + r.m[6]*eye.y + r.m[10]*eye.z);
     return r;
 }
+
+// --- Ray / AABB intersection (slab method) ---
+
+// Intersect a ray with an axis-aligned box. `dir` need not be normalized; the
+// returned parameters are distances in units of `dir` from `origin`. A hit
+// where the box contains the ray origin yields t_near == 0. The box is
+// rejected when it lies entirely behind the ray origin (tmax < 0) or the ray
+// is parallel to a slab the origin is outside of.
+static inline bool RayAABB(const Vec3 &o, const Vec3 &d, const Vec3 &min, const Vec3 &max,
+                           float &t_near, float &t_far)
+{
+    float tmin = 0.0f, tmax = 1e30f;
+    const float origin[3] = { o.x, o.y, o.z };
+    const float dir[3]    = { d.x, d.y, d.z };
+    const float lo[3]     = { min.x, min.y, min.z };
+    const float hi[3]     = { max.x, max.y, max.z };
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (std::fabs(dir[axis]) < 1e-12f)
+        {
+            // Ray parallel to this slab: hit only if the origin is inside it.
+            if (origin[axis] < lo[axis] || origin[axis] > hi[axis])
+                return false;
+            continue;
+        }
+        float inv = 1.0f / dir[axis];
+        float t1 = (lo[axis] - origin[axis]) * inv;
+        float t2 = (hi[axis] - origin[axis]) * inv;
+        if (t1 > t2)
+        {
+            float tmp = t1; t1 = t2; t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax)
+            return false;
+    }
+
+    t_near = tmin;
+    t_far = tmax;
+    return true;
+}
+
+// World-space AABB of a local-space box transformed by `world`. Transforming
+// the 8 corners and taking the min/max is exact for an axis-aligned box under
+// an arbitrary affine transform (rotation/scale/shear), so it is used to
+// derive an entity's world bounds from its mesh's local bounds.
+static inline void TransformAABB(const Vec3 &local_min, const Vec3 &local_max,
+                                 const Mat4 &world, Vec3 &out_min, Vec3 &out_max)
+{
+    const float x0 = local_min.x, y0 = local_min.y, z0 = local_min.z;
+    const float x1 = local_max.x, y1 = local_max.y, z1 = local_max.z;
+    const float xs[2] = { x0, x1 }, ys[2] = { y0, y1 }, zs[2] = { z0, z1 };
+
+    out_min = { 1e30f, 1e30f, 1e30f };
+    out_max = { -1e30f, -1e30f, -1e30f };
+
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            for (int k = 0; k < 2; ++k)
+            {
+                float w;
+                Vec3 p = Mat4MulVec3(world, { xs[i], ys[j], zs[k] }, w);
+                if (p.x < out_min.x) out_min.x = p.x;
+                if (p.y < out_min.y) out_min.y = p.y;
+                if (p.z < out_min.z) out_min.z = p.z;
+                if (p.x > out_max.x) out_max.x = p.x;
+                if (p.y > out_max.y) out_max.y = p.y;
+                if (p.z > out_max.z) out_max.z = p.z;
+            }
+}

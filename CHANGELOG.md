@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0-alpha] — 2026-08-04
+
+### Added
+
+- `BoundsComponent`: each entity mirrors its resolved mesh's local-space AABB (`Mesh::bounds_min/max`) as `local_min/local_max`, refreshed every render frame so it always tracks the geometry used for picking and collision. The box is derived from the mesh, not serialized.
+- `TransformAABB` in `EngineMath.h`: transforms all 8 local corners of a box by an entity's world matrix and returns the exact world-space AABB (valid under any affine transform).
+- `RayAABB` in `EngineMath.h`: slab-method ray/box intersection returning `t_near`/`t_far`, handling parallel slabs, origin-inside boxes (`t_near = 0`), and behind-camera rejection; the direction need not be normalized.
+
+### Changed
+
+- Picking is now an exact raycast instead of the old screen-rectangle heuristic. `GizmoController::Pick` casts the un-projected cursor ray (`MakeRay`) against every entity's world AABB via `RayAABB` and selects the nearest `t_near` hit (or clears selection when nothing is hit). Overlapping boxes are resolved by true depth along the ray rather than by averaged projected-corner depths, which mis-picked whenever projections overlapped.
+- Hover state: `GizmoController` now raycasts every frame while the viewport is hovered and reports the entity under the cursor through `GetHoverEntity()`, independent of selection.
+- The editor overlays wireframe world bounds boxes in pass 3: white for the selected entity (beside its amber outline) and light-blue for the hovered entity. Boxes are transformed to world space with `TransformAABB` before drawing (drawing local coordinates directly misaligns rotated/translated entities).
+- Verified with the fuzz harness (all 810 gizmo frames pass, now including hover/pick/deselect ray-cast scenarios) and a live smoke test of the rebuilt engine.
+- Version bump from 0.10.4-alpha to 0.11.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.10.4-alpha] — 2026-08-03
 
 ### Changed

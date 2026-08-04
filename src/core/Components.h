@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EngineMath.h"
+
 #include <string>
 
 struct TransformComponent
@@ -25,6 +27,18 @@ struct MaterialComponent
 struct MeshComponent
 {
     std::string path;
+};
+
+// Local-space axis-aligned bounding box of the entity's mesh geometry. The
+// mesh library computes each mesh's box once at load (Mesh::bounds_min/max);
+// this component mirrors it onto the entity and is refreshed automatically
+// every render frame, so it always reflects the resolved mesh even after
+// editor mesh changes or scene loads. `TransformAABB` derives the world-space
+// box for picking / collision / visualization.
+struct BoundsComponent
+{
+    Vec3 local_min{0.0f, 0.0f, 0.0f};
+    Vec3 local_max{0.0f, 0.0f, 0.0f};
 };
 
 struct CameraComponent

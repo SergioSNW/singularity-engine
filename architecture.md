@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.10.4-alpha — viewport high-definition & anti-aliasing polish: the 3D off-screen target is supersampled (2x physical resolution, linear-filtered downscale) to smooth geometry/wireframe/gizmo edges, since the SDL2 renderer exposes no MSAA for off-screen render targets.
+> **Current version:** v0.11.0-alpha — AABB bounding boxes & ray-casting picking: each entity carries a `BoundsComponent` mirroring its mesh's local AABB, a slab-based `RayAABB` test casts the cursor ray against world-space boxes (`TransformAABB`) for exact nearest-hit picking and hover reporting, and the editor overlays white (selected) and light-blue (hovered) world bounds boxes.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

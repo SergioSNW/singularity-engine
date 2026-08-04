@@ -174,6 +174,29 @@ static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
     SDL_RenderDrawLine(renderer, ax, ay, bx, by);
 }
 
+// Draw a world-space AABB as a wireframe box (12 edges), using the same
+// projected-line path with near-plane clipping as the grid and mesh wireframes.
+static void DrawWorldAABB(SDL_Renderer *renderer, const Mat4 &view_proj, float near_p,
+                          int w, int h, const Vec3 &min, const Vec3 &max,
+                          Uint8 r, Uint8 g, Uint8 b)
+{
+    const Vec3 c[8] = {
+        { min.x, min.y, min.z }, { max.x, min.y, min.z },
+        { max.x, max.y, min.z }, { min.x, max.y, min.z },
+        { min.x, min.y, max.z }, { max.x, min.y, max.z },
+        { max.x, max.y, max.z }, { min.x, max.y, max.z },
+    };
+    static const int EDGES[12][2] = {
+        { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, // bottom face
+        { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 }, // top face
+        { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, // verticals
+    };
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    for (int i = 0; i < 12; ++i)
+        DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                          c[EDGES[i][0]], c[EDGES[i][1]]);
+}
+
 static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                              float near_p, int w, int h)
 {
@@ -360,6 +383,22 @@ void Application::RenderViewportTarget()
 
             Entity *camera_entity = FindActiveCamera();
 
+            // Refresh every entity's local AABB from its resolved mesh geometry
+            // (Mesh::bounds_min/max). The mesh can change through the editor or
+            // a scene load, so the component is recomputed each frame to stay a
+            // true mirror of the geometry used for picking and collision.
+            for (auto &entity_ptr : m_scene->GetEntities())
+            {
+                Entity &entity = *entity_ptr;
+                std::string mesh_error;
+                const Mesh *mesh = ResolveMesh(entity, mesh_error);
+                if (mesh)
+                {
+                    entity.bounds.local_min = mesh->bounds_min;
+                    entity.bounds.local_max = mesh->bounds_max;
+                }
+            }
+
             // --- Pass 1: solid fills, one global painter's pass ---
             std::vector<FillTri> tris;
             for (auto &entity_ptr : m_scene->GetEntities())
@@ -401,11 +440,15 @@ void Application::RenderViewportTarget()
                                     *mesh, entity.material.color, true);
             }
 
-            // --- Pass 3: selection outline + gizmo overlay (editor only) ---
-            if (m_state == EngineState::Editor &&
-                m_selection && m_selection->entity_id >= 0)
+            // --- Pass 3: selection outline, AABB bounds boxes, gizmo overlay
+            // (editor only). Runs even with no selection so the hovered
+            // entity's bounds box still draws. ---
+            if (m_state == EngineState::Editor && m_selection && m_gizmo)
             {
-                Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
+                Entity *selected = (m_selection->entity_id >= 0)
+                    ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
+
+                // Selected entity: amber wireframe outline + white bounds box.
                 if (selected && selected != camera_entity)
                 {
                     std::string mesh_error;
@@ -416,6 +459,34 @@ void Application::RenderViewportTarget()
                         Mat4 world = m_scene->ComputeWorldMatrix(*selected);
                         RenderMeshWireframe(renderer, view_proj, near_p, w, h,
                                             world, *mesh, OUTLINE, false);
+                    }
+                    // Draw the bounds box in world space: the AABB component
+                    // stores LOCAL bounds, so transform them into the entity's
+                    // world frame before drawing.
+                    Mat4 sel_world = m_scene->ComputeWorldMatrix(*selected);
+                    Vec3 sel_wmin, sel_wmax;
+                    TransformAABB(selected->bounds.local_min,
+                                  selected->bounds.local_max, sel_world,
+                                  sel_wmin, sel_wmax);
+                    DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                                  sel_wmin, sel_wmax, 255, 255, 255);
+                }
+
+                // Hovered entity (ray/AABB hit under the cursor): light-blue
+                // bounds box, distinct from the amber selection.
+                int hover_id = m_gizmo->GetHoverEntity();
+                if (hover_id >= 0 && hover_id != (selected ? selected->id : -1) &&
+                    hover_id != (camera_entity ? camera_entity->id : -1))
+                {
+                    if (Entity *hover = m_scene->GetEntityById(hover_id))
+                    {
+                        Mat4 hover_world = m_scene->ComputeWorldMatrix(*hover);
+                        Vec3 hover_wmin, hover_wmax;
+                        TransformAABB(hover->bounds.local_min,
+                                      hover->bounds.local_max, hover_world,
+                                      hover_wmin, hover_wmax);
+                        DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                                      hover_wmin, hover_wmax, 110, 180, 255);
                     }
                 }
 

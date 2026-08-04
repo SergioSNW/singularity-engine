@@ -75,6 +75,11 @@ public:
     // scene pass, before the render target is unbound).
     void Draw(SDL_Renderer *renderer, const GizmoFrame &frame);
 
+    // Id of the entity under the cursor (nearest ray/AABB hit), or -1. Updated
+    // by Update() every editor frame, used by the editor to draw the hover
+    // bounds box. Distinct from selection: hovering never changes selection.
+    int GetHoverEntity() const { return m_hover_entity; }
+
 private:
     int m_drag_axis = -1;    // 0/1/2 = X/Y/Z axis, 3 = planar center, 4 = rotate ring
     bool m_dragging = false;
@@ -93,8 +98,10 @@ private:
     int m_hover_axis = -1;
     bool m_hover_center = false;
     int m_hover_ring_axis = -1;  // rotate mode: -1 none, 0/1/2 axis ring, 3 outer trackball
+    int m_hover_entity = -1;     // entity under the cursor (ray/AABB hit), -1 if none
 
     void StartDrag(const GizmoFrame &frame, Entity &entity);
     void ApplyDrag(const GizmoFrame &frame, Entity &entity);
     void Pick(const GizmoFrame &frame);
+    int RaycastEntity(const GizmoFrame &frame);  // nearest entity whose world AABB the cursor ray hits
 };

@@ -14,6 +14,7 @@ struct Entity
     MaterialComponent material;
     MeshComponent mesh;
     CameraComponent camera;
+    BoundsComponent bounds;  // local-space AABB of the mesh geometry, auto-refreshed
 
     // Scene graph links. Entities are stored in the Scene by stable address
     // (std::unique_ptr), so these raw pointers stay valid until the entity is
