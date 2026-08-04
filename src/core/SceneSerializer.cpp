@@ -90,6 +90,10 @@ json::Value SceneSerializer::SerializeScene(const Scene &scene)
         camera.object.emplace_back("primary", json::Value::MakeBool(e.camera.primary));
         ent.object.emplace_back("camera", std::move(camera));
 
+        json::Value script = json::Value::MakeObject();
+        script.object.emplace_back("path", json::Value::MakeString(e.script.path));
+        ent.object.emplace_back("script", std::move(script));
+
         entities.array.push_back(std::move(ent));
     }
 
@@ -149,6 +153,9 @@ bool SceneSerializer::DeserializeScene(Scene &scene, const json::Value &root, st
             e.camera.yaw        = (float)cam->Number("yaw", e.camera.yaw);
             e.camera.primary    = cam->Bool("primary", e.camera.primary);
         }
+
+        if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())
+            e.script.path = scr->String("path", "");
     }
 
     // Pass 2: resolve parent-child links by UUID. Two passes make the file

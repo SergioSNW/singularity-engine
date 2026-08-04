@@ -41,6 +41,16 @@ struct BoundsComponent
     Vec3 local_max{0.0f, 0.0f, 0.0f};
 };
 
+// Gameplay script reference. An empty `path` means no script; any other value
+// names a Lua file (e.g. "assets/scripts/player.lua") loaded by the
+// ScriptEngine when the scene enters play mode. The ScriptEngine binds the
+// entity's transform to the script's `transform`/`entity` globals and drives
+// its OnStart / OnUpdate(dt) lifecycle hooks during play.
+struct ScriptComponent
+{
+    std::string path;
+};
+
 struct CameraComponent
 {
     float fov = 60.0f;

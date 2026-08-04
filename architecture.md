@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.11.0-alpha — AABB bounding boxes & ray-casting picking: each entity carries a `BoundsComponent` mirroring its mesh's local AABB, a slab-based `RayAABB` test casts the cursor ray against world-space boxes (`TransformAABB`) for exact nearest-hit picking and hover reporting, and the editor overlays white (selected) and light-blue (hovered) world bounds boxes.
+> **Current version:** v0.12.0-alpha — Lua scripting engine & component bindings: Lua 5.4 is embedded via CMake FetchContent and compiled into the engine; a `ScriptEngine` binds each entity's `Transform` (live `Vector3` views over `position`/`rotation`/`scale`), `Entity` (name/id/transform), and a `Vector3` constructor into a per-entity Lua `_ENV`; the `ScriptComponent` names a `.lua` file that is bound on play start and driven by `OnStart` / `OnUpdate(dt)` during play mode.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

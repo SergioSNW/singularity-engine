@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.0-alpha] — 2026-08-04
+
+### Added
+
+- Embedded Lua 5.4.7 into the build: CMake now fetches Lua via FetchContent (`GIT_TAG v5.4.7`), compiles it as C, and links it into the engine. The standard library is opened on session start, so gameplay scripts can use `math`, `string`, `print`, etc.
+- `ScriptEngine` (`src/script/ScriptEngine.{h,cpp}`): creates one Lua VM per play session and binds every entity whose `ScriptComponent.path` is non-empty. Each script runs in its own `_ENV` preloaded with `entity` (name/id/transform), `transform` (position/rotation/scale), `self` (the environment), and `Vector3`. `OnStart()` is called once on bind; `OnUpdate(dt)` runs each frame during play. Live `Vector3` userdata points straight into the entity's transform, so `transform.position.x = 1` mutates in place, while `transform.position = Vector3(1,2,3)` writes the whole vector. Vector arithmetic (`+ - * /`, unary minus, equality, `tostring`) and `norm`/`length`/`dot`/`cross` methods are exposed.
+- `ScriptComponent`: a per-entity component holding a `script.path`. Serialized as `"script": {"path": "assets/scripts/player.lua"}` and loaded back by the scene serializer; empty means no script.
+- Editor support: the Inspector's new "Script" section lets you set the script path (Apply Script / Clear) and shows a hint that scripts run during play mode.
+- Example script `assets/scripts/player.lua` (spins the bound entity around its local Y axis), attached to the Octahedron scene entity for a ready-to-run demo.
+
+### Changed
+
+- `Application` now owns a `ScriptEngine`: `EnterPlayMode` starts a session (binding all scripted entities and calling `OnStart`; per-entity load/run errors are collected into the editor status line), the play loop calls `UpdateSession(dt)` each frame, and `ExitPlayMode` stops the session before restoring the pre-play scene snapshot. Re-entering play reloads scripts from disk, giving natural reload semantics.
+- Bind failures (missing file, Lua syntax/runtime errors) no longer kill play mode: the entity is skipped or continues running while the error is reported, and runtime `OnUpdate` errors are printed to stderr.
+- Version bump from 0.11.0-alpha to 0.12.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a standalone ScriptEngine harness (live-view mutation, whole-vector assignment, OnStart/OnUpdate lifecycle, environment isolation between entities, session teardown + reload, missing-file error reporting — all pass) and a smoke test of the rebuilt engine; the example `player.lua` spins a bound entity at the expected rate.
+
 ## [0.11.0-alpha] — 2026-08-04
 
 ### Added

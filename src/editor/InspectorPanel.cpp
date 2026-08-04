@@ -66,6 +66,8 @@ void InspectorPanel::OnImGuiRender(float dt)
         m_tag_buffer[sizeof(m_tag_buffer) - 1] = '\0';
         std::strncpy(m_mesh_buffer, entity->mesh.path.c_str(), sizeof(m_mesh_buffer) - 1);
         m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
+        std::strncpy(m_script_buffer, entity->script.path.c_str(), sizeof(m_script_buffer) - 1);
+        m_script_buffer[sizeof(m_script_buffer) - 1] = '\0';
     }
 
     if (ImGui::InputText("Tag", m_tag_buffer, sizeof(m_tag_buffer)))
@@ -154,6 +156,28 @@ void InspectorPanel::OnImGuiRender(float dt)
             m_mesh_buffer[0] = '\0';
         }
         ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
+    }
+
+    if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Text input writes the buffer live (like the mesh path field); Apply
+        // commits it, and empty means no script. Scripts bind when the scene
+        // enters play mode.
+        ImGui::InputText("Path", m_script_buffer, sizeof(m_script_buffer));
+        if (ImGui::Button("Apply Script"))
+        {
+            if (m_script_buffer[0] == '\0')
+                entity->script.path.clear();
+            else
+                entity->script.path = m_script_buffer;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear"))
+        {
+            entity->script.path.clear();
+            m_script_buffer[0] = '\0';
+        }
+        ImGui::TextDisabled("Lua file under assets/scripts/; empty = no script");
     }
 
     if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))

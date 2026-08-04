@@ -12,6 +12,7 @@
 #include "SceneSerializer.h"
 #include "Mesh.h"
 #include "EngineMath.h"
+#include "script/ScriptEngine.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -78,6 +79,7 @@ Application::Application()
     , m_scene(nullptr)
     , m_mesh_library(nullptr)
     , m_gizmo(nullptr)
+    , m_script_engine(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -635,7 +637,17 @@ void Application::EnterPlayMode()
 
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
-    m_scene_status = "Play mode: scene snapshotted; Esc or Stop to exit";
+
+    // Bind every scripted entity and fire OnStart. Script load errors are
+    // reported in the status line but play still runs for the scripts that
+    // bound successfully.
+    std::string script_errors;
+    if (m_script_engine)
+        m_script_engine->StartSession(*m_scene, script_errors);
+    if (script_errors.empty())
+        m_scene_status = "Play mode: scene snapshotted; Esc or Stop to exit";
+    else
+        m_scene_status = "Play mode: script errors -> " + script_errors;
     m_state = EngineState::Play;
 }
 
@@ -650,6 +662,11 @@ void Application::ExitPlayMode()
         SDL_SetRelativeMouseMode(SDL_FALSE);
         ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
     }
+
+    // Release the script session BEFORE restoring the scene snapshot: each
+    // script's Lua state holds pointers into the entities being torn down.
+    if (m_script_engine)
+        m_script_engine->StopSession();
 
     if (m_scene_snapshot.IsObject())
     {
@@ -805,6 +822,7 @@ bool Application::Init(int width, int height, const char *title)
     m_selection = new SelectionState();
     m_mesh_library = new MeshLibrary();
     m_gizmo = new GizmoController();
+    m_script_engine = new ScriptEngine();
 
     m_scene = new Scene();
     Entity &camera = m_scene->CreateEntity("Camera");
@@ -833,6 +851,10 @@ bool Application::Init(int width, int height, const char *title)
     octahedron.material.color[0] = 0.95f;
     octahedron.material.color[1] = 0.80f;
     octahedron.material.color[2] = 0.40f;
+
+    // Demo gameplay script: spinning octahedron while in play mode. The file
+    // is shipped under assets/scripts/ (copied next to the executable).
+    octahedron.script.path = "assets/scripts/player.lua";
 
     Entity &icosahedron = m_scene->CreateEntity("Icosahedron");
     icosahedron.mesh.path = "icosahedron.obj";
@@ -1102,6 +1124,11 @@ void Application::Run()
 
         UpdateCameraControls((float)dt);
 
+        // Gameplay scripts run only during play: OnUpdate(dt) fires for every
+        // bound entity before the 3D pass renders the resulting transforms.
+        if (m_state == EngineState::Play && m_script_engine)
+            m_script_engine->UpdateSession(*m_scene, (float)dt);
+
         // Editor interaction: viewport picking + gizmo dragging. Skipped in
         // play mode and while the RMB fly camera is active (cursor captured).
         if (m_state == EngineState::Editor && !m_flying && m_gizmo && m_viewport)
@@ -1173,6 +1200,11 @@ void Application::Shutdown()
 
     delete m_gizmo;
     m_gizmo = nullptr;
+
+    // ScriptEngine's destructor tears down the Lua VM (and with it any
+    // userdata pointing into entities), so release it before the scene.
+    delete m_script_engine;
+    m_script_engine = nullptr;
 
     delete m_mesh_library;
     m_mesh_library = nullptr;

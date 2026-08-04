@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.11.0-alpha — AABB Bounding Boxes & Ray-Casting Picking
+v0.12.0-alpha — Lua Scripting Engine & Component Bindings
 
 ## Dependencies
 

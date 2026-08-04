@@ -1,0 +1,602 @@
+#include "script/ScriptEngine.h"
+
+#include "Scene.h"
+#include "Entity.h"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+}
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+
+// ---------------------------------------------------------------------------
+// Lua userdata layout
+//
+// Vector3 is the only boxed value that is also returned by reference: a
+// `transform.position` read pushes a *live view* pointing at the entity's
+// float[3] so `t.position.x = 1` mutates the transform in place, while an
+// assignment like `t.position = Vector3(1,2,3)` writes the whole vector back.
+// Owned values (results of arithmetic, the Vector3 constructor) keep their
+// data in `storage`.
+// ---------------------------------------------------------------------------
+
+struct LuaVec3
+{
+    float *ptr;       // live view into an Entity transform (3 contiguous floats)
+    float storage[3]; // owned storage when ptr == nullptr
+};
+
+struct LuaTransform
+{
+    Entity *entity;
+};
+
+struct LuaEntity
+{
+    Entity *entity;
+};
+
+namespace {
+
+const char *kVec3MT      = "Singe.Vector3";
+const char *kTransformMT = "Singe.Transform";
+const char *kEntityMT    = "Singe.Entity";
+const char *kApiRegistry = "Singe.EngineApi";
+
+// --- Vector3 ---
+
+float *LuaVec3Ptr(LuaVec3 *v)
+{
+    return v->ptr ? v->ptr : v->storage;
+}
+
+LuaVec3 *CheckVec3(lua_State *L, int idx)
+{
+    return (LuaVec3 *)luaL_checkudata(L, idx, kVec3MT);
+}
+
+void PushVec3View(lua_State *L, float *view)
+{
+    LuaVec3 *v = (LuaVec3 *)lua_newuserdata(L, sizeof(LuaVec3));
+    v->ptr = view;
+    v->storage[0] = view[0];
+    v->storage[1] = view[1];
+    v->storage[2] = view[2];
+    luaL_setmetatable(L, kVec3MT);
+}
+
+void PushVec3(lua_State *L, float x, float y, float z)
+{
+    LuaVec3 *v = (LuaVec3 *)lua_newuserdata(L, sizeof(LuaVec3));
+    v->ptr = nullptr;
+    v->storage[0] = x;
+    v->storage[1] = y;
+    v->storage[2] = z;
+    luaL_setmetatable(L, kVec3MT);
+}
+
+// Accept a Vector3 userdata or a {x=,y=,z=} table and write its components.
+void ParseVec3(lua_State *L, int idx, float out[3])
+{
+    if (lua_type(L, idx) == LUA_TUSERDATA)
+    {
+        LuaVec3 *v = CheckVec3(L, idx);
+        float *p = LuaVec3Ptr(v);
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+        return;
+    }
+    if (lua_type(L, idx) == LUA_TTABLE)
+    {
+        lua_getfield(L, idx, "x");
+        out[0] = lua_isnumber(L, -1) ? (float)lua_tonumber(L, -1) : 0.0f;
+        lua_pop(L, 1);
+        lua_getfield(L, idx, "y");
+        out[1] = lua_isnumber(L, -1) ? (float)lua_tonumber(L, -1) : 0.0f;
+        lua_pop(L, 1);
+        lua_getfield(L, idx, "z");
+        out[2] = lua_isnumber(L, -1) ? (float)lua_tonumber(L, -1) : 0.0f;
+        lua_pop(L, 1);
+        return;
+    }
+    luaL_error(L, "expected a Vector3 or {x,y,z} table, got %s",
+               luaL_typename(L, idx));
+}
+
+int LuaVector3New(lua_State *L)
+{
+    int n = lua_gettop(L);
+    if (n == 1 && lua_type(L, 1) == LUA_TUSERDATA)
+    {
+        LuaVec3 *src = CheckVec3(L, 1);
+        float *p = LuaVec3Ptr(src);
+        PushVec3(L, p[0], p[1], p[2]);
+        return 1;
+    }
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    if (n >= 1 && lua_isnumber(L, 1)) x = (float)lua_tonumber(L, 1);
+    if (n >= 2 && lua_isnumber(L, 2)) y = (float)lua_tonumber(L, 2);
+    if (n >= 3 && lua_isnumber(L, 3)) z = (float)lua_tonumber(L, 3);
+    PushVec3(L, x, y, z);
+    return 1;
+}
+
+int LuaVec3Index(lua_State *L)
+{
+    LuaVec3 *v = CheckVec3(L, 1);
+    const char *key = luaL_checkstring(L, 2);
+    float *p = LuaVec3Ptr(v);
+    if (std::strcmp(key, "x") == 0) { lua_pushnumber(L, p[0]); return 1; }
+    if (std::strcmp(key, "y") == 0) { lua_pushnumber(L, p[1]); return 1; }
+    if (std::strcmp(key, "z") == 0) { lua_pushnumber(L, p[2]); return 1; }
+    lua_getfield(L, lua_upvalueindex(1), key); // fall through to methods
+    return 1;
+}
+
+int LuaVec3NewIndex(lua_State *L)
+{
+    LuaVec3 *v = CheckVec3(L, 1);
+    const char *key = luaL_checkstring(L, 2);
+    if (!lua_isnumber(L, 3))
+        return luaL_error(L, "vector field '%s' expects a number", key);
+    float *p = LuaVec3Ptr(v);
+    const float val = (float)lua_tonumber(L, 3);
+    if (std::strcmp(key, "x") == 0) { p[0] = val; return 0; }
+    if (std::strcmp(key, "y") == 0) { p[1] = val; return 0; }
+    if (std::strcmp(key, "z") == 0) { p[2] = val; return 0; }
+    return luaL_error(L, "vector field '%s' is read-only or unknown", key);
+}
+
+int LuaVec3Add(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    PushVec3(L, pa[0] + pb[0], pa[1] + pb[1], pa[2] + pb[2]);
+    return 1;
+}
+
+int LuaVec3Sub(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    PushVec3(L, pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
+    return 1;
+}
+
+int LuaVec3Mul(lua_State *L)
+{
+    if (lua_isnumber(L, 2))
+    {
+        LuaVec3 *a = CheckVec3(L, 1);
+        float *p = LuaVec3Ptr(a);
+        const float s = (float)lua_tonumber(L, 2);
+        PushVec3(L, p[0] * s, p[1] * s, p[2] * s);
+        return 1;
+    }
+    if (lua_isnumber(L, 1))
+    {
+        LuaVec3 *b = CheckVec3(L, 2);
+        float *p = LuaVec3Ptr(b);
+        const float s = (float)lua_tonumber(L, 1);
+        PushVec3(L, p[0] * s, p[1] * s, p[2] * s);
+        return 1;
+    }
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    PushVec3(L, pa[0] * pb[0], pa[1] * pb[1], pa[2] * pb[2]);
+    return 1;
+}
+
+int LuaVec3Div(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1);
+    const float s = (float)luaL_checknumber(L, 2);
+    float *p = LuaVec3Ptr(a);
+    PushVec3(L, p[0] / s, p[1] / s, p[2] / s);
+    return 1;
+}
+
+int LuaVec3Unm(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1);
+    float *p = LuaVec3Ptr(a);
+    PushVec3(L, -p[0], -p[1], -p[2]);
+    return 1;
+}
+
+int LuaVec3Eq(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    lua_pushboolean(L,
+        std::fabs(pa[0] - pb[0]) < 1e-5f &&
+        std::fabs(pa[1] - pb[1]) < 1e-5f &&
+        std::fabs(pa[2] - pb[2]) < 1e-5f);
+    return 1;
+}
+
+int LuaVec3ToString(lua_State *L)
+{
+    LuaVec3 *v = CheckVec3(L, 1);
+    float *p = LuaVec3Ptr(v);
+    lua_pushfstring(L, "(%.3f, %.3f, %.3f)", (double)p[0], (double)p[1], (double)p[2]);
+    return 1;
+}
+
+int LuaVec3Norm(lua_State *L)
+{
+    LuaVec3 *v = CheckVec3(L, 1);
+    float *p = LuaVec3Ptr(v);
+    const float len = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+    if (len < 1e-8f)
+        PushVec3(L, 0.0f, 0.0f, 0.0f);
+    else
+        PushVec3(L, p[0] / len, p[1] / len, p[2] / len);
+    return 1;
+}
+
+int LuaVec3Length(lua_State *L)
+{
+    LuaVec3 *v = CheckVec3(L, 1);
+    float *p = LuaVec3Ptr(v);
+    lua_pushnumber(L, std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]));
+    return 1;
+}
+
+int LuaVec3Dot(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    lua_pushnumber(L, pa[0] * pb[0] + pa[1] * pb[1] + pa[2] * pb[2]);
+    return 1;
+}
+
+int LuaVec3Cross(lua_State *L)
+{
+    LuaVec3 *a = CheckVec3(L, 1), *b = CheckVec3(L, 2);
+    float *pa = LuaVec3Ptr(a), *pb = LuaVec3Ptr(b);
+    PushVec3(L,
+        pa[1] * pb[2] - pa[2] * pb[1],
+        pa[2] * pb[0] - pa[0] * pb[2],
+        pa[0] * pb[1] - pa[1] * pb[0]);
+    return 1;
+}
+
+void RegisterVec3(lua_State *L)
+{
+    luaL_newmetatable(L, kVec3MT);          // [mt]
+    lua_newtable(L);                        // [mt, methods]
+
+    lua_pushcfunction(L, LuaVec3Norm);   lua_setfield(L, -2, "norm");
+    lua_pushcfunction(L, LuaVec3Length); lua_setfield(L, -2, "length");
+    lua_pushcfunction(L, LuaVec3Dot);    lua_setfield(L, -2, "dot");
+    lua_pushcfunction(L, LuaVec3Cross);  lua_setfield(L, -2, "cross");
+
+    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushcclosure(L, LuaVec3Index, 1);   // [mt, methods, closure]
+    lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
+    lua_pushcfunction(L, LuaVec3NewIndex);
+    lua_setfield(L, -3, "__newindex");      // mt.__newindex = fn -> [mt, methods]
+    lua_pushcfunction(L, LuaVec3Add);   lua_setfield(L, -3, "__add");
+    lua_pushcfunction(L, LuaVec3Sub);   lua_setfield(L, -3, "__sub");
+    lua_pushcfunction(L, LuaVec3Mul);   lua_setfield(L, -3, "__mul");
+    lua_pushcfunction(L, LuaVec3Div);   lua_setfield(L, -3, "__div");
+    lua_pushcfunction(L, LuaVec3Unm);   lua_setfield(L, -3, "__unm");
+    lua_pushcfunction(L, LuaVec3Eq);    lua_setfield(L, -3, "__eq");
+    lua_pushcfunction(L, LuaVec3ToString); lua_setfield(L, -3, "__tostring");
+
+    lua_pop(L, 2);                      // []
+}
+
+// --- Transform ---
+
+void PushTransform(lua_State *L, Entity *entity)
+{
+    LuaTransform *t = (LuaTransform *)lua_newuserdata(L, sizeof(LuaTransform));
+    t->entity = entity;
+    luaL_setmetatable(L, kTransformMT);
+}
+
+int LuaTransformIndex(lua_State *L)
+{
+    LuaTransform *t = (LuaTransform *)luaL_checkudata(L, 1, kTransformMT);
+    const char *key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "position") == 0) { PushVec3View(L, t->entity->transform.position); return 1; }
+    if (std::strcmp(key, "rotation") == 0) { PushVec3View(L, t->entity->transform.rotation); return 1; }
+    if (std::strcmp(key, "scale")    == 0) { PushVec3View(L, t->entity->transform.scale);    return 1; }
+    lua_getfield(L, lua_upvalueindex(1), key); // methods (reserved)
+    return 1;
+}
+
+int LuaTransformNewIndex(lua_State *L)
+{
+    LuaTransform *t = (LuaTransform *)luaL_checkudata(L, 1, kTransformMT);
+    const char *key = luaL_checkstring(L, 2);
+    float v[3];
+    ParseVec3(L, 3, v);
+    if (std::strcmp(key, "position") == 0)
+    {
+        t->entity->transform.position[0] = v[0];
+        t->entity->transform.position[1] = v[1];
+        t->entity->transform.position[2] = v[2];
+        return 0;
+    }
+    if (std::strcmp(key, "rotation") == 0)
+    {
+        t->entity->transform.rotation[0] = v[0];
+        t->entity->transform.rotation[1] = v[1];
+        t->entity->transform.rotation[2] = v[2];
+        return 0;
+    }
+    if (std::strcmp(key, "scale") == 0)
+    {
+        t->entity->transform.scale[0] = v[0];
+        t->entity->transform.scale[1] = v[1];
+        t->entity->transform.scale[2] = v[2];
+        return 0;
+    }
+    return luaL_error(L, "transform: '%s' is read-only", key);
+}
+
+void RegisterTransform(lua_State *L)
+{
+    luaL_newmetatable(L, kTransformMT);     // [mt]
+    lua_newtable(L);                        // [mt, methods]
+    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushcclosure(L, LuaTransformIndex, 1);  // [mt, methods, closure]
+    lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
+    lua_pushcfunction(L, LuaTransformNewIndex);
+    lua_setfield(L, -3, "__newindex");      // mt.__newindex = fn -> [mt, methods]
+    lua_pop(L, 2);                          // []
+}
+
+// --- Entity ---
+
+void PushEntity(lua_State *L, Entity *entity)
+{
+    LuaEntity *e = (LuaEntity *)lua_newuserdata(L, sizeof(LuaEntity));
+    e->entity = entity;
+    luaL_setmetatable(L, kEntityMT);
+}
+
+int LuaEntityIndex(lua_State *L)
+{
+    LuaEntity *e = (LuaEntity *)luaL_checkudata(L, 1, kEntityMT);
+    const char *key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "name") == 0) { lua_pushstring(L, e->entity->tag.tag.c_str()); return 1; }
+    if (std::strcmp(key, "id") == 0)   { lua_pushinteger(L, e->entity->id); return 1; }
+    if (std::strcmp(key, "transform") == 0) { PushTransform(L, e->entity); return 1; }
+    lua_getfield(L, lua_upvalueindex(1), key); // methods (reserved)
+    return 1;
+}
+
+int LuaEntityNewIndex(lua_State *L)
+{
+    LuaEntity *e = (LuaEntity *)luaL_checkudata(L, 1, kEntityMT);
+    const char *key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "name") == 0)
+    {
+        e->entity->tag.tag = luaL_checkstring(L, 3);
+        return 0;
+    }
+    return luaL_error(L, "entity: '%s' is read-only", key);
+}
+
+void RegisterEntity(lua_State *L)
+{
+    luaL_newmetatable(L, kEntityMT);        // [mt]
+    lua_newtable(L);                        // [mt, methods]
+    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushcclosure(L, LuaEntityIndex, 1); // [mt, methods, closure]
+    lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
+    lua_pushcfunction(L, LuaEntityNewIndex);
+    lua_setfield(L, -3, "__newindex");      // mt.__newindex = fn -> [mt, methods]
+    lua_pop(L, 2);                          // []
+}
+
+// --- Engine API table (chained before _G in every script's _ENV) ---
+
+void RegisterEngineApi(lua_State *L)
+{
+    lua_newtable(L);                        // [api]
+    lua_pushcfunction(L, LuaVector3New); lua_setfield(L, -2, "Vector3");
+    lua_pushcfunction(L, LuaVector3New); lua_setfield(L, -2, "Vec3");
+
+    lua_newtable(L);                        // [api, api_mt]
+    lua_getglobal(L, "_G");
+    lua_setfield(L, -2, "__index");         // api_mt.__index = _G
+    lua_setmetatable(L, -2);                // setmetatable(api, api_mt) -> [api]
+    lua_setfield(L, LUA_REGISTRYINDEX, kApiRegistry);
+}
+
+// Build a fresh _ENV table for one entity: its own metatable resolves unknown
+// names through the engine API table (which itself chains to Lua's _G), so
+// scripts see `entity`, `transform`, `self`, `Vector3`, and the stdlib.
+void NewScriptEnv(lua_State *L, Entity *entity)
+{
+    lua_newtable(L);                        // [env]
+    lua_newtable(L);                        // [env, mt]
+    lua_getfield(L, LUA_REGISTRYINDEX, kApiRegistry);
+    lua_setfield(L, -2, "__index");         // mt.__index = api
+    lua_setmetatable(L, -2);                // setmetatable(env, mt) -> [env]
+
+    lua_pushvalue(L, -1);                   // [env, env]
+    lua_setfield(L, -2, "self");            // env.self = env
+    PushEntity(L, entity);                  // [env, entity]
+    lua_setfield(L, -2, "entity");
+    PushTransform(L, entity);               // [env, transform]
+    lua_setfield(L, -2, "transform");
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// ScriptEngine
+// ---------------------------------------------------------------------------
+
+ScriptEngine::ScriptEngine()
+    : m_lua(nullptr)
+{
+}
+
+ScriptEngine::~ScriptEngine()
+{
+    StopSession();
+}
+
+bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)
+{
+    (void)scene;
+    lua_State *L = m_lua;
+
+    std::ifstream in(entity.script.path, std::ios::in | std::ios::binary);
+    if (!in.is_open())
+    {
+        error = "cannot open script '" + entity.script.path + "'";
+        return false;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const std::string code = buffer.str();
+
+    NewScriptEnv(L, &entity);               // [env]
+    if (luaL_loadbuffer(L, code.data(), code.size(), entity.script.path.c_str()) != LUA_OK)
+    {
+        error = lua_tostring(L, -1);
+        lua_pop(L, 2);                      // pop error + env
+        return false;
+    }
+
+    lua_pushvalue(L, -2);                   // [env, chunk, env]
+    lua_setupvalue(L, -2, 1);               // chunk's _ENV = env -> [env, chunk]
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK)
+    {
+        error = lua_tostring(L, -1);
+        lua_pop(L, 2);                      // pop error + env
+        return false;
+    }
+    // stack: [env]
+
+    ScriptedEntity se;
+    se.entity_id = entity.id;
+    lua_getfield(L, -1, "OnStart");         // [env, fn|nil]
+    if (lua_isfunction(L, -1))
+        se.on_start_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    else
+    {
+        se.on_start_ref = LUA_NOREF;
+        lua_pop(L, 1);
+    }
+    lua_getfield(L, -1, "OnUpdate");        // [env, fn|nil]
+    if (lua_isfunction(L, -1))
+        se.on_update_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    else
+    {
+        se.on_update_ref = LUA_NOREF;
+        lua_pop(L, 1);
+    }
+    se.env_ref = luaL_ref(L, LUA_REGISTRYINDEX); // pops env
+
+    m_scripted.push_back(se);
+
+    if (se.on_start_ref != LUA_NOREF)
+    {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, se.on_start_ref);
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK)
+        {
+            error = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    return true;
+}
+
+bool ScriptEngine::StartSession(Scene &scene, std::string &errors)
+{
+    StopSession();                          // no-op when not running
+
+    m_lua = luaL_newstate();
+    if (!m_lua)
+    {
+        errors = "failed to create Lua state";
+        return false;
+    }
+    luaL_openlibs(m_lua);
+    RegisterVec3(m_lua);
+    RegisterTransform(m_lua);
+    RegisterEntity(m_lua);
+    RegisterEngineApi(m_lua);
+
+    errors.clear();
+    for (auto &entity_ptr : scene.GetEntities())
+    {
+        Entity &entity = *entity_ptr;
+        if (entity.script.path.empty())
+            continue;
+        std::string error;
+        BindEntity(scene, entity, error);
+        if (!error.empty())
+        {
+            if (!errors.empty())
+                errors += "; ";
+            errors += "[" + entity.tag.tag + "] " + error;
+        }
+    }
+
+    m_error = errors;
+    return true;
+}
+
+void ScriptEngine::UpdateSession(Scene &scene, float dt)
+{
+    if (!m_lua)
+        return;
+
+    m_error.clear();
+    for (const ScriptedEntity &se : m_scripted)
+    {
+        if (se.on_update_ref == LUA_NOREF)
+            continue;
+        if (!scene.GetEntityById(se.entity_id))
+            continue;                       // destroyed during play: skip
+
+        lua_rawgeti(m_lua, LUA_REGISTRYINDEX, se.on_update_ref);
+        lua_pushnumber(m_lua, (lua_Number)dt);
+        if (lua_pcall(m_lua, 1, 0, 0) != LUA_OK)
+        {
+            if (m_error.empty())
+                m_error = lua_tostring(m_lua, -1);
+            lua_pop(m_lua, 1);
+        }
+    }
+
+    if (!m_error.empty())
+        std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
+}
+
+void ScriptEngine::StopSession()
+{
+    if (!m_lua)
+        return;
+
+    for (const ScriptedEntity &se : m_scripted)
+    {
+        luaL_unref(m_lua, LUA_REGISTRYINDEX, se.env_ref);
+        if (se.on_start_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_start_ref);
+        if (se.on_update_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_update_ref);
+    }
+    m_scripted.clear();
+
+    lua_close(m_lua);
+    m_lua = nullptr;
+    m_error.clear();
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.11.0 LANGUAGES CXX)
+project(singularity-engine VERSION 0.12.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,8 +30,25 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
+# Lua 5.4: the embedded scripting runtime for per-entity gameplay scripts.
+# Its C sources are compiled straight into the engine executable (no shared
+# library). The ScriptEngine in src/script/ drives it with the raw C API.
+FetchContent_Declare(
+  lua
+  GIT_REPOSITORY https://github.com/lua/lua.git
+  GIT_TAG v5.4.7
+  GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(SDL2)
 FetchContent_MakeAvailable(imgui)
+FetchContent_MakeAvailable(lua)
+
+# Lua core library: every .c except the standalone interpreter (lua.c), the
+# bytecode compiler (luac.c), the one-lua amalgamation (onelua.c), and the test
+# scaffolding (ltests.c).
+file(GLOB LUA_SOURCES CONFIGURE_DEPENDS ${lua_SOURCE_DIR}/*.c)
+list(FILTER LUA_SOURCES EXCLUDE REGEX "/(lua|luaoc|luac|onelua|ltests)\.c$")
 
 set(IMGUI_SOURCES
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -52,12 +69,14 @@ target_sources(singularity-engine PRIVATE
   src/core/Json.cpp
   src/core/SceneSerializer.cpp
   src/core/Mesh.cpp
+  src/script/ScriptEngine.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
   src/editor/InspectorPanel.cpp
   src/editor/ViewportPanel.cpp
   src/editor/GizmoController.cpp
   ${IMGUI_SOURCES}
+  ${LUA_SOURCES}
 )
 
 target_link_libraries(singularity-engine PRIVATE
@@ -68,6 +87,7 @@ target_link_libraries(singularity-engine PRIVATE
 target_include_directories(singularity-engine PRIVATE
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends
+  ${lua_SOURCE_DIR}
 )
 
 target_include_directories(singularity-engine PRIVATE
