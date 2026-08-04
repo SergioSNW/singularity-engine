@@ -9,43 +9,38 @@
 #include <sstream>
 #include <utility>
 
-// Palette tuned to the engine's dark blue-grey theme. TextEditor ships a dark
-// palette; only the surface tones are overridden so the buffer matches the
-// editor UI while keeping the keyword/number/string colors intact.
+// Palette tuned to the engine's dark theme. TextEditor ships a dark palette;
+// only the surface tones are overridden so the buffer matches the editor UI
+// while keeping the keyword/number/string colors intact. The values mirror
+// Theme.cpp (BgWindow 0x1B1D23, BgChild 0x1F2128, accent 0x5B7CFA).
 static TextEditor::Palette MakeEditorPalette()
 {
     TextEditor::Palette palette = TextEditor::GetDarkPalette();
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::Background)] = 0x1A1A22FF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFill)] = 0x24242EFF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFillInactive)] = 0x1F1F27FF;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Background)] = 0x1B1D23FF;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFill)] = 0x22252CFF;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFillInactive)] = 0x1F2128FF;
     palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineEdge)] = 0x00000000;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::LineNumber)] = 0x56566BFF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::Selection)] = 0x33508FFF;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::LineNumber)] = 0x5A606EFF;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Selection)] = 0x5B7CFA50;
     return palette;
 }
 
-ScriptEditorPanel::ScriptEditorPanel(ReloadCallback reload)
+ScriptEditorPanel::ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload)
     : m_reload(std::move(reload))
     , m_editor(new TextEditor())
-    , m_mono_font(nullptr)
+    , m_mono_font(mono_font)
     , m_visible(true)
     , m_editor_open(false)
     , m_modal_requested(false)
     , m_focus_code_window(false)
+    , m_dock_requested(false)
+    , m_dock_node(0)
     , m_editor_pos_valid(false)
 {
     m_new_name[0] = '\0';
 
-    // Monospace font for the buffer, loaded once. Construction happens during
-    // Init (before the first frame), so the font atlas is still unbuilt and the
-    // glyphs merge into the default atlas.
-    ImGuiIO &io = ImGui::GetIO();
-    m_mono_font = io.Fonts->AddFontFromFileTTF(
-        "C:/Windows/Fonts/consola.ttf", 15.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
-    if (!m_mono_font)
-        m_mono_font = io.Fonts->AddFontFromFileTTF(
-            "C:/Windows/Fonts/cour.ttf", 15.0f, nullptr, io.Fonts->GetGlyphRangesDefault());
-
+    // The monospace font is baked by Theme (DPI-aware) and shared across the
+    // editor, so the buffer stays razor-sharp on high-DPI displays.
     m_editor->SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
     m_editor->SetPalette(MakeEditorPalette());
 }
@@ -65,6 +60,19 @@ void ScriptEditorPanel::ToggleVisible()
         m_editor_open = false;
     else if (!m_current.empty())
         m_editor_open = true;
+}
+
+void ScriptEditorPanel::RequestDockCodeWindow(unsigned int node_id)
+{
+    m_dock_requested = true;
+    m_dock_node = node_id;
+}
+
+std::string ScriptEditorPanel::GetCodeWindowTitle() const
+{
+    if (m_current.empty())
+        return std::string();
+    return "Script Editor: " + std::filesystem::path(m_current).filename().string();
 }
 
 void ScriptEditorPanel::RefreshFileList()
@@ -268,8 +276,15 @@ void ScriptEditorPanel::DrawCodeWindow()
         return;
 
     // The title embeds the file name (window identity changes on switch), so a
-    // remembered geometry is re-applied before Begin to keep the window put.
-    if (m_editor_pos_valid)
+    // remembered geometry is re-applied before Begin to keep the window put —
+    // unless a layout preset explicitly docks or undocks it this frame.
+    if (m_dock_requested)
+    {
+        ImGui::SetNextWindowDockID(m_dock_node, ImGuiCond_Always);
+        m_dock_requested = false;
+        m_editor_pos_valid = false;
+    }
+    else if (m_editor_pos_valid)
     {
         ImGui::SetNextWindowPos(ImVec2(m_editor_pos[0], m_editor_pos[1]));
         ImGui::SetNextWindowSize(ImVec2(m_editor_size[0], m_editor_size[1]));

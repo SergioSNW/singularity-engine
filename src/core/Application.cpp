@@ -8,6 +8,7 @@
 #include "editor/ViewportPanel.h"
 #include "editor/GizmoController.h"
 #include "editor/ScriptEditorPanel.h"
+#include "editor/Theme.h"
 
 #include "Scene.h"
 #include "SceneSerializer.h"
@@ -35,46 +36,10 @@ static const double TARGET_FRAME_TIME = 1.0 / 60.0;
 // gizmo's dpi_scale so screen-constant metrics keep their on-screen size.
 static const float kViewportSupersample = 2.0f;
 
-void ConfigureImGuiStyle(float ui_scale)
-{
-    // Rebuild the style from scratch so scaling never drifts: reset to the
-    // built-in defaults, apply the dark theme, then our color overrides.
-    ImGuiStyle &style = ImGui::GetStyle();
-    style = ImGuiStyle();
-    ImGui::StyleColorsDark();
-
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.WindowRounding = 6.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.Colors[ImGuiCol_WindowBg]          = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-    style.Colors[ImGuiCol_TitleBg]           = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-    style.Colors[ImGuiCol_TitleBgActive]     = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
-    style.Colors[ImGuiCol_MenuBarBg]         = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-    style.Colors[ImGuiCol_Header]            = ImVec4(0.20f, 0.20f, 0.25f, 1.00f);
-    style.Colors[ImGuiCol_HeaderHovered]     = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
-    style.Colors[ImGuiCol_HeaderActive]      = ImVec4(0.35f, 0.35f, 0.40f, 1.00f);
-    style.Colors[ImGuiCol_Button]            = ImVec4(0.20f, 0.20f, 0.25f, 1.00f);
-    style.Colors[ImGuiCol_ButtonHovered]     = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
-    style.Colors[ImGuiCol_ButtonActive]      = ImVec4(0.35f, 0.35f, 0.40f, 1.00f);
-    style.Colors[ImGuiCol_FrameBg]           = ImVec4(0.15f, 0.15f, 0.17f, 1.00f);
-    style.Colors[ImGuiCol_FrameBgHovered]    = ImVec4(0.20f, 0.20f, 0.25f, 1.00f);
-    style.Colors[ImGuiCol_FrameBgActive]     = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
-    style.Colors[ImGuiCol_Tab]               = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
-    style.Colors[ImGuiCol_TabHovered]        = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
-    style.Colors[ImGuiCol_TabActive]         = ImVec4(0.20f, 0.20f, 0.27f, 1.00f);
-    style.Colors[ImGuiCol_TabUnfocusedActive]= ImVec4(0.15f, 0.15f, 0.20f, 1.00f);
-
-    // Global UI zoom: scale every style metric (spacing, padding, rounding,
-    // minimum window size, ...) so all widgets grow together.
-    style.ScaleAllSizes(ui_scale);
-}
-
 Application::Application()
     : m_window(nullptr)
     , m_running(false)
     , m_flying(false)
-    , m_layout_initialized(false)
     , m_selection(nullptr)
     , m_viewport(nullptr)
     , m_scene(nullptr)
@@ -88,6 +53,9 @@ Application::Application()
     , m_camera_scroll(0.0f)
     , m_ui_scale(1.0f)
     , m_applied_ui_scale(1.0f)
+    , m_dpi_scale(1.0f)
+    , m_fonts()
+    , m_layout()
     , m_recreate_viewport(false)
     , m_scene_path("assets/scenes/default.json")
     , m_scene_status()
@@ -695,7 +663,7 @@ void Application::ExitPlayMode()
     // the node tree and explicitly re-docks every editor panel, so the full
     // editor UI deterministically comes back into view.
     m_viewport->SetIsolated(false);
-    m_layout_initialized = false;
+    m_layout.RequestRebuild();
 }
 
 void Application::UpdateCameraControls(float dt)
@@ -813,13 +781,27 @@ bool Application::Init(int width, int height, const char *title)
 
     ImGui::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    ImGui::StyleColorsDark();
-    ConfigureImGuiStyle(1.0f);
+
+    // DPI-crisp text: rasterize every font at the display's framebuffer scale
+    // (physical pixels per logical pixel) and fold that factor back out of
+    // FontGlobalScale. The SDL2 renderer backend scales draw data by
+    // io.DisplayFramebufferScale at present time; baking glyphs at the same
+    // density keeps them exactly 1:1 with the framebuffer instead of scaled up.
+    m_dpi_scale = Theme::ComputeDpiScale(m_window->GetNativeWindow(),
+                                         m_window->GetNativeRenderer());
+    Theme::LoadFonts(m_fonts, m_dpi_scale);
+    ImGui::GetIO().FontGlobalScale = 1.0f / m_dpi_scale;
+
+    Theme::ConfigureStyle(1.0f);
     ImGui_ImplSDL2_InitForSDLRenderer(
         m_window->GetNativeWindow(),
         m_window->GetNativeRenderer()
     );
     ImGui_ImplSDLRenderer2_Init(m_window->GetNativeRenderer());
+
+    // Restore the workspace before the first frame so a saved custom layout
+    // (or the remembered preset) is active immediately.
+    m_layout.LoadFromFile();
 
     m_selection = new SelectionState();
     m_mesh_library = new MeshLibrary();
@@ -892,7 +874,7 @@ bool Application::Init(int width, int height, const char *title)
     // Script editor: sidebar over assets/scripts/ + dedicated floating code
     // window. Its reload callback hot-swaps the running play session after a
     // save so script edits apply without leaving play mode.
-    m_script_editor = new ScriptEditorPanel([this]() -> bool {
+    m_script_editor = new ScriptEditorPanel(m_fonts.mono, [this]() -> bool {
         if (m_state != EngineState::Play)
             return false;
         std::string script_errors;
@@ -908,29 +890,6 @@ bool Application::Init(int width, int height, const char *title)
 
     m_running = true;
     return true;
-}
-
-void SetupDockingLayout()
-{
-    ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-
-    ImGui::DockBuilderRemoveNode(dockspace_id);
-    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
-    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
-
-    ImGuiID top, bottom;
-    ImGuiID left, center, right;
-    ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.80f, &top, &bottom);
-    ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &center);
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, &right, &center);
-
-    ImGui::DockBuilderDockWindow("Hierarchy", left);
-    ImGui::DockBuilderDockWindow("Viewport", center);
-    ImGui::DockBuilderDockWindow("Inspector", right);
-    ImGui::DockBuilderDockWindow("Script Editor", bottom);
-    ImGui::DockBuilderDockWindow("Singularity Engine Stats", bottom);
-
-    ImGui::DockBuilderFinish(dockspace_id);
 }
 
 void Application::Run()
@@ -1064,6 +1023,36 @@ void Application::Run()
                     ImGui::SliderFloat("UI Scale", &m_ui_scale, 0.75f, 2.0f, "%.2fx");
                     if (ImGui::Button("Reset##UiScale"))
                         m_ui_scale = 1.0f;
+
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("Layout"))
+                    {
+                        const LayoutManager::Preset current = m_layout.GetPreset();
+                        if (ImGui::MenuItem("Default Workspace", nullptr,
+                                            current == LayoutManager::Preset::Default))
+                        {
+                            m_script_editor->RequestDockCodeWindow(
+                                m_layout.ApplyPreset(LayoutManager::Preset::Default));
+                        }
+                        if (ImGui::MenuItem("Scripting Workspace", nullptr,
+                                            current == LayoutManager::Preset::Scripting))
+                        {
+                            m_script_editor->RequestDockCodeWindow(
+                                m_layout.ApplyPreset(LayoutManager::Preset::Scripting));
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Reset to Default Workspace"))
+                        {
+                            m_layout.ResetToDefault();
+                            m_script_editor->RequestDockCodeWindow(0);
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
+                                            m_layout.HasSavedLayout()))
+                            m_layout.RequestSaveCurrent();
+                        ImGui::EndMenu();
+                    }
+
                     if (m_script_editor)
                     {
                         ImGui::Separator();
@@ -1085,17 +1074,13 @@ void Application::Run()
         }
 
         // Apply a changed UI scale: rebuild style metrics and font scale.
+        // Font scale is the user zoom divided by the DPI factor (the fonts were
+        // baked at dpi resolution), so logical layout stays consistent.
         if (m_ui_scale != m_applied_ui_scale)
         {
-            ConfigureImGuiStyle(m_ui_scale);
-            ImGui::GetIO().FontGlobalScale = m_ui_scale;
+            Theme::ConfigureStyle(m_ui_scale);
+            ImGui::GetIO().FontGlobalScale = m_ui_scale / m_dpi_scale;
             m_applied_ui_scale = m_ui_scale;
-        }
-
-        if (!m_layout_initialized && !playing)
-        {
-            SetupDockingLayout();
-            m_layout_initialized = true;
         }
 
         if (playing)
@@ -1113,15 +1098,21 @@ void Application::Run()
         {
             m_viewport->SetIsolated(false);
 
-            ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-            ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
-            ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), dockspace_flags);
+            // Master dockspace: one transparent full-screen host window, so
+            // every panel docks into a single unified workspace (see
+            // LayoutManager). Rebuilds itself after play mode or preset
+            // changes.
+            m_layout.DrawDockspace();
 
             for (auto &panel : m_panels)
                 panel->OnImGuiRender((float)dt);
         }
 
         ImGui::Render();
+
+        // Persist a "Save Current Layout as Default" capture now that the frame
+        // (and its window state) is fully serializable.
+        m_layout.FinalizeSave();
 
         int vp_w = m_viewport ? m_viewport->GetWidth() : 0;
         int vp_h = m_viewport ? m_viewport->GetHeight() : 0;
@@ -1248,6 +1239,10 @@ void Application::Shutdown()
 
     delete m_scene;
     m_scene = nullptr;
+
+    // Flush any pending layout capture while the ImGui context is still alive
+    // (SaveIniSettingsToMemory needs it), then persist the preset state.
+    m_layout.FinalizeSave();
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

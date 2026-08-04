@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "Json.h"
+#include "editor/Theme.h"
+#include "core/LayoutManager.h"
 
 struct SDL_Texture;
 struct Mat4;
@@ -55,7 +57,6 @@ private:
     Window *m_window;
     bool m_running;
     bool m_flying;
-    bool m_layout_initialized;
     SelectionState *m_selection;
     ViewportPanel *m_viewport;
     Scene *m_scene;
@@ -69,6 +70,9 @@ private:
     float m_camera_scroll;
     float m_ui_scale;
     float m_applied_ui_scale;
+    float m_dpi_scale;
+    Theme::Fonts m_fonts;
+    LayoutManager m_layout;
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;

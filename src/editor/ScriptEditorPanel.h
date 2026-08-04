@@ -23,13 +23,22 @@ public:
     // return true when a running session was actually swapped.
     using ReloadCallback = std::function<bool()>;
 
-    explicit ScriptEditorPanel(ReloadCallback reload);
+    explicit ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload);
     ~ScriptEditorPanel() override;
 
     void OnImGuiRender(float dt) override;
 
     bool IsVisible() const { return m_visible; }
     void ToggleVisible();
+
+    // One-shot: dock the dedicated code window into `node_id` on its next
+    // render. Pass 0 to undock it back to a floating window. Used by the
+    // layout-preset system so the code editor participates in the workspace.
+    void RequestDockCodeWindow(unsigned int node_id);
+
+    // The code window's ImGui title ("Script Editor: <file>"), or "" when no
+    // file is open.
+    std::string GetCodeWindowTitle() const;
 
 private:
     void RefreshFileList();
@@ -54,6 +63,8 @@ private:
     bool m_editor_open;          // dedicated code window visible
     bool m_modal_requested;      // open the unsaved-changes dialog this frame
     bool m_focus_code_window;    // focus the code window next frame
+    bool m_dock_requested;       // apply m_dock_node on the next code-window render
+    unsigned int m_dock_node;    // dock node for the code window (0 = floating)
     float m_editor_pos[2];       // remembered code-window position
     float m_editor_size[2];      // remembered code-window size
     bool m_editor_pos_valid;     // remembered code-window geometry exists

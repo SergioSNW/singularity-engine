@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0-alpha] — 2026-08-04
+
+### Added
+
+- New `Theme` module (`src/editor/Theme.{h,cpp}`): a single custom dark style replaces ImGui's stock grey with a professional palette — warm charcoal neutrals (`#1B1D23` window, `#22252C` popups, `#C9CDD6` text), an indigo accent (`#5B7CFA`) used for selection, tabs, drag grabs, focus rings and docking previews, refined rounding (window 8 / child 6 / frame 4 / tab 4), a 2px `TabBarOverlineSize` highlight on the selected tab, centered title bars, and a taller monospace-friendly scrollbar. `style.ScaleAllSizes(ui_scale)` keeps the existing UI-scale slider working.
+- DPI-crisp font pipeline: `Theme::ComputeDpiScale` derives the framebuffer scale from `SDL_GetRendererOutputSize` / `SDL_GetWindowSize` (the same inputs the ImGui SDL2 backend uses), and `Theme::LoadFonts` bakes Segoe UI / Segoe UI Semibold / Cascadia Mono (with Arial / Consolas / Courier fallbacks) at `size * dpi`. `FontGlobalScale = ui_scale / dpi` folds the DPI factor back out, so glyphs are 1:1 with the framebuffer and text/borders no longer get scaled up and blurred on high-DPI displays. The script editor's mono font now comes from this shared set instead of loading its own Consolas.
+- New `LayoutManager` (`src/core/LayoutManager.{h,cpp}`): a master full-screen transparent `DockSpace` host window covers the viewport work area, so every panel docks into one unified workspace. `View → Layout` offers two built-in presets — **Default** (Hierarchy | Viewport | Inspector over a bottom strip of Script Editor + Stats, code window free-floating) and **Scripting** (taller bottom strip: Script sidebar | docked code window | Stats) — plus **Reset to Default Workspace** and **Save Current Layout as Default**. The script editor's `Script Editor: <file>` window participates in the workspace via `SetNextWindowDockID` (it can be docked or undocked by a preset). A captured custom layout is serialized to `editor_layout.json` (gitignored) and restored on the next launch; otherwise the stored preset is rebuilt deterministically each start.
+
+### Changed
+
+- `Application` now owns a `Theme::Fonts` set and a `LayoutManager`; `Init` computes the DPI scale, loads the theme fonts, applies `ConfigureStyle`, and restores the workspace before the first frame. The old inline `ConfigureImGuiStyle` / `SetupDockingLayout` free functions were removed in favor of the new modules. Exiting play mode still force-rebuilds the dock layout so the editor deterministically returns after the viewport's fullscreen isolation.
+- Version bump from 0.12.3-alpha to 0.13.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a smoke test of the rebuilt engine: the Default workspace docks all panels into the unified dock, the script IDE opens its floating code window, and the app runs stably with no ImGui assertions.
+
 ## [0.12.3-alpha] — 2026-08-04
 
 ### Changed
