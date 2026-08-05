@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.13.0-alpha — Modern UI Theme & Master Dockspace Layouts
+v0.13.1-alpha — Contextual Inspector, Command Palette & Live Theme Customizer
 
 ## Dependencies
 

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <vector>
 
 namespace {
@@ -29,6 +30,34 @@ std::vector<std::string> ListMeshAssets()
     return out;
 }
 
+// Collapsible component header with consistent spacing and a subtle action
+// button on the right edge of the header row. The button is a "ghost" — fully
+// transparent until hovered — so headers stay quiet while the action stays
+// one click away. Returns whether the body should be drawn.
+bool ComponentHeader(const char *title, const char *action_label = nullptr,
+                     std::function<void()> on_action = {}, bool default_open = true)
+{
+    ImGui::PushID(title);
+    const bool open = ImGui::CollapsingHeader(
+        title, default_open ? ImGuiTreeNodeFlags_DefaultOpen
+                            : ImGuiTreeNodeFlags_None);
+    if (open && action_label)
+    {
+        const float btn_w = ImGui::CalcTextSize(action_label).x
+            + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btn_w);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.14f));
+        if (ImGui::SmallButton(action_label) && on_action)
+            on_action();
+        ImGui::PopStyleColor(3);
+    }
+    ImGui::PopID();
+    return open;
+}
+
 } // namespace
 
 InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene)
@@ -41,20 +70,30 @@ void InspectorPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
-    ImGui::Begin("Inspector", nullptr,
-        ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Inspector", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    if (m_selection->entity_id < 0)
-    {
-        ImGui::TextDisabled("No entity selected");
-        ImGui::End();
-        return;
-    }
+    Entity *entity = (m_selection->entity_id >= 0)
+        ? m_scene->GetEntityById(m_selection->entity_id)
+        : nullptr;
 
-    Entity *entity = m_scene->GetEntityById(m_selection->entity_id);
+    // Clean placeholder state: nothing to inspect, so no cluttered controls —
+    // just a centered hint inviting a selection.
     if (!entity)
     {
-        ImGui::TextDisabled("Entity not found");
+        const float avail_y = ImGui::GetContentRegionAvail().y;
+        const float avail_x = ImGui::GetContentRegionAvail().x;
+        ImGui::Dummy(ImVec2(0.0f, avail_y * 0.30f));
+
+        const char *title = "No Entity Selected";
+        const float tw = ImGui::CalcTextSize(title).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_x - tw) * 0.5f);
+        ImGui::TextDisabled("%s", title);
+
+        const char *hint = "Select an entity in the Hierarchy to edit its components.";
+        const float hw = ImGui::CalcTextSize(hint).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_x - hw) * 0.5f);
+        ImGui::TextDisabled("%s", hint);
+
         ImGui::End();
         return;
     }
@@ -70,12 +109,22 @@ void InspectorPanel::OnImGuiRender(float dt)
         m_script_buffer[sizeof(m_script_buffer) - 1] = '\0';
     }
 
+    // --- Identity header: rename the tag, show the stable id ---
     if (ImGui::InputText("Tag", m_tag_buffer, sizeof(m_tag_buffer)))
         entity->tag.tag = m_tag_buffer;
+    ImGui::TextDisabled("Entity id %d", entity->id);
 
+    ImGui::Spacing();
     ImGui::Separator();
 
-    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Transform ---
+    if (ComponentHeader("Transform", "Reset", [entity]() {
+        std::fill(std::begin(entity->transform.position), std::end(entity->transform.position), 0.0f);
+        std::fill(std::begin(entity->transform.rotation), std::end(entity->transform.rotation), 0.0f);
+        entity->transform.scale[0] = 1.0f;
+        entity->transform.scale[1] = 1.0f;
+        entity->transform.scale[2] = 1.0f;
+    }))
     {
         ImGui::DragFloat3("Position", entity->transform.position, 0.1f);
         ImGui::DragFloat3("Rotation", entity->transform.rotation, 0.1f);
@@ -89,7 +138,8 @@ void InspectorPanel::OnImGuiRender(float dt)
                             world.m[12], world.m[13], world.m[14]);
     }
 
-    if (ImGui::CollapsingHeader("Hierarchy", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Hierarchy ---
+    if (ComponentHeader("Hierarchy"))
     {
         // Parent combo: list every entity that is not this one or a descendant
         // (a reparent into its own subtree is a cycle and is rejected).
@@ -114,13 +164,24 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::TextDisabled("Children: %d", (int)entity->children.size());
     }
 
-    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Material ---
+    if (ComponentHeader("Material", "Reset", [entity]() {
+        entity->material.color[0] = 1.0f;
+        entity->material.color[1] = 1.0f;
+        entity->material.color[2] = 1.0f;
+        entity->material.color[3] = 1.0f;
+        entity->material.active = true;
+    }))
     {
         ImGui::ColorEdit4("Albedo", entity->material.color);
         ImGui::Checkbox("Active", &entity->material.active);
     }
 
-    if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Mesh ---
+    if (ComponentHeader("Mesh", "Reset to Cube", [this, entity]() {
+        entity->mesh.path.clear();
+        m_mesh_buffer[0] = '\0';
+    }))
     {
         const char *preview = entity->mesh.path.empty()
             ? "Cube Primitive"
@@ -158,7 +219,11 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
     }
 
-    if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Script ---
+    if (ComponentHeader("Script", "Clear", [this, entity]() {
+        entity->script.path.clear();
+        m_script_buffer[0] = '\0';
+    }))
     {
         // Text input writes the buffer live (like the mesh path field); Apply
         // commits it, and empty means no script. Scripts bind when the scene
@@ -180,7 +245,15 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::TextDisabled("Lua file under assets/scripts/; empty = no script");
     }
 
-    if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+    // --- Camera ---
+    if (ComponentHeader("Camera", "Reset", [entity]() {
+        entity->camera.fov = 60.0f;
+        entity->camera.near_plane = 0.1f;
+        entity->camera.far_plane = 100.0f;
+        entity->camera.pitch = 0.0f;
+        entity->camera.yaw = 0.0f;
+        entity->camera.primary = false;
+    }))
     {
         ImGui::DragFloat("FOV", &entity->camera.fov, 0.5f, 1.0f, 179.0f);
         ImGui::DragFloat("Pitch", &entity->camera.pitch, 0.1f, -89.0f, 89.0f);

@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
 
     Application app;
 
-    if (!app.Init(1280, 720, "Singularity Engine v0.13.0-alpha"))
+    if (!app.Init(1280, 720, "Singularity Engine v0.13.1-alpha"))
         return 1;
 
     app.Run();

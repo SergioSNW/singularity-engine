@@ -37,9 +37,36 @@ float ComputeDpiScale(void *window, void *renderer);
 void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 17.0f,
                float base_mono = 15.0f);
 
-// Rebuild the ImGui style from scratch with the engine's dark theme and apply
-// `ui_scale` to every style metric. Rebuilding from `ImGuiStyle()` first keeps
-// the palette from drifting across repeated calls (e.g. UI-scale changes).
-void ConfigureStyle(float ui_scale);
+// The six key color tokens the user can live-edit in the Theme Settings
+// panel. Everything else in the style (borders, hovers, tints, tabs, scrollbars)
+// is derived from these at ConfigureStyle time, so tweaking one token re-skins
+// the whole editor coherently. Stored as 0-1 RGBA floats (no ImGui dependency
+// in this header) and persisted to editor_theme.json (gitignored).
+struct Colors
+{
+    float window_bg[4];   // main window / surface background (warm charcoal)
+    float child_bg[4];    // child windows, panel recesses
+    float popup_bg[4];    // popups, menus, dropdowns
+    float frame_bg[4];    // input frames, buttons, combo boxes
+    float text[4];        // primary text
+    float accent[4];      // indigo accent (selection, tabs, focus rings)
+};
+
+// The engine's default palette (the warm charcoal + indigo scheme).
+const Colors &DefaultColors();
+
+// Rebuild the ImGui style from scratch using `colors` and apply `ui_scale` to
+// every style metric. Rebuilding from `ImGuiStyle()` first keeps the palette
+// from drifting across repeated calls (UI-scale changes, live color edits).
+void ConfigureStyle(float ui_scale, const Colors &colors);
+
+// Persist the current token set to `path` (editor_theme.json) so a custom
+// color scheme survives restarts. Returns true on success.
+bool SaveThemeToFile(const Colors &colors, const char *path = "editor_theme.json");
+
+// Load a saved token set from `path`. On success `colors` is overwritten and
+// true is returned; on any failure (missing file, bad format) false is
+// returned and `colors` is left untouched.
+bool LoadThemeFromFile(Colors &colors, const char *path = "editor_theme.json");
 
 } // namespace Theme

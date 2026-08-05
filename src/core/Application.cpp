@@ -8,6 +8,8 @@
 #include "editor/ViewportPanel.h"
 #include "editor/GizmoController.h"
 #include "editor/ScriptEditorPanel.h"
+#include "editor/CommandPalette.h"
+#include "editor/SettingsPanel.h"
 #include "editor/Theme.h"
 
 #include "Scene.h"
@@ -47,6 +49,8 @@ Application::Application()
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
     , m_script_editor(nullptr)
+    , m_command_palette(nullptr)
+    , m_settings_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -55,6 +59,7 @@ Application::Application()
     , m_applied_ui_scale(1.0f)
     , m_dpi_scale(1.0f)
     , m_fonts()
+    , m_theme_colors()
     , m_layout()
     , m_recreate_viewport(false)
     , m_scene_path("assets/scenes/default.json")
@@ -792,7 +797,12 @@ bool Application::Init(int width, int height, const char *title)
     Theme::LoadFonts(m_fonts, m_dpi_scale);
     ImGui::GetIO().FontGlobalScale = 1.0f / m_dpi_scale;
 
-    Theme::ConfigureStyle(1.0f);
+    // Restore a saved custom color scheme (editor_theme.json) before the first
+    // ConfigureStyle so the whole palette derives from the user's tokens.
+    m_theme_colors = Theme::DefaultColors();
+    Theme::LoadThemeFromFile(m_theme_colors);
+
+    Theme::ConfigureStyle(1.0f, m_theme_colors);
     ImGui_ImplSDL2_InitForSDLRenderer(
         m_window->GetNativeWindow(),
         m_window->GetNativeRenderer()
@@ -886,6 +896,54 @@ bool Application::Init(int width, int height, const char *title)
     });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
+    // Live theme customizer: owns no state itself — it edits Application's
+    // token set and asks for a ConfigureStyle re-apply on every change.
+    m_settings_panel = new SettingsPanel(&m_theme_colors, [this]() {
+        Theme::ConfigureStyle(m_ui_scale, m_theme_colors);
+    });
+    m_panels.push_back(std::shared_ptr<SettingsPanel>(m_settings_panel));
+
+    // Global command palette (Ctrl+Shift+P): the editor's core actions as a
+    // fuzzy-searchable quick launcher. Registered after the panels above so
+    // the callbacks can reach them.
+    m_command_palette = new CommandPalette();
+    m_panels.push_back(std::shared_ptr<CommandPalette>(m_command_palette));
+
+    auto &cp = *m_command_palette;
+    cp.Register({ "Open Script Editor", "View", "F4", [this]() {
+        if (m_script_editor)
+            m_script_editor->ToggleVisible();
+    } });
+    cp.Register({ "Toggle Theme Customizer", "View", "", [this]() {
+        if (m_settings_panel)
+            m_settings_panel->ToggleVisible();
+    } });
+    cp.Register({ "Command Palette", "View", "Ctrl+Shift+P", [this]() {
+        if (m_command_palette)
+            m_command_palette->ToggleOpen();
+    } });
+    cp.Register({ "Reset UI Scale", "View", "", [this]() {
+        m_ui_scale = 1.0f;
+    } });
+    cp.Register({ "Switch to Default Workspace", "Layout", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            m_layout.ApplyPreset(LayoutManager::Preset::Default));
+    } });
+    cp.Register({ "Switch to Scripting Workspace", "Layout", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            m_layout.ApplyPreset(LayoutManager::Preset::Scripting));
+    } });
+    cp.Register({ "Reset View to Default Workspace", "Layout", "", [this]() {
+        m_layout.ResetToDefault();
+        m_script_editor->RequestDockCodeWindow(0);
+    } });
+    cp.Register({ "Save Current Layout as Default", "Layout", "", [this]() {
+        m_layout.RequestSaveCurrent();
+    } });
+    cp.Register({ "Save Scene", "File", "Ctrl+S", [this]() { SaveScene(); } });
+    cp.Register({ "Open Scene", "File", "Ctrl+O", [this]() { OpenScene(); } });
+    cp.Register({ "Enter Play Mode", "Transport", "", [this]() { EnterPlayMode(); } });
+
     RecreateViewportTarget(800, 600);
 
     m_running = true;
@@ -956,6 +1014,15 @@ void Application::Run()
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // Global command palette: Ctrl+Shift+P toggles it in editor mode.
+        // IsKeyChordPressed reports the chord once per frame; the palette's
+        // own OnImGuiRender draws the modal and handles navigation.
+        if (m_state == EngineState::Editor && m_command_palette &&
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P))
+        {
+            m_command_palette->ToggleOpen();
+        }
 
         // --- Main menu bar (transport controls + editor chrome) ---
         const bool playing = (m_state == EngineState::Play);
@@ -1059,6 +1126,19 @@ void Application::Run()
                         if (ImGui::MenuItem("Script Editor", "F4", m_script_editor->IsVisible()))
                             m_script_editor->ToggleVisible();
                     }
+
+                    if (m_settings_panel)
+                    {
+                        if (ImGui::MenuItem("Theme Customizer", nullptr,
+                                            m_settings_panel->IsVisible()))
+                            m_settings_panel->ToggleVisible();
+                    }
+
+                    if (m_command_palette)
+                    {
+                        if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P"))
+                            m_command_palette->ToggleOpen();
+                    }
                     ImGui::EndMenu();
                 }
             }
@@ -1078,7 +1158,7 @@ void Application::Run()
         // baked at dpi resolution), so logical layout stays consistent.
         if (m_ui_scale != m_applied_ui_scale)
         {
-            Theme::ConfigureStyle(m_ui_scale);
+            Theme::ConfigureStyle(m_ui_scale, m_theme_colors);
             ImGui::GetIO().FontGlobalScale = m_ui_scale / m_dpi_scale;
             m_applied_ui_scale = m_ui_scale;
         }
@@ -1216,6 +1296,8 @@ void Application::Shutdown()
     m_panels.clear();
     m_viewport = nullptr;
     m_script_editor = nullptr;
+    m_command_palette = nullptr;
+    m_settings_panel = nullptr;
 
     if (m_viewport_target)
     {

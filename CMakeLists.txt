@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.13.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.13.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,6 +77,8 @@ target_sources(singularity-engine PRIVATE
   src/editor/ViewportPanel.cpp
   src/editor/GizmoController.cpp
   src/editor/ScriptEditorPanel.cpp
+  src/editor/CommandPalette.cpp
+  src/editor/SettingsPanel.cpp
   src/editor/Theme.cpp
   third_party/ImGuiColorTextEdit/TextEditor.cpp
   ${IMGUI_SOURCES}

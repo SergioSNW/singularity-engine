@@ -47,6 +47,7 @@ Thumbs.db
 nul
 imgui.ini
 editor_layout.json
+editor_theme.json
 
 # VS Code workspace files (optional, but good for clean repos)
 .vscode/

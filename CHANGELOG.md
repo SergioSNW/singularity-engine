@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.1-alpha] — 2026-08-05
+
+### Added
+
+- Global **Command Palette** (`src/editor/CommandPalette.{h,cpp}`): a modal quick-launcher toggled with `Ctrl+Shift+P` (or View → Command Palette). It fuzzy-matches the editor's core actions across their category/label/shortcut text using a subsequence scorer that rewards prefixes, word boundaries, camel humps and consecutive runs; multi-word queries (e.g. "open editor") must match every token. Up/Down navigate, Enter or a click runs the command, Esc dismisses. The filter box grabs keyboard focus the instant the palette opens, so it is fully usable from the keyboard. Registered actions include Open Script Editor (F4), Toggle Theme Customizer, Reset UI Scale, Switch to Default/Scripting Workspace, Reset View to Default Workspace, Save Current Layout as Default, Save/Open Scene, and Enter Play Mode.
+- **Live Theme Customizer** (`src/editor/SettingsPanel.{h,cpp}`): `Theme::Colors` exposes six editable color tokens (window/panel/popup/frame backgrounds, text, accent). `Theme::ConfigureStyle` now derives the *entire* style palette from those tokens (borders, hovers, tabs, scrollbars, focus rings, docking previews), so editing one token re-skins the editor coherently. The View → Theme Customizer window live-applies color edits, and Save Theme / Reset to Default persist or restore via `Theme::SaveThemeToFile`/`LoadThemeFromFile` (`editor_theme.json`, gitignored, loaded at startup before the first style pass).
+
+### Changed
+
+- `InspectorPanel` refactored into clean, consistently spaced collapsible component headers with subtle "ghost" action buttons on the header row (Transform Reset, Material Reset, Mesh Reset to Cube, Script Clear, Camera Reset) plus an identity header (tag rename + entity id). With no entity selected it shows a minimal centered placeholder instead of empty controls.
+- `Theme::ConfigureStyle(float ui_scale)` became `Theme::ConfigureStyle(float ui_scale, const Colors &colors)`; `Application` owns the live `Theme::Colors` token set, restores a saved scheme at `Init`, and re-applies the style with the current tokens on UI-scale changes and live edits.
+- Version bump from 0.13.0-alpha to 0.13.1-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a smoke test of the rebuilt engine: the app runs stably with the new panels registered, no ImGui assertions, and `editor_theme.json` is only written on an explicit Save.
+
 ## [0.13.0-alpha] — 2026-08-04
 
 ### Added
