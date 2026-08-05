@@ -1,0 +1,70 @@
+{
+  "prefab": true,
+  "name": "Crate",
+  "root": {
+    "name": "Crate",
+    "transform": {
+      "position": [0.0, 0.5, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0]
+    },
+    "material": {
+      "color": [0.72, 0.52, 0.26, 1.0],
+      "active": true
+    },
+    "mesh": {
+      "path": ""
+    },
+    "camera": {
+      "fov": 60.0,
+      "near_plane": 0.1,
+      "far_plane": 100.0,
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "primary": false
+    },
+    "collider": {
+      "enabled": true,
+      "type": "solid",
+      "center": [0.0, 0.0, 0.0],
+      "extents": [0.5, 0.5, 0.5]
+    },
+    "script": {
+      "path": ""
+    },
+    "children": [
+      {
+        "name": "Lid",
+        "transform": {
+          "position": [0.0, 0.55, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [0.85, 0.1, 0.85]
+        },
+        "material": {
+          "color": [0.60, 0.40, 0.20, 1.0],
+          "active": true
+        },
+        "mesh": {
+          "path": ""
+        },
+        "camera": {
+          "fov": 60.0,
+          "near_plane": 0.1,
+          "far_plane": 100.0,
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "primary": false
+        },
+        "collider": {
+          "enabled": false,
+          "type": "solid",
+          "center": [0.0, 0.0, 0.0],
+          "extents": [0.5, 0.5, 0.5]
+        },
+        "script": {
+          "path": ""
+        }
+      }
+    ]
+  }
+}

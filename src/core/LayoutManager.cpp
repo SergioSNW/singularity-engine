@@ -55,7 +55,12 @@ void LayoutManager::RebuildLayout()
         ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.22f, &bottom_left, &bottom_center);
         ImGui::DockBuilderSplitNode(bottom_center, ImGuiDir_Right, 0.22f, &bottom_center, &bottom_right);
 
-        ImGui::DockBuilderDockWindow("Hierarchy", left);
+        // Left rail hosts the Hierarchy over the Content Browser.
+        ImGuiID left_top, left_bottom;
+        ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
+
+        ImGui::DockBuilderDockWindow("Hierarchy", left_top);
+        ImGui::DockBuilderDockWindow("Content Browser", left_bottom);
         ImGui::DockBuilderDockWindow("Viewport", center);
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Script Editor", bottom_left);
@@ -73,10 +78,15 @@ void LayoutManager::RebuildLayout()
         ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.22f, &left, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
 
+        // Left rail hosts the Hierarchy over the Content Browser.
+        ImGuiID left_top, left_bottom;
+        ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
+
         ImGuiID bottom_left, bottom_right;
         ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.72f, &bottom_left, &bottom_right);
 
-        ImGui::DockBuilderDockWindow("Hierarchy", left);
+        ImGui::DockBuilderDockWindow("Hierarchy", left_top);
+        ImGui::DockBuilderDockWindow("Content Browser", left_bottom);
         ImGui::DockBuilderDockWindow("Viewport", center);
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Script Editor", bottom_left);

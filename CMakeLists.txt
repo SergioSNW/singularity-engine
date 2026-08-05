@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.14.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.15.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +68,7 @@ target_sources(singularity-engine PRIVATE
   src/core/Scene.cpp
   src/core/Json.cpp
   src/core/SceneSerializer.cpp
+  src/core/SceneManager.cpp
   src/core/PhysicsManager.cpp
   src/core/Mesh.cpp
   src/core/LayoutManager.cpp
@@ -80,6 +81,7 @@ target_sources(singularity-engine PRIVATE
   src/editor/ScriptEditorPanel.cpp
   src/editor/CommandPalette.cpp
   src/editor/SettingsPanel.cpp
+  src/editor/ContentBrowserPanel.cpp
   src/editor/Theme.cpp
   third_party/ImGuiColorTextEdit/TextEditor.cpp
   ${IMGUI_SOURCES}

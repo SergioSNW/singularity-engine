@@ -17,6 +17,7 @@ class EditorPanel;
 struct SelectionState;
 class ViewportPanel;
 class Scene;
+class SceneManager;
 class MeshLibrary;
 class GizmoController;
 class ScriptEngine;
@@ -24,6 +25,7 @@ class PhysicsManager;
 class ScriptEditorPanel;
 class CommandPalette;
 class SettingsPanel;
+class ContentBrowserPanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -44,6 +46,15 @@ public:
     void Run();
     void Shutdown();
 
+    // --- Scene management (driveable from panels such as the Content Browser) ---
+    // Load a map file into the active scene (editor only). Clears the
+    // selection and repoints m_scene_path on success.
+    void LoadSceneFile(const std::string &filepath);
+    // Start from a blank map. Active path is cleared until the next save.
+    void NewScene();
+    // Open the "Save Scene As" modal (writes assets/scenes/<name>.json).
+    void OpenSaveAsModal();
+
 private:
     void RecreateViewportTarget(int width, int height);
     void RenderViewportTarget();
@@ -54,6 +65,7 @@ private:
     const Mesh *ResolveMesh(const Entity &entity, std::string &error);
     void SaveScene();
     void OpenScene();
+    void DrawSaveAsModal();
     void EnterPlayMode();
     void ExitPlayMode();
 
@@ -62,7 +74,8 @@ private:
     bool m_flying;
     SelectionState *m_selection;
     ViewportPanel *m_viewport;
-    Scene *m_scene;
+    Scene *m_scene;                 // always == m_scene_manager->GetScene()
+    SceneManager *m_scene_manager;
     MeshLibrary *m_mesh_library;
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
@@ -70,6 +83,7 @@ private:
     ScriptEditorPanel *m_script_editor;
     CommandPalette *m_command_palette;
     SettingsPanel *m_settings_panel;
+    ContentBrowserPanel *m_content_browser;
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
@@ -87,4 +101,6 @@ private:
     EngineState m_state;
     json::Value m_scene_snapshot;   // pre-play backup; restored on Stop
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
+    bool m_save_as_open;            // "Save Scene As" modal is pending
+    char m_save_as_name[128] = {};  // file name typed into that modal
 };

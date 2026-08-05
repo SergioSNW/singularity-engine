@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.15.0-alpha] — 2026-08-05
+
+### Added
+
+- **`SceneManager`** (`src/core/SceneManager.{h,cpp}`): owns the engine's single active `Scene` and all file-backed transitions between maps. The Scene object is allocated once and rebuilt *in place* on every load, so every subsystem holding a `Scene*` (panels, gizmo, physics, script session) keeps a valid pointer across a scene switch. `LoadScene(path)` replaces the contents and tracks the active path/name; `SaveScene(path)` stamps map metadata; `NewScene()` starts from a blank map with a default camera. `Application` now routes `SaveScene`/`OpenScene`/`New Scene`/`Save Scene As` through it.
+- **Map metadata**: scene files carry a `"meta"` block (`name`, `author`, `created`) that round-trips through `SceneSerializer`. `SceneManager` stamps the name from the file stem and the ISO-8601 creation date on first save, so files are self-describing.
+- **Prefabs**: `SceneSerializer::SavePrefab(entity, path)` writes a single entity tree (root + `"children"`) as a `{ "prefab": true, "name", "root" }` `.prefab.json` document; `LoadPrefab(scene, path, parent)` instantiates it with **fresh UUIDs** (and fresh runtime ids) on every spawn, either at the scene root or under a chosen parent; `IsPrefabFile(path)` tells prefabs from scene files. Prefabs reuse the same per-entity component encoding as scene files.
+- **Content Browser** (`src/editor/ContentBrowserPanel.{h,cpp}`): a dockable asset-management panel over `assets/` — a recursive folder tree on the left and a responsive file grid on the right, each item with a colored per-type badge (scene / prefab / script / mesh / folder). Double-click acts on the asset: folders navigate, `.json` scenes load as the active map, `.json` prefabs instantiate into the active scene, `.lua` opens in the Script Editor. A toolbar and per-item context menus provide create-folder, inline rename, and delete-with-confirmation (blocked outside `assets/`). The window is docked by name in both workspace presets (Hierarchy over Content Browser on the left rail).
+- **Prefab authoring & instantiation in the editor**: the Hierarchy context menu gains "Save as Prefab..." (modal names the file under `assets/prefabs/`), a "Spawn Prefab..." button opens a picker of every prefab under `assets/`, and prefabs can be **dragged from the Content Browser onto the Hierarchy window** (drag payload `"PREFAB"`) to spawn an instance.
+- **Scene management UI**: the File menu gains "New Scene" and "Save Scene As..." (a modal writes `assets/scenes/<name>.json` with path-sanitized names); the Command Palette gains "New Scene", "Save Scene As...", and "Toggle Content Browser". Sample assets ship under `assets/prefabs/Crate.prefab.json`.
+
+### Changed
+
+- `Application` owns a `SceneManager *m_scene_manager`; `m_scene` now aliases `m_scene_manager->GetScene()` and is no longer deleted separately. `ScriptEditorPanel::RequestOpen` became public so the Content Browser can open `.lua` files (the dirty-buffer dialog still runs first). The default scene's meta name is `"Default"`.
+- Version bump from 0.14.0-alpha to 0.15.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a headless smoke test of the new pure logic (Scene + SceneSerializer + SceneManager, no window): scene save/load preserves entity count, hierarchy (via UUID), components, and metadata; `SaveScene` stamps name/date; `NewScene` resets to a camera-only map; `LoadScene` replaces contents and tracks path/name; prefabs save, classify, and instantiate with fresh UUIDs and preserved subtree/components/transforms.
+
 ## [0.14.0-alpha] — 2026-08-05
 
 ### Added

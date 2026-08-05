@@ -2,8 +2,16 @@
 #include "SelectionState.h"
 #include "Scene.h"
 #include "Entity.h"
+#include "SceneSerializer.h"
 
 #include <imgui.h>
+
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
+#include <string>
+
+namespace fs = std::filesystem;
 
 SceneHierarchyPanel::SceneHierarchyPanel(SelectionState *selection, Scene *scene)
     : m_selection(selection)
@@ -21,6 +29,14 @@ static void ClearSelectionIfAffected(Scene *scene, SelectionState *selection, in
         selection->entity_id = -1;
         selection->entity_name.clear();
     }
+}
+
+static int CountDescendants(const Entity &entity)
+{
+    int count = 0;
+    for (const Entity *child : entity.children)
+        count += 1 + CountDescendants(*child);
+    return count;
 }
 
 void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
@@ -46,6 +62,13 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
     {
         if (ImGui::MenuItem("Add Child"))
             m_scene->CreateEntity("Child", &entity);
+        if (ImGui::MenuItem("Save as Prefab..."))
+        {
+            m_prefab_entity_id = entity.id;
+            std::strncpy(m_prefab_name, entity.tag.tag.c_str(), sizeof(m_prefab_name) - 1);
+            m_prefab_name[sizeof(m_prefab_name) - 1] = '\0';
+            m_prefab_modal_open = true;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Delete"))
             to_delete_id = entity.id;
@@ -60,6 +83,117 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
     }
 
     ImGui::PopID();
+}
+
+void SceneHierarchyPanel::DrawPrefabSaveModal()
+{
+    if (m_prefab_modal_open)
+    {
+        ImGui::OpenPopup("Save as Prefab");
+        m_prefab_modal_open = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Save as Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    Entity *entity = (m_prefab_entity_id >= 0)
+        ? m_scene->GetEntityById(m_prefab_entity_id) : nullptr;
+    if (!entity)
+    {
+        ImGui::CloseCurrentPopup();
+        return;
+    }
+
+    ImGui::TextUnformatted("Save this entity (and its children) as a reusable prefab.");
+    ImGui::TextDisabled("Root: '%s' (%d entity/ies in the subtree)",
+                        entity->tag.tag.c_str(), 1 + (int)CountDescendants(*entity));
+    ImGui::Separator();
+
+    ImGui::InputText("Name", m_prefab_name, sizeof(m_prefab_name));
+    ImGui::TextDisabled("Writes assets/prefabs/<name>.prefab.json");
+
+    ImGui::Separator();
+    if (ImGui::Button("Save"))
+    {
+        if (m_prefab_name[0] != '\0')
+        {
+            std::string path = std::string("assets/prefabs/") + m_prefab_name + ".prefab.json";
+            std::string error;
+            if (SceneSerializer::SavePrefab(*entity, path, &error))
+                m_status = "Prefab saved to " + path;
+            else
+                m_status = "Prefab save failed: " + error;
+        }
+        else
+        {
+            m_status = "Prefab save failed: name is empty";
+        }
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+}
+
+void SceneHierarchyPanel::DrawSpawnPrefabModal()
+{
+    if (m_spawn_modal_open)
+    {
+        // Re-scan prefab files every time the dialog opens so new saves show up.
+        m_prefab_files.clear();
+        std::error_code ec;
+        for (const auto &entry : fs::recursive_directory_iterator("assets", ec))
+        {
+            if (!entry.is_regular_file(ec))
+                continue;
+            std::string path = entry.path().generic_string();
+            if (path.size() > 5 && path.substr(path.size() - 5) == ".json" &&
+                SceneSerializer::IsPrefabFile(path))
+            {
+                m_prefab_files.push_back(path);
+            }
+        }
+        std::sort(m_prefab_files.begin(), m_prefab_files.end());
+
+        ImGui::OpenPopup("Spawn Prefab");
+        m_spawn_modal_open = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Spawn Prefab", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    if (m_prefab_files.empty())
+    {
+        ImGui::TextDisabled("No prefabs found under assets/. Save one from the "
+                            "Hierarchy context menu.");
+    }
+    else if (ImGui::BeginListBox("##prefabs", ImVec2(430.0f, 240.0f)))
+    {
+        for (const std::string &path : m_prefab_files)
+        {
+            if (ImGui::Selectable(path.c_str()))
+            {
+                std::string error;
+                if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                    m_status = "Spawned prefab: " + path;
+                else
+                    m_status = "Prefab spawn failed: " + error;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Close"))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
 }
 
 void SceneHierarchyPanel::OnImGuiRender(float dt)
@@ -109,6 +243,10 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
         ImGui::EndDisabled();
     }
 
+    ImGui::SameLine();
+    if (ImGui::Button("Spawn Prefab..."))
+        m_spawn_modal_open = true;
+
     if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
         int to_delete_id = -1;
@@ -128,5 +266,32 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
         ImGui::TreePop();
     }
 
+    // Drop target: prefabs dragged from the Content Browser spawn here.
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("PREFAB"))
+        {
+            std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
+            while (!path.empty() && path.back() == '\0')
+                path.pop_back();
+
+            std::string error;
+            if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                m_status = "Spawned prefab: " + path;
+            else
+                m_status = "Prefab spawn failed: " + error;
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    if (!m_status.empty())
+    {
+        ImGui::Separator();
+        ImGui::TextDisabled("%s", m_status.c_str());
+    }
+
     ImGui::End();
+
+    DrawPrefabSaveModal();
+    DrawSpawnPrefabModal();
 }

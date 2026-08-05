@@ -7,9 +7,10 @@
 // Owns the full-screen editor dockspace (a transparent host window covering
 // the main viewport's work area) and the workspace preset system:
 //
-//   * Default  — the classic editor arrangement: Hierarchy | Viewport |
-//                Inspector over a bottom strip holding the script sidebar and
-//                the stats panel. The code editor stays free-floating.
+//   * Default  — the classic editor arrangement: Hierarchy (over the Content
+//                Browser) | Viewport | Inspector over a bottom strip holding
+//                the script sidebar and the stats panel. The code editor stays
+//                free-floating.
 //   * Scripting — a script-authoring workspace: a shorter bottom strip split
 //                into the script sidebar (left) and a *docked* code window
 //                (right), so the whole IDE is part of the unified dock.

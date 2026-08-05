@@ -13,11 +13,13 @@
 #include "editor/Theme.h"
 
 #include "Scene.h"
+#include "SceneManager.h"
 #include "SceneSerializer.h"
 #include "PhysicsManager.h"
 #include "Mesh.h"
 #include "EngineMath.h"
 #include "script/ScriptEngine.h"
+#include "editor/ContentBrowserPanel.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -26,6 +28,7 @@
 #include <backends/imgui_impl_sdlrenderer2.h>
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 
 static const double TARGET_FRAME_TIME = 1.0 / 60.0;
@@ -46,6 +49,7 @@ Application::Application()
     , m_selection(nullptr)
     , m_viewport(nullptr)
     , m_scene(nullptr)
+    , m_scene_manager(nullptr)
     , m_mesh_library(nullptr)
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
@@ -53,6 +57,7 @@ Application::Application()
     , m_script_editor(nullptr)
     , m_command_palette(nullptr)
     , m_settings_panel(nullptr)
+    , m_content_browser(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -69,6 +74,7 @@ Application::Application()
     , m_mesh_error()
     , m_state(EngineState::Editor)
     , m_scene_snapshot()
+    , m_save_as_open(false)
 {
 }
 
@@ -603,26 +609,136 @@ const Mesh *Application::ResolveMesh(const Entity &entity, std::string &error)
 
 void Application::SaveScene()
 {
+    if (!m_scene_manager)
+        return;
+    const std::string path = m_scene_path.empty() ? "assets/scenes/default.json" : m_scene_path;
     std::string error;
-    if (SceneSerializer::SaveToFile(*m_scene, m_scene_path, &error))
-        m_scene_status = "Scene saved to " + std::filesystem::absolute(m_scene_path).string();
+    if (m_scene_manager->SaveScene(path, &error))
+    {
+        m_scene_path = path;
+        m_scene_status = "Scene saved to " + std::filesystem::absolute(path).string();
+    }
     else
+    {
         m_scene_status = "Save failed: " + error;
+    }
 }
 
 void Application::OpenScene()
 {
-    std::string error;
-    if (SceneSerializer::LoadFromFile(*m_scene, m_scene_path, &error))
+    if (!m_scene_manager)
+        return;
+    LoadSceneFile(m_scene_path.empty() ? "assets/scenes/default.json" : m_scene_path);
+}
+
+void Application::LoadSceneFile(const std::string &filepath)
+{
+    if (!m_scene_manager)
+        return;
+    if (m_state == EngineState::Play)
     {
+        m_scene_status = "Stop play mode before switching scenes";
+        return;
+    }
+
+    std::string error;
+    if (m_scene_manager->LoadScene(filepath, &error))
+    {
+        m_scene_path = filepath;
         m_selection->entity_id = -1;
         m_selection->entity_name.clear();
-        m_scene_status = "Scene loaded from " + std::filesystem::absolute(m_scene_path).string();
+        m_scene_status = "Scene loaded from " + std::filesystem::absolute(filepath).string();
     }
     else
     {
         m_scene_status = "Open failed: " + error;
     }
+}
+
+void Application::NewScene()
+{
+    if (!m_scene_manager)
+        return;
+    if (m_state == EngineState::Play)
+    {
+        m_scene_status = "Stop play mode before switching scenes";
+        return;
+    }
+
+    std::string error;
+    if (m_scene_manager->NewScene(&error))
+    {
+        m_scene_path.clear();
+        m_selection->entity_id = -1;
+        m_selection->entity_name.clear();
+        m_scene_status = "New scene: " + m_scene_manager->ActiveName();
+    }
+    else
+    {
+        m_scene_status = "New scene failed: " + error;
+    }
+}
+
+void Application::OpenSaveAsModal()
+{
+    m_save_as_open = true;
+    std::strncpy(m_save_as_name, m_scene_manager ? m_scene_manager->ActiveName().c_str() : "",
+                 sizeof(m_save_as_name) - 1);
+    m_save_as_name[sizeof(m_save_as_name) - 1] = '\0';
+}
+
+void Application::DrawSaveAsModal()
+{
+    if (m_save_as_open)
+    {
+        ImGui::OpenPopup("Save Scene As");
+        m_save_as_open = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Save Scene As", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextUnformatted("Save the active scene as a map file.");
+    ImGui::Separator();
+
+    ImGui::InputText("File name", m_save_as_name, sizeof(m_save_as_name));
+    ImGui::TextDisabled("Writes assets/scenes/<name>.json");
+
+    ImGui::Separator();
+    if (ImGui::Button("Save"))
+    {
+        // Sanitize the name: strip a stray .json suffix and path-hostile
+        // characters so the file cannot escape assets/scenes/.
+        std::string name = m_save_as_name;
+        if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0)
+            name = name.substr(0, name.size() - 5);
+        for (char &c : name)
+            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+                c == '"' || c == '<' || c == '>' || c == '|')
+                c = '_';
+
+        if (!name.empty())
+        {
+            const std::string path = "assets/scenes/" + name + ".json";
+            std::string error;
+            if (m_scene_manager && m_scene_manager->SaveScene(path, &error))
+            {
+                m_scene_path = path;
+                m_scene_status = "Scene saved to " + std::filesystem::absolute(path).string();
+            }
+            else
+            {
+                m_scene_status = "Save failed: " + error;
+            }
+        }
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
 }
 
 void Application::EnterPlayMode()
@@ -858,7 +974,12 @@ bool Application::Init(int width, int height, const char *title)
     m_script_engine = new ScriptEngine();
     m_physics = new PhysicsManager();
 
-    m_scene = new Scene();
+    // The SceneManager owns the active Scene. The object is allocated once and
+    // rebuilt in place on every load, so the Scene* kept by every panel stays
+    // valid across scene switches.
+    m_scene_manager = new SceneManager();
+    m_scene = m_scene_manager->GetScene();
+
     Entity &camera = m_scene->CreateEntity("Camera");
     camera.transform.position[1] = 2.0f;
     camera.transform.position[2] = 8.0f;
@@ -944,6 +1065,8 @@ bool Application::Init(int width, int height, const char *title)
     trigger_zone.collider.type = ColliderComponent::Type::Trigger;
     trigger_zone.script.path = "assets/scripts/trigger.lua";
 
+    m_scene->Meta().name = "Default";
+
     m_viewport = new ViewportPanel();
 
     m_panels.push_back(
@@ -1018,7 +1141,21 @@ bool Application::Init(int width, int height, const char *title)
     } });
     cp.Register({ "Save Scene", "File", "Ctrl+S", [this]() { SaveScene(); } });
     cp.Register({ "Open Scene", "File", "Ctrl+O", [this]() { OpenScene(); } });
+    cp.Register({ "New Scene", "File", "", [this]() { NewScene(); } });
+    cp.Register({ "Save Scene As...", "File", "", [this]() { OpenSaveAsModal(); } });
     cp.Register({ "Enter Play Mode", "Transport", "", [this]() { EnterPlayMode(); } });
+
+    // Content Browser: dockable asset manager over assets/ (scene/prefab
+    // load & spawn, script open, folder/file ops). Its window is docked by
+    // name in both workspace presets; the command toggles visibility so the
+    // docked slot can be dismissed and restored.
+    m_content_browser = new ContentBrowserPanel(m_scene_manager, m_script_editor);
+    m_content_browser->on_load_scene = [this](const std::string &path) { LoadSceneFile(path); };
+    m_panels.push_back(std::shared_ptr<ContentBrowserPanel>(m_content_browser));
+    cp.Register({ "Toggle Content Browser", "View", "", [this]() {
+        if (m_content_browser)
+            m_content_browser->ToggleVisible();
+    } });
 
     RecreateViewportTarget(800, 600);
 
@@ -1154,8 +1291,12 @@ void Application::Run()
                 {
                     if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
                         SaveScene();
+                    if (ImGui::MenuItem("Save Scene As..."))
+                        OpenSaveAsModal();
                     if (ImGui::MenuItem("Open Scene", "Ctrl+O"))
                         OpenScene();
+                    if (ImGui::MenuItem("New Scene"))
+                        NewScene();
                     ImGui::Separator();
                     if (ImGui::MenuItem("Exit"))
                         m_running = false;
@@ -1201,6 +1342,13 @@ void Application::Run()
                         ImGui::Separator();
                         if (ImGui::MenuItem("Script Editor", "F4", m_script_editor->IsVisible()))
                             m_script_editor->ToggleVisible();
+                    }
+
+                    if (m_content_browser)
+                    {
+                        if (ImGui::MenuItem("Content Browser", nullptr,
+                                            m_content_browser->IsVisible()))
+                            m_content_browser->ToggleVisible();
                     }
 
                     if (m_settings_panel)
@@ -1262,6 +1410,8 @@ void Application::Run()
 
             for (auto &panel : m_panels)
                 panel->OnImGuiRender((float)dt);
+
+            DrawSaveAsModal();
         }
 
         ImGui::Render();
@@ -1382,6 +1532,7 @@ void Application::Shutdown()
     m_script_editor = nullptr;
     m_command_palette = nullptr;
     m_settings_panel = nullptr;
+    m_content_browser = nullptr;
 
     if (m_viewport_target)
     {
@@ -1403,7 +1554,9 @@ void Application::Shutdown()
     delete m_selection;
     m_selection = nullptr;
 
-    delete m_scene;
+    // m_scene aliases m_scene_manager->GetScene(); the manager owns it.
+    delete m_scene_manager;
+    m_scene_manager = nullptr;
     m_scene = nullptr;
 
     // Flush any pending layout capture while the ImGui context is still alive

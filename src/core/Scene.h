@@ -8,6 +8,16 @@
 
 struct Mat4;
 
+// Human-readable map metadata stored in the scene file's "meta" block. Kept on
+// the Scene itself so the editor (and SceneManager) can show it and so Save
+// can stamp the current name/author/date into the file.
+struct SceneMetadata
+{
+    std::string name;     // display name (SceneManager falls back to file stem)
+    std::string author;   // optional attribution
+    std::string created;  // ISO-8601 date of first save, e.g. "2026-08-05"
+};
+
 class Scene
 {
 public:
@@ -23,11 +33,15 @@ public:
     Entity* GetEntityById(int id);
     bool IsDescendantOf(int entity_id, int ancestor_id) const;
 
+    SceneMetadata &Meta() { return m_meta; }
+    const SceneMetadata &Meta() const { return m_meta; }
+
     // World matrix = parent's world matrix * local transform matrix, or just
     // the local transform matrix for a root entity.
     Mat4 ComputeWorldMatrix(const Entity &entity) const;
 
 private:
     std::vector<std::unique_ptr<Entity>> m_entities;
+    SceneMetadata m_meta;
     int m_next_id;
 };

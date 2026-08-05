@@ -40,11 +40,15 @@ public:
     // file is open.
     std::string GetCodeWindowTitle() const;
 
+    // Open `path` in the code window. If the current buffer is dirty, the
+    // unsaved-changes dialog runs first. Safe to call from other panels (the
+    // Content Browser uses it for .lua assets).
+    void RequestOpen(const std::string &path);
+
 private:
     void RefreshFileList();
     bool OpenFile(const std::string &path, std::string *error);
     bool SaveCurrent(std::string *error);
-    void RequestOpen(const std::string &path);
     void ConfirmUnsavedModal();
     void DrawFileBrowser();
     void DrawCodeWindow();
