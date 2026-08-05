@@ -32,6 +32,15 @@ public:
     // alive. Runtime errors are recorded in LastError() and printed to stderr.
     void UpdateSession(Scene &scene, float dt);
 
+    // Collision / trigger event kind. The PhysicsManager dispatches these to
+    // scripted entities with a handle to the other entity of the pair.
+    enum class ScriptEvent { CollisionEnter, CollisionExit, TriggerEnter, TriggerExit };
+
+    // Fire the matching hook (OnCollisionEnter/Exit or OnTriggerEnter/Exit)
+    // on the script bound for `entity_id`, passing `other` as its argument.
+    // No-op when the entity has no script or the hook is absent.
+    void DispatchEvent(int entity_id, ScriptEvent event, Entity *other);
+
     // Tear the running session down and bind every scripted entity again,
     // re-reading each script file from disk and re-firing OnStart. Used by the
     // script editor's Save & Reload to apply edits to the live play session.
@@ -52,6 +61,10 @@ private:
         int env_ref;        // registry ref to the script's _ENV table
         int on_start_ref;   // registry ref to OnStart (LUA_NOREF if absent)
         int on_update_ref;  // registry ref to OnUpdate (LUA_NOREF if absent)
+        int on_collision_enter_ref;  // OnCollisionEnter(other)   (LUA_NOREF if absent)
+        int on_collision_exit_ref;   // OnCollisionExit(other)    (LUA_NOREF if absent)
+        int on_trigger_enter_ref;    // OnTriggerEnter(other)     (LUA_NOREF if absent)
+        int on_trigger_exit_ref;     // OnTriggerExit(other)      (LUA_NOREF if absent)
     };
 
     lua_State *m_lua;

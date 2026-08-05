@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.13.1-alpha — Contextual Inspector, Command Palette & Live Theme Customizer
+v0.14.0-alpha — Physics-Scripting Bridge (AABB Colliders, Solid & Trigger Volumes)
 
 ## Dependencies
 

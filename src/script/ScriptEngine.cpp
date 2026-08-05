@@ -486,22 +486,21 @@ bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)
 
     ScriptedEntity se;
     se.entity_id = entity.id;
-    lua_getfield(L, -1, "OnStart");         // [env, fn|nil]
-    if (lua_isfunction(L, -1))
-        se.on_start_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    else
-    {
-        se.on_start_ref = LUA_NOREF;
+    // A hook is captured as a registry ref when the script defines it;
+    // otherwise it stays LUA_NOREF and DispatchEvent skips the call.
+    auto bind_hook = [L](const char *name) -> int {
+        lua_getfield(L, -1, name);
+        if (lua_isfunction(L, -1))
+            return luaL_ref(L, LUA_REGISTRYINDEX);
         lua_pop(L, 1);
-    }
-    lua_getfield(L, -1, "OnUpdate");        // [env, fn|nil]
-    if (lua_isfunction(L, -1))
-        se.on_update_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    else
-    {
-        se.on_update_ref = LUA_NOREF;
-        lua_pop(L, 1);
-    }
+        return LUA_NOREF;
+    };
+    se.on_start_ref = bind_hook("OnStart");
+    se.on_update_ref = bind_hook("OnUpdate");
+    se.on_collision_enter_ref = bind_hook("OnCollisionEnter");
+    se.on_collision_exit_ref = bind_hook("OnCollisionExit");
+    se.on_trigger_enter_ref = bind_hook("OnTriggerEnter");
+    se.on_trigger_exit_ref = bind_hook("OnTriggerExit");
     se.env_ref = luaL_ref(L, LUA_REGISTRYINDEX); // pops env
 
     m_scripted.push_back(se);
@@ -581,6 +580,44 @@ void ScriptEngine::UpdateSession(Scene &scene, float dt)
         std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
 }
 
+void ScriptEngine::DispatchEvent(int entity_id, ScriptEvent event, Entity *other)
+{
+    if (!m_lua)
+        return;
+
+    for (const ScriptedEntity &se : m_scripted)
+    {
+        if (se.entity_id != entity_id)
+            continue;
+
+        int ref = LUA_NOREF;
+        switch (event)
+        {
+            case ScriptEvent::CollisionEnter: ref = se.on_collision_enter_ref; break;
+            case ScriptEvent::CollisionExit:  ref = se.on_collision_exit_ref;  break;
+            case ScriptEvent::TriggerEnter:   ref = se.on_trigger_enter_ref;   break;
+            case ScriptEvent::TriggerExit:    ref = se.on_trigger_exit_ref;    break;
+        }
+        if (ref == LUA_NOREF)
+            return;                       // hook not defined by this script
+
+        lua_rawgeti(m_lua, LUA_REGISTRYINDEX, ref);
+        if (other)
+            PushEntity(m_lua, other);
+        else
+            lua_pushnil(m_lua);
+        if (lua_pcall(m_lua, 1, 0, 0) != LUA_OK)
+        {
+            if (m_error.empty())
+                m_error = lua_tostring(m_lua, -1);
+            lua_pop(m_lua, 1);
+        }
+        if (!m_error.empty())
+            std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
+        return;
+    }
+}
+
 bool ScriptEngine::ReloadSession(Scene &scene, std::string &errors)
 {
     StopSession();                      // releases refs + VM from the old run
@@ -599,6 +636,14 @@ void ScriptEngine::StopSession()
             luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_start_ref);
         if (se.on_update_ref != LUA_NOREF)
             luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_update_ref);
+        if (se.on_collision_enter_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_collision_enter_ref);
+        if (se.on_collision_exit_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_collision_exit_ref);
+        if (se.on_trigger_enter_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_trigger_enter_ref);
+        if (se.on_trigger_exit_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_trigger_exit_ref);
     }
     m_scripted.clear();
 

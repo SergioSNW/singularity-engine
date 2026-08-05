@@ -90,6 +90,17 @@ json::Value SceneSerializer::SerializeScene(const Scene &scene)
         camera.object.emplace_back("primary", json::Value::MakeBool(e.camera.primary));
         ent.object.emplace_back("camera", std::move(camera));
 
+        json::Value collider = json::Value::MakeObject();
+        collider.object.emplace_back("enabled", json::Value::MakeBool(e.collider.enabled));
+        collider.object.emplace_back(
+            "type",
+            json::Value::MakeString(
+                e.collider.type == ColliderComponent::Type::Trigger ? "trigger" : "solid")
+        );
+        collider.object.emplace_back("center", Vec3ToJson(&e.collider.center.x));
+        collider.object.emplace_back("extents", Vec3ToJson(&e.collider.extents.x));
+        ent.object.emplace_back("collider", std::move(collider));
+
         json::Value script = json::Value::MakeObject();
         script.object.emplace_back("path", json::Value::MakeString(e.script.path));
         ent.object.emplace_back("script", std::move(script));
@@ -152,6 +163,16 @@ bool SceneSerializer::DeserializeScene(Scene &scene, const json::Value &root, st
             e.camera.pitch      = (float)cam->Number("pitch", e.camera.pitch);
             e.camera.yaw        = (float)cam->Number("yaw", e.camera.yaw);
             e.camera.primary    = cam->Bool("primary", e.camera.primary);
+        }
+
+        if (const json::Value *col = ent.Find("collider"); col && col->IsObject())
+        {
+            e.collider.enabled = col->Bool("enabled", e.collider.enabled);
+            const std::string type = col->String("type", "solid");
+            e.collider.type = (type == "trigger")
+                ? ColliderComponent::Type::Trigger : ColliderComponent::Type::Solid;
+            Vec3FromJson(&e.collider.center.x, col->Find("center"));
+            Vec3FromJson(&e.collider.extents.x, col->Find("extents"));
         }
 
         if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())

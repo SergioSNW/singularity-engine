@@ -20,6 +20,7 @@ class Scene;
 class MeshLibrary;
 class GizmoController;
 class ScriptEngine;
+class PhysicsManager;
 class ScriptEditorPanel;
 class CommandPalette;
 class SettingsPanel;
@@ -65,6 +66,7 @@ private:
     MeshLibrary *m_mesh_library;
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
+    PhysicsManager *m_physics;
     ScriptEditorPanel *m_script_editor;
     CommandPalette *m_command_palette;
     SettingsPanel *m_settings_panel;

@@ -14,6 +14,7 @@
 
 #include "Scene.h"
 #include "SceneSerializer.h"
+#include "PhysicsManager.h"
 #include "Mesh.h"
 #include "EngineMath.h"
 #include "script/ScriptEngine.h"
@@ -48,6 +49,7 @@ Application::Application()
     , m_mesh_library(nullptr)
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
+    , m_physics(nullptr)
     , m_script_editor(nullptr)
     , m_command_palette(nullptr)
     , m_settings_panel(nullptr)
@@ -467,6 +469,38 @@ void Application::RenderViewportTarget()
                     }
                 }
 
+                // Physics collider volumes (editor aid): solid = green,
+                // trigger = cyan. Drawn from the collider's own local box
+                // (center +/- extents) transformed into the world frame.
+                for (auto &entity_ptr : m_scene->GetEntities())
+                {
+                    Entity &collider_entity = *entity_ptr;
+                    if (!collider_entity.collider.enabled)
+                        continue;
+                    if (&collider_entity == camera_entity)
+                        continue;
+                    const Vec3 clmin{
+                        collider_entity.collider.center.x - collider_entity.collider.extents.x,
+                        collider_entity.collider.center.y - collider_entity.collider.extents.y,
+                        collider_entity.collider.center.z - collider_entity.collider.extents.z,
+                    };
+                    const Vec3 clmax{
+                        collider_entity.collider.center.x + collider_entity.collider.extents.x,
+                        collider_entity.collider.center.y + collider_entity.collider.extents.y,
+                        collider_entity.collider.center.z + collider_entity.collider.extents.z,
+                    };
+                    Mat4 collider_world = m_scene->ComputeWorldMatrix(collider_entity);
+                    Vec3 cwmin, cwmax;
+                    TransformAABB(clmin, clmax, collider_world, cwmin, cwmax);
+                    const bool is_trigger =
+                        (collider_entity.collider.type == ColliderComponent::Type::Trigger);
+                    DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                                  cwmin, cwmax,
+                                  is_trigger ? 90 : 80,
+                                  is_trigger ? 200 : 230,
+                                  is_trigger ? 210 : 110);
+                }
+
                 GizmoFrame gf;
                 gf.scene = m_scene;
                 gf.selection = m_selection;
@@ -612,6 +646,11 @@ void Application::EnterPlayMode()
 
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
+
+    // Fresh physics state: no Enter/Exit edges may survive from a previous
+    // play session into this one.
+    if (m_physics)
+        m_physics->Clear();
 
     // Bind every scripted entity and fire OnStart. Script load errors are
     // reported in the status line but play still runs for the scripts that
@@ -817,6 +856,7 @@ bool Application::Init(int width, int height, const char *title)
     m_mesh_library = new MeshLibrary();
     m_gizmo = new GizmoController();
     m_script_engine = new ScriptEngine();
+    m_physics = new PhysicsManager();
 
     m_scene = new Scene();
     Entity &camera = m_scene->CreateEntity("Camera");
@@ -867,6 +907,42 @@ bool Application::Init(int width, int height, const char *title)
     pyramid.material.color[0] = 0.85f;
     pyramid.material.color[1] = 0.45f;
     pyramid.material.color[2] = 0.80f;
+
+    // Phase 14 demo: the physics bridge. A solid Wall stops the script-driven
+    // Bouncer (penetration-preventing separation), and a pass-through Trigger
+    // Zone raises OnTriggerEnter/Exit on the Bouncer's way there. The Bouncer
+    // is created AFTER the Wall so the solid resolution (which separates the
+    // higher-id body) pushes the Bouncer, not the Wall.
+    Entity &wall = m_scene->CreateEntity("Wall");
+    wall.transform.position[0] = 6.0f;
+    wall.transform.position[2] = -1.0f;
+    wall.transform.scale[1] = 4.0f;
+    wall.transform.scale[2] = 3.0f;
+    wall.material.color[0] = 0.55f;
+    wall.material.color[1] = 0.42f;
+    wall.material.color[2] = 0.28f;
+    wall.collider.enabled = true;
+
+    Entity &bouncer = m_scene->CreateEntity("Bouncer");
+    bouncer.transform.position[0] = -4.0f;
+    bouncer.transform.position[2] = -1.0f;
+    bouncer.material.color[0] = 0.92f;
+    bouncer.material.color[1] = 0.25f;
+    bouncer.material.color[2] = 0.25f;
+    bouncer.collider.enabled = true;
+    bouncer.script.path = "assets/scripts/bouncer.lua";
+
+    Entity &trigger_zone = m_scene->CreateEntity("Trigger Zone");
+    trigger_zone.transform.position[0] = 3.0f;
+    trigger_zone.transform.position[2] = -1.0f;
+    trigger_zone.transform.scale[1] = 2.0f;
+    trigger_zone.transform.scale[2] = 3.0f;
+    trigger_zone.material.color[0] = 0.30f;
+    trigger_zone.material.color[1] = 0.75f;
+    trigger_zone.material.color[2] = 0.80f;
+    trigger_zone.collider.enabled = true;
+    trigger_zone.collider.type = ColliderComponent::Type::Trigger;
+    trigger_zone.script.path = "assets/scripts/trigger.lua";
 
     m_viewport = new ViewportPanel();
 
@@ -1230,8 +1306,16 @@ void Application::Run()
 
         // Gameplay scripts run only during play: OnUpdate(dt) fires for every
         // bound entity before the 3D pass renders the resulting transforms.
-        if (m_state == EngineState::Play && m_script_engine)
-            m_script_engine->UpdateSession(*m_scene, (float)dt);
+        // The physics step then detects solid/trigger overlaps at those new
+        // positions, resolves solid penetration, and dispatches collision /
+        // trigger Enter/Exit events to the script session.
+        if (m_state == EngineState::Play)
+        {
+            if (m_script_engine)
+                m_script_engine->UpdateSession(*m_scene, (float)dt);
+            if (m_physics)
+                m_physics->Step(*m_scene, *m_script_engine);
+        }
 
         // Editor interaction: viewport picking + gizmo dragging. Skipped in
         // play mode and while the RMB fly camera is active (cursor captured).

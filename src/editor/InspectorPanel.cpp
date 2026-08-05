@@ -219,6 +219,30 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
     }
 
+    // --- Collider ---
+    if (ComponentHeader("Collider", "Reset", [entity]() {
+        entity->collider.enabled = false;
+        entity->collider.type = ColliderComponent::Type::Solid;
+        entity->collider.center = { 0.0f, 0.0f, 0.0f };
+        entity->collider.extents = { 0.5f, 0.5f, 0.5f };
+    }))
+    {
+        ImGui::Checkbox("Enabled", &entity->collider.enabled);
+        const char *preview = (entity->collider.type == ColliderComponent::Type::Trigger)
+            ? "Trigger" : "Solid";
+        if (ImGui::BeginCombo("Type", preview))
+        {
+            if (ImGui::Selectable("Solid", entity->collider.type == ColliderComponent::Type::Solid))
+                entity->collider.type = ColliderComponent::Type::Solid;
+            if (ImGui::Selectable("Trigger", entity->collider.type == ColliderComponent::Type::Trigger))
+                entity->collider.type = ColliderComponent::Type::Trigger;
+            ImGui::EndCombo();
+        }
+        ImGui::DragFloat3("Center", &entity->collider.center.x, 0.1f);
+        ImGui::DragFloat3("Extents", &entity->collider.extents.x, 0.05f, 0.01f, 100.0f);
+        ImGui::TextDisabled("Solid blocks solids; Trigger is pass-through (events only)");
+    }
+
     // --- Script ---
     if (ComponentHeader("Script", "Clear", [this, entity]() {
         entity->script.path.clear();

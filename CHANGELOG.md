@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0-alpha] — 2026-08-05
+
+### Added
+
+- **Physics-Scripting Bridge**: a new `ColliderComponent` (`src/core/Components.h`) gives every entity an axis-aligned box physics volume defined in local space by `center +/- extents` (defaults `{0,0,0}` / `{0.5,0.5,0.5}`, matching the cube primitive). It is **disabled by default** so only explicitly-colliding entities participate; `type` selects `Solid` (blocks other solids) or `Trigger` (pass-through ghost volume that raises events only). The component is serialized into scene files as a `"collider"` object (`enabled`, `type`, `center`, `extents`) by `SceneSerializer`.
+- **`PhysicsManager`** (`src/core/PhysicsManager.{h,cpp}`): an AABB physics step run by `Application`'s play loop *after* the scripts' `OnUpdate(dt)`, so collisions reflect the transforms scripts just produced. Each frame it computes the world-space box of every enabled collider (rotation/scale/parenting applied via `TransformAABB`) and runs a broad-phase O(n²) pair test. Solid vs Solid pairs are **penetration-prevented**: the higher-id body is separated along the minimum-penetration axis (only unparented bodies are moved; parented ones report events only). Trigger-involved pairs are pass-through and never separated.
+- **Edge-tracked events**: a per-pair overlap map inside `PhysicsManager` distinguishes fresh overlaps from continuing ones, so each pair fires `OnCollisionEnter`/`OnTriggerEnter` exactly once when it starts overlapping and `OnCollisionExit`/`OnTriggerExit` exactly once when it separates — never every frame. Trigger semantics: only the trigger volume raises the trigger hook (a solid overlapping a trigger is pass-through and hears nothing); a solid-solid pair notifies both bodies.
+- **Lua collision/trigger hooks** in `ScriptEngine`: `OnCollisionEnter(other)`, `OnCollisionExit(other)`, `OnTriggerEnter(other)`, `OnTriggerExit(other)`. The four hooks are captured as registry refs during `BindEntity` (like `OnStart`/`OnUpdate`) and fired via the new `ScriptEngine::DispatchEvent(entity_id, event, other)`, which passes the other entity as a Lua `Entity` handle (`other.name`, `other.id`, `other.transform`). Hook runtime errors are reported like script errors. A reload (`Save & Reload`) re-binds them along with the rest of the session.
+- **Inspector Collider section**: Enabled checkbox, Solid/Trigger combo, `Center` and `Extents` drags, and a Reset action — consistent with the other component headers.
+- **Editor collider visualization**: the viewport draws every enabled collider's world AABB as a wireframe box in editor mode — green for Solid, cyan for Trigger — so volumes are visible without entering play.
+- **Demo scene & scripts**: a `Wall` (solid) and `Trigger Zone` (cyan trigger) added to the default scene with a script-driven `Bouncer` cube (`assets/scripts/bouncer.lua`) that drives +X, crosses the trigger (printing one Enter and one Exit), and presses against the wall (one CollisionEnter, never penetrating); `assets/scripts/trigger.lua` prints zone entries/exits.
+
+### Changed
+
+- `Entity` gained a `ColliderComponent collider` member; `Application` owns a `PhysicsManager` and calls `Clear()` on entering play mode so no Enter/Exit edges leak between sessions.
+- Version bump from 0.13.1-alpha to 0.14.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a headless smoke test of the physics bridge (Scene + ScriptEngine + PhysicsManager at 60 fps, no window): the bouncer stops at the wall face (`x == 5.0`), and each of TriggerEnter / TriggerExit / CollisionEnter prints exactly once.
+
 ## [0.13.1-alpha] — 2026-08-05
 
 ### Added

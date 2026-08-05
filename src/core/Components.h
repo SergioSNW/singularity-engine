@@ -41,6 +41,23 @@ struct BoundsComponent
     Vec3 local_max{0.0f, 0.0f, 0.0f};
 };
 
+// Axis-aligned box collider for the physics bridge. `enabled` gates the entity
+// in the physics step; the volume is the local-space box `center +/- extents`
+// transformed by the entity's world matrix (so rotation/scale/parenting apply).
+// `type` decides behavior: Solid boxes block other Solid boxes (the physics
+// step separates the pair along the minimum-penetration axis), while Trigger
+// boxes are pass-through ghost volumes that only raise OnTriggerEnter/Exit
+// events on the script side. Defaults to disabled so only explicitly-colliding
+// entities participate.
+struct ColliderComponent
+{
+    enum class Type { Solid, Trigger };
+    Type type = Type::Solid;
+    bool enabled = false;
+    Vec3 center{ 0.0f, 0.0f, 0.0f };
+    Vec3 extents{ 0.5f, 0.5f, 0.5f };
+};
+
 // Gameplay script reference. An empty `path` means no script; any other value
 // names a Lua file (e.g. "assets/scripts/player.lua") loaded by the
 // ScriptEngine when the scene enters play mode. The ScriptEngine binds the
