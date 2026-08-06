@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "Entity.h"
+#include "core/Console.h"
 
 extern "C" {
 #include <lua.h>
@@ -389,6 +390,36 @@ int LuaEntityNewIndex(lua_State *L)
     return luaL_error(L, "entity: '%s' is read-only", key);
 }
 
+// --- print() ---
+//
+// The stdlib print writes straight to stdout, which is meaningless once the
+// editor owns its own console. The global is replaced with this handler so
+// Lua output funnels into the Console sink as Info rows (tab-separated, one
+// tostring() per argument, mirroring the stdlib semantics).
+int LuaPrint(lua_State *L)
+{
+    const int n = lua_gettop(L);
+    std::string out;
+    lua_getglobal(L, "tostring");
+    for (int i = 1; i <= n; ++i)
+    {
+        if (i > 1)
+            out += '\t';
+        lua_pushvalue(L, -1);           // [.., tostring, arg]
+        lua_pushvalue(L, i);
+        if (lua_pcall(L, 1, 1, 0) == LUA_OK)
+        {
+            const char *s = lua_tostring(L, -1);
+            if (s)
+                out += s;
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);                      // pop tostring
+    ConsoleInfo(out);
+    return 0;
+}
+
 void RegisterEntity(lua_State *L)
 {
     luaL_newmetatable(L, kEntityMT);        // [mt]
@@ -533,6 +564,12 @@ bool ScriptEngine::StartSession(Scene &scene, std::string &errors)
     RegisterEntity(m_lua);
     RegisterEngineApi(m_lua);
 
+    // Route print() into the editor console instead of stdout. Scripts resolve
+    // the name through their _ENV -> engine API -> _G chain, so overriding the
+    // _G global reaches every scripted environment.
+    lua_pushcfunction(m_lua, LuaPrint);
+    lua_setglobal(m_lua, "print");
+
     errors.clear();
     for (auto &entity_ptr : scene.GetEntities())
     {
@@ -546,10 +583,12 @@ bool ScriptEngine::StartSession(Scene &scene, std::string &errors)
             if (!errors.empty())
                 errors += "; ";
             errors += "[" + entity.tag.tag + "] " + error;
+            ConsoleError("[ScriptEngine] [" + entity.tag.tag + "] " + error);
         }
     }
 
     m_error = errors;
+    m_last_error_logged.clear();
     return true;
 }
 
@@ -576,8 +615,13 @@ void ScriptEngine::UpdateSession(Scene &scene, float dt)
         }
     }
 
-    if (!m_error.empty())
-        std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
+    if (!m_error.empty() && m_error != m_last_error_logged)
+    {
+        // A runtime exception persists across frames; report it once instead of
+        // spamming the console at 60 fps.
+        m_last_error_logged = m_error;
+        ConsoleError("[ScriptEngine] " + m_error);
+    }
 }
 
 void ScriptEngine::DispatchEvent(int entity_id, ScriptEvent event, Entity *other)
@@ -612,8 +656,11 @@ void ScriptEngine::DispatchEvent(int entity_id, ScriptEvent event, Entity *other
                 m_error = lua_tostring(m_lua, -1);
             lua_pop(m_lua, 1);
         }
-        if (!m_error.empty())
-            std::fprintf(stderr, "[ScriptEngine] %s\n", m_error.c_str());
+        if (!m_error.empty() && m_error != m_last_error_logged)
+        {
+            m_last_error_logged = m_error;
+            ConsoleError("[ScriptEngine] " + m_error);
+        }
         return;
     }
 }
@@ -650,4 +697,5 @@ void ScriptEngine::StopSession()
     lua_close(m_lua);
     m_lua = nullptr;
     m_error.clear();
+    m_last_error_logged.clear();
 }

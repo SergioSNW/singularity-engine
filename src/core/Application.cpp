@@ -20,6 +20,8 @@
 #include "EngineMath.h"
 #include "script/ScriptEngine.h"
 #include "editor/ContentBrowserPanel.h"
+#include "editor/ConsolePanel.h"
+#include "core/Console.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -58,6 +60,7 @@ Application::Application()
     , m_command_palette(nullptr)
     , m_settings_panel(nullptr)
     , m_content_browser(nullptr)
+    , m_console_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -617,10 +620,12 @@ void Application::SaveScene()
     {
         m_scene_path = path;
         m_scene_status = "Scene saved to " + std::filesystem::absolute(path).string();
+        ConsoleInfo("Scene saved: " + m_scene_path);
     }
     else
     {
         m_scene_status = "Save failed: " + error;
+        ConsoleError("Scene save failed: " + error);
     }
 }
 
@@ -648,10 +653,13 @@ void Application::LoadSceneFile(const std::string &filepath)
         m_selection->entity_id = -1;
         m_selection->entity_name.clear();
         m_scene_status = "Scene loaded from " + std::filesystem::absolute(filepath).string();
+        ConsoleInfo("Scene loaded: " + filepath + " (" +
+                    std::to_string(m_scene->GetEntities().size()) + " entities)");
     }
     else
     {
         m_scene_status = "Open failed: " + error;
+        ConsoleError("Scene load failed: " + filepath + " -> " + error);
     }
 }
 
@@ -672,10 +680,12 @@ void Application::NewScene()
         m_selection->entity_id = -1;
         m_selection->entity_name.clear();
         m_scene_status = "New scene: " + m_scene_manager->ActiveName();
+        ConsoleInfo("New scene created: " + m_scene_manager->ActiveName());
     }
     else
     {
         m_scene_status = "New scene failed: " + error;
+        ConsoleError("New scene failed: " + error);
     }
 }
 
@@ -726,10 +736,12 @@ void Application::DrawSaveAsModal()
             {
                 m_scene_path = path;
                 m_scene_status = "Scene saved to " + std::filesystem::absolute(path).string();
+                ConsoleInfo("Scene saved: " + m_scene_path);
             }
             else
             {
                 m_scene_status = "Save failed: " + error;
+                ConsoleError("Scene save failed: " + error);
             }
         }
         ImGui::CloseCurrentPopup();
@@ -779,6 +791,9 @@ void Application::EnterPlayMode()
     else
         m_scene_status = "Play mode: script errors -> " + script_errors;
     m_state = EngineState::Play;
+    ConsoleInfo(script_errors.empty()
+                    ? "Entered play mode (scene snapshotted)"
+                    : "Entered play mode with script errors: " + script_errors);
 }
 
 void Application::ExitPlayMode()
@@ -802,13 +817,17 @@ void Application::ExitPlayMode()
     {
         std::string error;
         if (SceneSerializer::DeserializeScene(*m_scene, m_scene_snapshot, &error))
+        {
             m_scene_status = "Stopped: scene restored to pre-play snapshot";
+            ConsoleInfo("Exited play mode: scene restored to pre-play snapshot");
+        }
         else
             m_scene_status = "Stop failed: " + error;
     }
     else
     {
         m_scene_status = "Stopped: no snapshot to restore";
+        ConsoleInfo("Exited play mode");
     }
 
     m_scene_snapshot = json::Value();
@@ -927,6 +946,12 @@ void Application::UpdateCameraControls(float dt)
 
 bool Application::Init(int width, int height, const char *title)
 {
+    // Redirect C stdout/stderr into the engine console before anything else
+    // can write to a terminal: printf/std::cout/Lua-stdlib output now lands in
+    // the ConsolePanel, so no external console window is needed. Failing the
+    // redirect is non-fatal (direct Write() calls still work).
+    Console::Instance().StartRedirect();
+
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return false;
 
@@ -1157,6 +1182,20 @@ bool Application::Init(int width, int height, const char *title)
             m_content_browser->ToggleVisible();
     } });
 
+    // Console: dockable log window fed by the shared Console sink (Lua print,
+    // script exceptions, engine messages, and redirected stdout/stderr).
+    m_console_panel = new ConsolePanel();
+    m_panels.push_back(std::shared_ptr<ConsolePanel>(m_console_panel));
+    cp.Register({ "Toggle Console", "View", "", [this]() {
+        if (m_console_panel)
+            m_console_panel->ToggleVisible();
+    } });
+
+    // Flush anything that printed during startup (SDL/ImGui chatter, test
+    // output) so the first rendered frame already shows it.
+    Console::Instance().DrainPipes();
+    ConsoleInfo(std::string("Singularity Engine ") + title + " started");
+
     RecreateViewportTarget(800, 600);
 
     m_running = true;
@@ -1227,6 +1266,11 @@ void Application::Run()
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // Pull any redirected stdout/stderr bytes into the console every frame
+        // (cheap: a single pipe peek when empty). The ConsolePanel also drains,
+        // but doing it here keeps piped output flowing even while it is hidden.
+        Console::Instance().DrainPipes();
 
         // Global command palette: Ctrl+Shift+P toggles it in editor mode.
         // IsKeyChordPressed reports the chord once per frame; the palette's
@@ -1349,6 +1393,13 @@ void Application::Run()
                         if (ImGui::MenuItem("Content Browser", nullptr,
                                             m_content_browser->IsVisible()))
                             m_content_browser->ToggleVisible();
+                    }
+
+                    if (m_console_panel)
+                    {
+                        if (ImGui::MenuItem("Console", nullptr,
+                                            m_console_panel->IsVisible()))
+                            m_console_panel->ToggleVisible();
                     }
 
                     if (m_settings_panel)
@@ -1533,6 +1584,11 @@ void Application::Shutdown()
     m_command_palette = nullptr;
     m_settings_panel = nullptr;
     m_content_browser = nullptr;
+    m_console_panel = nullptr;
+
+    // Tear the console pipes down before the window/SDL go away so no further
+    // stdout traffic can target a closed pipe.
+    Console::Instance().StopRedirect();
 
     if (m_viewport_target)
     {

@@ -7,13 +7,14 @@
 // Owns the full-screen editor dockspace (a transparent host window covering
 // the main viewport's work area) and the workspace preset system:
 //
-//   * Default  — the classic editor arrangement: Hierarchy (over the Content
-//                Browser) | Viewport | Inspector over a bottom strip holding
-//                the script sidebar and the stats panel. The code editor stays
-//                free-floating.
-//   * Scripting — a script-authoring workspace: a shorter bottom strip split
-//                into the script sidebar (left) and a *docked* code window
-//                (right), so the whole IDE is part of the unified dock.
+//   * Default  — the classic editor arrangement: Hierarchy (over the Console)
+//                | Viewport | Inspector, above a bottom "Development Zone"
+//                strip of Content Browser | Script Editor | Stats. The code
+//                editor stays free-floating.
+//   * Scripting — a script-authoring workspace: a taller bottom strip split
+//                into the script sidebar (left), a *docked* code window
+//                (center), and the Content Browser over Stats (right), so the
+//                whole IDE is part of the unified dock.
 //
 // Presets rebuild the dock node tree with DockBuilder, so the workspace is
 // always deterministic ("no floating chaos"). A user-captured custom layout is

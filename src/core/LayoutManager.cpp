@@ -51,20 +51,25 @@ void LayoutManager::RebuildLayout()
         ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
 
-        ImGuiID bottom_left, bottom_center, bottom_right;
-        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.22f, &bottom_left, &bottom_center);
-        ImGui::DockBuilderSplitNode(bottom_center, ImGuiDir_Right, 0.22f, &bottom_center, &bottom_right);
+        ImGuiID bottom_left, bottom_center, dev_right;
+        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.18f, &bottom_left, &bottom_center);
+        ImGui::DockBuilderSplitNode(bottom_center, ImGuiDir_Right, 0.22f, &dev_right, &bottom_center);
 
-        // Left rail hosts the Hierarchy over the Content Browser.
+        // Right side of the Development Zone: Content Browser over the stats.
+        ImGuiID dev_top, dev_bottom;
+        ImGui::DockBuilderSplitNode(dev_right, ImGuiDir_Up, 0.60f, &dev_top, &dev_bottom);
+
+        // Left rail hosts the Hierarchy over the Console.
         ImGuiID left_top, left_bottom;
         ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
 
         ImGui::DockBuilderDockWindow("Hierarchy", left_top);
-        ImGui::DockBuilderDockWindow("Content Browser", left_bottom);
+        ImGui::DockBuilderDockWindow("Console", left_bottom);
         ImGui::DockBuilderDockWindow("Viewport", center);
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Script Editor", bottom_left);
-        ImGui::DockBuilderDockWindow("Singularity Engine Stats", bottom_right);
+        ImGui::DockBuilderDockWindow("Content Browser", dev_top);
+        ImGui::DockBuilderDockWindow("Singularity Engine Stats", dev_bottom);
 
         // The code window title embeds the file name, so it cannot be docked by
         // name here; the Application routes it through SetNextWindowDockID with
@@ -73,23 +78,29 @@ void LayoutManager::RebuildLayout()
     }
     else
     {
-        // Default workspace: classic editor arrangement, code window floating.
-        ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.78f, &top, &bottom);
-        ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.22f, &left, &center);
-        ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
+        // Default workspace: the bottom strip is the "Development Zone" — the
+        // Content Browser, Script Editor sidebar, and stats side by side — so
+        // asset browsing and script authoring share one cohesive region. The
+        // code window stays free-floating.
+        ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.76f, &top, &bottom);
+        ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.20f, &left, &center);
+        ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
 
-        // Left rail hosts the Hierarchy over the Content Browser.
+        // Left rail hosts the Hierarchy over the Console.
         ImGuiID left_top, left_bottom;
         ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
 
-        ImGuiID bottom_left, bottom_right;
-        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.72f, &bottom_left, &bottom_right);
+        // Bottom strip: Content Browser (40%) | Script Editor (40%) | Stats.
+        ImGuiID bottom_left, bottom_mid, bottom_right, bottom_rest;
+        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.40f, &bottom_left, &bottom_rest);
+        ImGui::DockBuilderSplitNode(bottom_rest, ImGuiDir_Left, 0.666f, &bottom_mid, &bottom_right);
 
         ImGui::DockBuilderDockWindow("Hierarchy", left_top);
-        ImGui::DockBuilderDockWindow("Content Browser", left_bottom);
+        ImGui::DockBuilderDockWindow("Console", left_bottom);
         ImGui::DockBuilderDockWindow("Viewport", center);
         ImGui::DockBuilderDockWindow("Inspector", right);
-        ImGui::DockBuilderDockWindow("Script Editor", bottom_left);
+        ImGui::DockBuilderDockWindow("Content Browser", bottom_left);
+        ImGui::DockBuilderDockWindow("Script Editor", bottom_mid);
         ImGui::DockBuilderDockWindow("Singularity Engine Stats", bottom_right);
     }
 

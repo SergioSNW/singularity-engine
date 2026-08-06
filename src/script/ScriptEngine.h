@@ -29,7 +29,8 @@ public:
     bool StartSession(Scene &scene, std::string &errors);
 
     // Call OnUpdate(dt) on every bound entity (resolved by id) that is still
-    // alive. Runtime errors are recorded in LastError() and printed to stderr.
+    // alive. Runtime errors are recorded in LastError() and routed to the
+    // engine console.
     void UpdateSession(Scene &scene, float dt);
 
     // Collision / trigger event kind. The PhysicsManager dispatches these to
@@ -70,4 +71,5 @@ private:
     lua_State *m_lua;
     std::vector<ScriptedEntity> m_scripted;
     std::string m_error;
+    std::string m_last_error_logged;  // dedupe persistent runtime errors
 };

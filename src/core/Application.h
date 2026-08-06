@@ -26,6 +26,7 @@ class ScriptEditorPanel;
 class CommandPalette;
 class SettingsPanel;
 class ContentBrowserPanel;
+class ConsolePanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -84,6 +85,7 @@ private:
     CommandPalette *m_command_palette;
     SettingsPanel *m_settings_panel;
     ContentBrowserPanel *m_content_browser;
+    ConsolePanel *m_console_panel;
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;

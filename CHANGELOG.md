@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.16.0-alpha] — 2026-08-06
+
+### Added
+
+- **Engine Console** (`src/core/Console.{h,cpp}`): a shared, severity-tagged log sink. `Console::Write(level, text)` appends an entry; `ConsoleInfo`/`ConsoleWarning`/`ConsoleError` are the convenience wrappers used across the engine. The buffer is capped (oldest rows drop) and is fully cleared by `Console::Clear()`.
+- **Console redirection** — external terminal windows are no longer needed:
+  - **Lua `print()`** is replaced at VM setup (after `luaL_openlibs`) with a handler that `tostring()`s each argument tab-separated and funnels the line into the Console as Info. Scripts resolve `print` through their `_ENV -> engine API -> _G` chain, so one override reaches every scripted environment.
+  - **ScriptEngine errors** (bind failures, Lua runtime exceptions from `OnUpdate` and the collision/trigger hooks) route to the Console as Error. A persistent runtime exception is logged once instead of every frame (`m_last_error_logged` dedupe).
+  - **C `stdout`/`stderr`** (printf, `std::cout`, stray `fprintf`) are captured through two OS pipes created in `Application::Init`: `CreatePipe`, `SetStdHandle`, and `_dup2` wire both CRT fds into their own pipe, `setvbuf` disables buffering, and `Console::DrainPipes()` peeks + reads available bytes each frame on the UI thread (no blocking, no threads, no locks). Severity is approximated by stream (stdout -> Info, stderr -> Error); CRLF and partial-line buffering are handled. A redirect failure is non-fatal (direct writes still work).
+- **Console Panel** (`src/editor/ConsolePanel.{h,cpp}`): dockable window rendering the console buffer with color-coded rows — Info white (theme text), Warning yellow, Error red. A **Clear** button empties the buffer; an **Auto-scroll** checkbox keeps the newest rows pinned in view (default on). Toggleable from the View menu and the Command Palette ("Toggle Console").
+- **Engine lifecycle logging**: the Application now reports scene loads/saves/new-scenes (with entity counts), save failures, and play-mode enter/exit as Console rows, so the editor narrates its own operations.
+- **Development Zone workspace**: both layout presets reserve a bottom region for asset + script work. Default = Content Browser | Script Editor | Stats side by side; Scripting = script sidebar | docked code window | Content Browser over Stats. The **Console** docks under the Hierarchy on the left rail in both presets, replacing the Content Browser's old left-rail slot.
+
+### Changed
+
+- `ScriptEngine` no longer writes to `stderr`; all diagnostics go through the Console. The `LayoutManager` preset node trees were restructured (Hierarchy over Console; Content Browser + Script Editor + Stats Development Zone; code window keeps its Scripting-slot docking).
+- Version bump from 0.15.0-alpha to 0.16.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified headless (Scene + ScriptEngine + Console, no window): severity routing and Clear; Lua `print()` (chunk-level, `OnStart`, tab-separated args) routed as Info; an `OnUpdate` runtime error routed as Error exactly once; `StartRedirect` captures `printf` as Info and `fprintf(stderr)` as Error and splits multi-line output into rows. All 15 checks pass.
+
 ## [0.15.0-alpha] — 2026-08-05
 
 ### Added
