@@ -108,6 +108,20 @@ void Scene::SetParent(int entity_id, int parent_id)
     if (!child)
         return;
 
+    // Reject invalid targets BEFORE unlinking so a rejected reparent leaves
+    // the hierarchy untouched. This matters for the editor's drag-and-drop:
+    // dropping a node onto itself or onto one of its own descendants must not
+    // silently detach it to the root.
+    if (parent_id != -1)
+    {
+        if (parent_id == entity_id)
+            return;  // cannot parent an entity to itself
+        if (IsDescendantOf(parent_id, entity_id))
+            return;  // cycle: the target is inside this entity's own subtree
+        if (!GetEntityById(parent_id))
+            return;  // unknown target
+    }
+
     if (child->parent)
     {
         std::vector<Entity*> &siblings = child->parent->children;
@@ -121,20 +135,11 @@ void Scene::SetParent(int entity_id, int parent_id)
         }
     }
 
-    // Reject cycles: an entity can never be its own ancestor.
-    if (parent_id == -1 || parent_id == entity_id || IsDescendantOf(parent_id, entity_id))
-    {
-        child->parent = nullptr;
-        return;
-    }
+    child->parent = nullptr;
+    if (parent_id == -1)
+        return;  // explicit detach to scene root
 
     Entity *new_parent = GetEntityById(parent_id);
-    if (!new_parent)
-    {
-        child->parent = nullptr;
-        return;
-    }
-
     child->parent = new_parent;
     new_parent->children.push_back(child);
 }

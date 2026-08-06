@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0-alpha] — 2026-08-06
+
+### Added
+
+- **Drag-and-drop re-parenting in the Hierarchy panel**: every entity row is now a drag source (payload type `"ENTITY"` carrying the entity id). Dropping a row onto another entity parents it there; dropping onto **Scene Root** or into empty tree space detaches it to the scene root. Dropping onto the dragged entity itself or onto one of its descendants is not offered as a target — that would form a cycle. A status line reports each reparent/detach (`Parented 'X' to 'Y'`, `Detached 'X' to scene root`). The existing prefab spawn drop (`"PREFAB"`) now lives on the Scene Root header, accepting both payload types in one target.
+
+### Changed
+
+- **`Scene::SetParent` robustness**: invalid reparent targets are rejected **before** the child is unlinked from its old parent. Previously a rejected reparent (self-parent, reparent into the entity's own subtree, or an unknown target id) had already stripped the child from its parent's `children` list, silently detaching it to the root. Now a rejected reparent leaves the hierarchy untouched — a no-op. The Inspector's Parent combo and the serializer are unaffected (they only ever pass valid targets); the drag-and-drop path is what benefits.
+- The scene graph's core was already in place (parent/child links on `Entity`, recursive `ComputeWorldMatrix = ParentWorld * Local`, recursive deletion, cycle prevention in `SetParent`, tree-indented Hierarchy panel); this phase hardens it and makes the editor interaction complete. Parent/children intentionally stay on `Entity` as stable pointers (addresses are fixed by `unique_ptr` ownership) rather than moving into `TransformComponent` as ids — ids would require a scene lookup on every world-matrix query and risk dangling references across scene loads.
+- Version bump from 0.16.1-alpha to 0.17.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a headless harness (Scene + EngineMath, no window) covering world-matrix folding through 1 and 2 parent levels, reparent/unparent bookkeeping, rejection of cycle/self/unknown reparents without detaching, and recursive deletion with no dangling child pointers — all 15 checks pass. Engine smoke run exits with code 124 (clean timeout, no crash).
+
 ## [0.16.1-alpha] — 2026-08-06
 
 ### Added

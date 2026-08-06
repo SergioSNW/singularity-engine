@@ -58,6 +58,45 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
         m_selection->entity_name = entity.tag.tag;
     }
 
+    // Drag the row to re-parent this entity: drop it on another node to
+    // parent it there, or on Scene Root / empty space to detach it.
+    if (ImGui::BeginDragDropSource())
+    {
+        ImGui::SetDragDropPayload("ENTITY", &entity.id, sizeof(entity.id));
+        ImGui::Text("Re-parent '%s'", entity.tag.tag.c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    // Drop target: accept an entity being re-parented to this node. Dropping
+    // a node onto itself or onto one of its descendants would form a cycle, so
+    // those targets are not offered (Scene::SetParent also guards against it).
+    const ImGuiPayload *active_drag = ImGui::GetDragDropPayload();
+    int active_drag_id = -1;
+    if (active_drag && active_drag->IsDataType("ENTITY") &&
+        active_drag->DataSize == (int)sizeof(int))
+        active_drag_id = *(const int *)active_drag->Data;
+
+    bool cycle_target = active_drag_id != -1 &&
+                        (active_drag_id == entity.id ||
+                         m_scene->IsDescendantOf(entity.id, active_drag_id));
+    if (!cycle_target)
+    {
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
+            {
+                int dragged_id = *(const int *)payload->Data;
+                if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                {
+                    m_scene->SetParent(dragged_id, entity.id);
+                    m_status = "Parented '" + dragged->tag.tag + "' to '" +
+                               entity.tag.tag + "'";
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+
     if (ImGui::BeginPopupContextItem())
     {
         if (ImGui::MenuItem("Add Child"))
@@ -249,6 +288,38 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 
     if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
+        // Drop target on the root header: prefabs dragged from the Content
+        // Browser spawn at the scene root, and entities dragged here are
+        // detached to the root (unparented).
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("PREFAB"))
+            {
+                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
+                while (!path.empty() && path.back() == '\0')
+                    path.pop_back();
+
+                std::string error;
+                if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                    m_status = "Spawned prefab: " + path;
+                else
+                    m_status = "Prefab spawn failed: " + error;
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
+            {
+                int dragged_id = *(const int *)payload->Data;
+                if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                {
+                    if (dragged->parent)
+                    {
+                        m_scene->SetParent(dragged_id, -1);
+                        m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
         int to_delete_id = -1;
 
         for (auto &entity_ptr : m_scene->GetEntities())
@@ -263,25 +334,31 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
             m_scene->DestroyEntity(to_delete_id);
         }
 
-        ImGui::TreePop();
-    }
-
-    // Drop target: prefabs dragged from the Content Browser spawn here.
-    if (ImGui::BeginDragDropTarget())
-    {
-        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("PREFAB"))
+        // The remaining tree area doubles as a detach drop zone: dragging an
+        // entity onto empty space unparents it to the scene root.
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.y > 0.0f)
         {
-            std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
-            while (!path.empty() && path.back() == '\0')
-                path.pop_back();
-
-            std::string error;
-            if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
-                m_status = "Spawned prefab: " + path;
-            else
-                m_status = "Prefab spawn failed: " + error;
+            ImGui::InvisibleButton("##hierarchy_detach_drop", ImVec2(avail.x, avail.y));
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
+                {
+                    int dragged_id = *(const int *)payload->Data;
+                    if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                    {
+                        if (dragged->parent)
+                        {
+                            m_scene->SetParent(dragged_id, -1);
+                            m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
-        ImGui::EndDragDropTarget();
+
+        ImGui::TreePop();
     }
 
     if (!m_status.empty())

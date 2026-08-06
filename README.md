@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.16.1-alpha — Play Mode Isolation & Window Scaling
+v0.17.0-alpha — Hierarchical Scene Graph (Parent-Child Transforms)
 
 ## Dependencies
 
