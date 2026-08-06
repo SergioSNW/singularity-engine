@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.1-alpha] — 2026-08-06
+
+### Added
+
+- **Play Mode isolation**: entering play mode now hides the non-essential editor windows — Script Editor, Content Browser, Console, and Inspector — so the isolated viewport is a clean game view with zero editor chrome. `Application::SavePlayModePanelState()` snapshots each panel's pre-play visibility and hides it; `ExitPlayMode` calls `RestorePlayModePanelState()` to put every panel back exactly as it was (hidden panels stay hidden, visible panels reappear) before the dock layout rebuild. The Hierarchy, Stats, and Settings windows are intentionally left alone during play.
+- `InspectorPanel` gained a visibility API (`IsVisible`/`SetVisible`/`ToggleVisible`) matching the other panels, and its window now closes with the dock title-bar X (the `&m_visible` flag on `ImGui::Begin`).
+
+### Changed
+
+- The play-mode render branch no longer draws the Script Editor's floating code window over the game view; during play the viewport is the only thing rendered.
+- **Window scaling**: the primary window grows from 1280×720 to **1580×1020** (+300px in each dimension) in `src/core/main.cpp` for a roomier dockspace canvas.
+- Version bump from 0.16.0-alpha to 0.16.1-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified: the engine builds clean and the smoke run (`timeout 5 ./build/debug/singularity-engine.exe`) exits with code 124 (clean timeout, no crash).
+
 ## [0.16.0-alpha] — 2026-08-06
 
 ### Added

@@ -21,6 +21,7 @@
 #include "script/ScriptEngine.h"
 #include "editor/ContentBrowserPanel.h"
 #include "editor/ConsolePanel.h"
+#include "editor/InspectorPanel.h"
 #include "core/Console.h"
 
 #include <SDL.h>
@@ -61,6 +62,7 @@ Application::Application()
     , m_settings_panel(nullptr)
     , m_content_browser(nullptr)
     , m_console_panel(nullptr)
+    , m_inspector_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -78,6 +80,11 @@ Application::Application()
     , m_state(EngineState::Editor)
     , m_scene_snapshot()
     , m_save_as_open(false)
+    , m_play_panel_saved(false)
+    , m_script_editor_was_visible(true)
+    , m_content_browser_was_visible(true)
+    , m_console_was_visible(true)
+    , m_inspector_was_visible(true)
 {
 }
 
@@ -794,6 +801,10 @@ void Application::EnterPlayMode()
     ConsoleInfo(script_errors.empty()
                     ? "Entered play mode (scene snapshotted)"
                     : "Entered play mode with script errors: " + script_errors);
+
+    // Hide the non-essential editor windows so the game view is clean. The
+    // pre-play visibility is snapshotted for a symmetrical restore on exit.
+    SavePlayModePanelState();
 }
 
 void Application::ExitPlayMode()
@@ -835,6 +846,10 @@ void Application::ExitPlayMode()
     m_selection->entity_name.clear();
     m_state = EngineState::Editor;
 
+    // Bring back the panels that were hidden for play, exactly as they were
+    // before play started (hidden ones stay hidden, visible ones reappear).
+    RestorePlayModePanelState();
+
     // Editor panel restoration. During play the viewport was force-undocked
     // (isolated fullscreen) and the dockspace + Hierarchy/Inspector/Stats were
     // never submitted, leaving their ImGui docking associations stale. Force
@@ -843,6 +858,40 @@ void Application::ExitPlayMode()
     // editor UI deterministically comes back into view.
     m_viewport->SetIsolated(false);
     m_layout.RequestRebuild();
+}
+
+void Application::SavePlayModePanelState()
+{
+    m_play_panel_saved = true;
+    m_script_editor_was_visible = m_script_editor ? m_script_editor->IsVisible() : false;
+    m_content_browser_was_visible = m_content_browser ? m_content_browser->IsVisible() : false;
+    m_console_was_visible = m_console_panel ? m_console_panel->IsVisible() : false;
+    m_inspector_was_visible = m_inspector_panel ? m_inspector_panel->IsVisible() : false;
+
+    if (m_script_editor)
+        m_script_editor->SetVisible(false);
+    if (m_content_browser)
+        m_content_browser->SetVisible(false);
+    if (m_console_panel)
+        m_console_panel->SetVisible(false);
+    if (m_inspector_panel)
+        m_inspector_panel->SetVisible(false);
+}
+
+void Application::RestorePlayModePanelState()
+{
+    if (!m_play_panel_saved)
+        return;
+    m_play_panel_saved = false;
+
+    if (m_script_editor)
+        m_script_editor->SetVisible(m_script_editor_was_visible);
+    if (m_content_browser)
+        m_content_browser->SetVisible(m_content_browser_was_visible);
+    if (m_console_panel)
+        m_console_panel->SetVisible(m_console_was_visible);
+    if (m_inspector_panel)
+        m_inspector_panel->SetVisible(m_inspector_was_visible);
 }
 
 void Application::UpdateCameraControls(float dt)
@@ -1100,9 +1149,8 @@ bool Application::Init(int width, int height, const char *title)
     m_panels.push_back(
         std::make_shared<SceneHierarchyPanel>(m_selection, m_scene)
     );
-    m_panels.push_back(
-        std::make_shared<InspectorPanel>(m_selection, m_scene)
-    );
+    m_inspector_panel = new InspectorPanel(m_selection, m_scene);
+    m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
     // Script editor: sidebar over assets/scripts/ + dedicated floating code
@@ -1442,12 +1490,11 @@ void Application::Run()
         {
             // Runtime viewport isolation: no dockspace, no editor panels, no
             // selection outlines. The viewport fills the window as a game view.
-            // The script editor stays up so gameplay scripts can be edited and
-            // hot-reloaded live (F4 or the View menu hide it).
+            // Every non-essential panel (script editor, content browser,
+            // console, inspector) was hidden on EnterPlayMode and is restored
+            // on exit, so the play session is a clean, uninterrupted view.
             m_viewport->SetIsolated(true);
             m_viewport->OnImGuiRender((float)dt);
-            if (m_script_editor)
-                m_script_editor->OnImGuiRender((float)dt);
         }
         else
         {
@@ -1585,6 +1632,7 @@ void Application::Shutdown()
     m_settings_panel = nullptr;
     m_content_browser = nullptr;
     m_console_panel = nullptr;
+    m_inspector_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further
     // stdout traffic can target a closed pipe.

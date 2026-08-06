@@ -70,7 +70,10 @@ void InspectorPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
-    ImGui::Begin("Inspector", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (!m_visible)
+        return;
+
+    ImGui::Begin("Inspector", &m_visible, ImGuiWindowFlags_NoCollapse);
 
     Entity *entity = (m_selection->entity_id >= 0)
         ? m_scene->GetEntityById(m_selection->entity_id)

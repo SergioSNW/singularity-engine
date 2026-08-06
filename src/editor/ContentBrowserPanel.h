@@ -34,6 +34,7 @@ public:
 
     void ToggleVisible() { m_visible = !m_visible; }
     bool IsVisible() const { return m_visible; }
+    void SetVisible(bool visible) { m_visible = visible; }
 
     // Invoked when a scene asset is double-clicked. The Application wires this
     // to LoadSceneFile so m_scene_path / status / play-mode guard stay in sync.

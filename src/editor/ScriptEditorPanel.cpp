@@ -62,6 +62,13 @@ void ScriptEditorPanel::ToggleVisible()
         m_editor_open = true;
 }
 
+void ScriptEditorPanel::SetVisible(bool visible)
+{
+    if (visible == m_visible)
+        return;
+    ToggleVisible();
+}
+
 void ScriptEditorPanel::RequestDockCodeWindow(unsigned int node_id)
 {
     m_dock_requested = true;

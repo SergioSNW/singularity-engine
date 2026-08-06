@@ -31,6 +31,12 @@ public:
     bool IsVisible() const { return m_visible; }
     void ToggleVisible();
 
+    // Hide/show the whole script-editing UI (sidebar + code window). Hiding
+    // also closes the floating code window; restoring reopens it when a file
+    // is already loaded, exactly like ToggleVisible. Used by the play-mode
+    // panel isolation so the IDE is not rendered during gameplay.
+    void SetVisible(bool visible);
+
     // One-shot: dock the dedicated code window into `node_id` on its next
     // render. Pass 0 to undock it back to a floating window. Used by the
     // layout-preset system so the code editor participates in the workspace.

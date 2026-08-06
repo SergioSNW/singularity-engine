@@ -19,6 +19,7 @@ public:
 
     void ToggleVisible() { m_visible = !m_visible; }
     bool IsVisible() const { return m_visible; }
+    void SetVisible(bool visible) { m_visible = visible; }
 
 private:
     bool m_visible = true;

@@ -9,7 +9,9 @@ int main(int argc, char *argv[])
 
     Application app;
 
-    if (!app.Init(1280, 720, "Singularity Engine v0.16.0-alpha"))
+    // 1580x1020 primary window (1280x720 + 300px each) for a roomier
+    // dockspace canvas.
+    if (!app.Init(1580, 1020, "Singularity Engine v0.16.1-alpha"))
         return 1;
 
     app.Run();

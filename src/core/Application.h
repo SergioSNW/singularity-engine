@@ -27,6 +27,7 @@ class CommandPalette;
 class SettingsPanel;
 class ContentBrowserPanel;
 class ConsolePanel;
+class InspectorPanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -70,6 +71,13 @@ private:
     void EnterPlayMode();
     void ExitPlayMode();
 
+    // Play-mode panel isolation: snapshot the visibility of the non-essential
+    // editor windows (script editor, content browser, console, inspector) and
+    // hide them so play mode renders a clean game view; restore the snapshot
+    // immediately on exit.
+    void SavePlayModePanelState();
+    void RestorePlayModePanelState();
+
     Window *m_window;
     bool m_running;
     bool m_flying;
@@ -86,6 +94,7 @@ private:
     SettingsPanel *m_settings_panel;
     ContentBrowserPanel *m_content_browser;
     ConsolePanel *m_console_panel;
+    InspectorPanel *m_inspector_panel;
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
@@ -105,4 +114,9 @@ private:
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
     bool m_save_as_open;            // "Save Scene As" modal is pending
     char m_save_as_name[128] = {};  // file name typed into that modal
+    bool m_play_panel_saved;        // play-mode panel snapshot is valid
+    bool m_script_editor_was_visible;
+    bool m_content_browser_was_visible;
+    bool m_console_was_visible;
+    bool m_inspector_was_visible;
 };
