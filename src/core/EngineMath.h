@@ -7,6 +7,13 @@ struct Vec3
     float x, y, z;
 };
 
+// Texture-space coordinate pair (u = horizontal, v = vertical). Kept generic
+// so it doubles for OBJ "vt" records and for per-vertex UVs on a Mesh.
+struct Vec2
+{
+    float u, v;
+};
+
 struct Mat4
 {
     float m[16] = {};

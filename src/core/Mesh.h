@@ -9,13 +9,17 @@
 // CPU-side triangle mesh. `positions` is a triangle soup (every three entries
 // form one triangle) so it can be handed straight to SDL_RenderGeometry after
 // projection; `edge_lines` is a deduplicated list of wireframe segments (pairs
-// of vertices). `bounds_min/max` is the axis-aligned bounding box in local
-// space, used for viewport picking.
+// of vertices). `uvs` parallels `positions` (three entries per triangle) and
+// holds OBJ "vt" texture coordinates, flipped so v = 0 is the texture top —
+// matching SDL's top-left UV origin; it is empty when the source has no UVs
+// (the renderer then falls back to flat shading). `bounds_min/max` is the
+// axis-aligned bounding box in local space, used for viewport picking.
 struct Mesh
 {
     std::string name;
     std::vector<Vec3> positions;   // groups of 3 = one triangle (soup)
     std::vector<Vec3> edge_lines;  // groups of 2 = one wireframe segment
+    std::vector<Vec2> uvs;         // parallel to positions; empty = no UVs
     Vec3 bounds_min{0.0f, 0.0f, 0.0f};
     Vec3 bounds_max{0.0f, 0.0f, 0.0f};
 };

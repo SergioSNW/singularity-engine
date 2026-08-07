@@ -20,6 +20,13 @@ struct MaterialComponent
 {
     float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool active = true;
+    // Optional reference to a .mat asset. When non-empty, MaterialLibrary
+    // resolves it (assets/materials/...) and its texture/shininess override
+    // the per-entity fields; the entity keeps its own `color` so the flat
+    // fallback still applies when the asset has no texture. The editor fills
+    // `texture_path` on drop so the lookup stays cheap.
+    std::string material_path;
+    std::string texture_path;
 };
 
 // Geometry reference. An empty `path` selects the built-in cube primitive;

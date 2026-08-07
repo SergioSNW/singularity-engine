@@ -12,6 +12,7 @@
 struct SDL_Texture;
 struct Mat4;
 struct Vec3;
+struct Vec2;
 struct Mesh;
 class Window;
 class EditorPanel;
@@ -20,6 +21,8 @@ class ViewportPanel;
 class Scene;
 class SceneManager;
 class MeshLibrary;
+class MaterialLibrary;
+class TextureLibrary;
 class GizmoController;
 class ScriptEngine;
 class PhysicsManager;
@@ -76,6 +79,14 @@ private:
     // its current parent, then select the clone. No-op without a selection.
     void DuplicateSelection();
 
+    // Resolve the texture that should shade `entity`: honors an assigned .mat
+    // asset first, then a direct texture_path, then returns nullptr (flat
+    // shading). `out_tint` receives the effective RGBA tint (asset color or
+    // the entity's own color) and `out_uvs` the mesh UVs when usable.
+    SDL_Texture *ResolveEntityTexture(const Entity &entity, const Mesh &mesh,
+                                      const float *&out_tint, const std::vector<Vec2> *&out_uvs);
+    SDL_Texture *ResolveEntityTexture(const Entity &entity);
+
     // Play-mode panel isolation: snapshot the visibility of the non-essential
     // editor windows (script editor, content browser, console, inspector) and
     // hide them so play mode renders a clean game view; restore the snapshot
@@ -91,6 +102,8 @@ private:
     Scene *m_scene;                 // always == m_scene_manager->GetScene()
     SceneManager *m_scene_manager;
     MeshLibrary *m_mesh_library;
+    MaterialLibrary *m_material_library;
+    TextureLibrary *m_texture_library;
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
     PhysicsManager *m_physics;

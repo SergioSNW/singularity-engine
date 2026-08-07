@@ -85,6 +85,11 @@ ContentBrowserPanel::FileKind ContentBrowserPanel::Classify(const std::string &p
         return FileKind::Script;
     if (EndsWith(path, ".obj"))
         return FileKind::Mesh;
+    if (EndsWith(path, ".mat"))
+        return FileKind::Material;
+    if (EndsWith(path, ".bmp") || EndsWith(path, ".png") || EndsWith(path, ".jpg") ||
+        EndsWith(path, ".jpeg") || EndsWith(path, ".tga") || EndsWith(path, ".gif"))
+        return FileKind::Texture;
     return FileKind::Other;
 }
 
@@ -294,11 +299,20 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
                           ImVec2(cell_w, 42.0f)))
         m_selected = path;
 
-    // Drag source: prefabs can be dragged onto the Hierarchy window.
+    // Drag source: prefabs spawn into the Hierarchy, .mat / image assets
+    // assign onto the Inspector's Material section. Payload carries the path.
     if (kind == FileKind::Prefab && ImGui::BeginDragDropSource(
             ImGuiDragDropFlags_SourceAllowNullID))
     {
         ImGui::SetDragDropPayload("PREFAB", path.c_str(), path.size() + 1, ImGuiCond_Once);
+        ImGui::TextUnformatted(Leaf(path).c_str());
+        ImGui::EndDragDropSource();
+    }
+    if ((kind == FileKind::Material || kind == FileKind::Texture) &&
+        ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        ImGui::SetDragDropPayload(kind == FileKind::Material ? "MATERIAL" : "TEXTURE",
+                                  path.c_str(), path.size() + 1, ImGuiCond_Once);
         ImGui::TextUnformatted(Leaf(path).c_str());
         ImGui::EndDragDropSource();
     }
@@ -320,12 +334,14 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
     ImU32 color;
     switch (kind)
     {
-        case FileKind::Folder: color = IM_COL32(210, 175, 90, 255); break;
-        case FileKind::Scene:  color = IM_COL32(90, 175, 220, 255); break;
-        case FileKind::Prefab: color = IM_COL32(220, 120, 220, 255); break;
-        case FileKind::Script: color = IM_COL32(110, 200, 110, 255); break;
-        case FileKind::Mesh:   color = IM_COL32(220, 140, 90, 255); break;
-        default:               color = IM_COL32(150, 150, 150, 255); break;
+        case FileKind::Folder:   color = IM_COL32(210, 175, 90, 255); break;
+        case FileKind::Scene:    color = IM_COL32(90, 175, 220, 255); break;
+        case FileKind::Prefab:   color = IM_COL32(220, 120, 220, 255); break;
+        case FileKind::Script:   color = IM_COL32(110, 200, 110, 255); break;
+        case FileKind::Mesh:     color = IM_COL32(220, 140, 90, 255); break;
+        case FileKind::Material: color = IM_COL32(120, 180, 235, 255); break;
+        case FileKind::Texture:  color = IM_COL32(240, 210, 130, 255); break;
+        default:                 color = IM_COL32(150, 150, 150, 255); break;
     }
     dl->AddRectFilled(ImVec2(pmin.x + 6.0f, pmin.y + 6.0f),
                       ImVec2(pmin.x + 18.0f, pmin.y + 18.0f), color, 3.0f);
@@ -494,6 +510,14 @@ void ContentBrowserPanel::OpenItem(const std::string &path, FileKind kind)
             break;
         case FileKind::Mesh:
             m_status = "Mesh asset: " + path;
+            break;
+        case FileKind::Material:
+            m_status = "Material asset: " + path +
+                       " (drag onto an entity's Material section to assign)";
+            break;
+        case FileKind::Texture:
+            m_status = "Texture asset: " + path +
+                       " (drag onto an entity's Material section to assign)";
             break;
         default:
             m_status = "No action for: " + path;

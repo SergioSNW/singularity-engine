@@ -1,0 +1,6 @@
+{
+  "name": "Checker",
+  "color": [0.9, 0.9, 0.9, 1.0],
+  "texture": "checkerboard.bmp",
+  "shininess": 0.1
+}

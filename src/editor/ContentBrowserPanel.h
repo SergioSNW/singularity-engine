@@ -16,15 +16,18 @@ class ScriptEditorPanel;
 // responsive file grid on the right (folders first, then files), each item
 // carrying a colored per-type badge. Double-clicking acts on the asset:
 //
-//   * folder        -> navigate into it
-//   * .json scene   -> load as the active map (SceneManager::LoadScene)
-//   * .json prefab  -> instantiate into the active scene (fresh UUIDs)
-//   * .lua          -> open in the Script Editor
+//   * folder          -> navigate into it
+//   * .json scene     -> load as the active map (SceneManager::LoadScene)
+//   * .json prefab    -> instantiate into the active scene (fresh UUIDs)
+//   * .lua            -> open in the Script Editor
+//   * .obj / .mat     -> informational status line
+//   * image textures  -> informational status line
 //
 // Standard file operations are provided via a toolbar and per-item context
 // menus: create folder, rename (inline), and delete (with a confirm dialog).
-// Prefab files can additionally be dragged onto the Hierarchy window to spawn
-// an instance (drag payload "PREFAB").
+// Prefab files can be dragged onto the Hierarchy window to spawn an instance
+// (drag payload "PREFAB"); material (.mat) and image assets drag onto the
+// Inspector's Material section to assign them (payloads "MATERIAL"/"TEXTURE").
 class ContentBrowserPanel : public EditorPanel
 {
 public:
@@ -41,7 +44,7 @@ public:
     std::function<void(const std::string &)> on_load_scene;
 
 private:
-    enum class FileKind { Folder, Scene, Prefab, Script, Mesh, Other };
+    enum class FileKind { Folder, Scene, Prefab, Script, Mesh, Material, Texture, Other };
 
     void RefreshTree();
     void RefreshFiles();

@@ -63,6 +63,8 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     json::Value material = json::Value::MakeObject();
     material.object.emplace_back("color", Vec4ToJson(e.material.color));
     material.object.emplace_back("active", json::Value::MakeBool(e.material.active));
+    material.object.emplace_back("material", json::Value::MakeString(e.material.material_path));
+    material.object.emplace_back("texture", json::Value::MakeString(e.material.texture_path));
     ent.object.emplace_back("material", std::move(material));
 
     json::Value mesh = json::Value::MakeObject();
@@ -110,6 +112,8 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
     {
         Vec4FromJson(e.material.color, mat->Find("color"));
         e.material.active = mat->Bool("active", e.material.active);
+        e.material.material_path = mat->String("material", "");
+        e.material.texture_path = mat->String("texture", "");
     }
 
     if (const json::Value *mesh = ent.Find("mesh"); mesh && mesh->IsObject())

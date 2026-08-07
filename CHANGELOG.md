@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.19.0-alpha] — 2026-08-07
+
+### Added
+
+- **Material assets (`.mat`)**: `Material` in `src/core/Material.h` (RGBA albedo tint, optional texture filename, `shininess` knob) with `MaterialToJson`/`MaterialFromJson` round-tripping through the engine's own `json::Value`. `MaterialLibrary` caches `.mat` files under `assets/materials/` (mirroring `MeshLibrary`: caller-path keys, `assets/materials/` fallback, a default material, and `Create()` writing new assets with on-demand directory creation).
+- **stb_image integration**: `stb_image.h` v2.30 vendored under `third_party/stb/`, compiled once in `src/core/Texture.cpp`. `TextureLibrary` decodes BMP/PNG/JPG/etc. to RGBA8 and uploads cached `SDL_Texture`s (`SDL_CreateTextureFromSurface`, linear filtering, alpha blending); the library holds the renderer via `SetRenderer()` and destroys all GPU textures in `Application::Shutdown` before SDL teardown.
+- **Mesh UVs**: `Mesh::uvs` parallel to `positions`. The built-in cube gets a unit quad per face; the OBJ loader parses `vt` records, `v/vt` face tokens, negative indices, and flips v to SDL's top-left origin. Meshes with any UV-less face keep empty uvs and fall back to flat shading.
+- **Textured rendering**: `FillTri` carries per-vertex UVs + `SDL_Texture*`; `Application::ResolveEntityTexture` resolves an assigned `.mat` asset (its texture + tint) over the entity's own `texture_path`/`color`, and `DrawTriangles` batches by texture. Lighting shade still multiplies the tint so textures stay lit.
+- **Editor wiring**: the Inspector's Material section gains a Material Asset combo, a **New Material** creator (seeds from the current albedo), a Texture combo with a live `ImGui::Image` preview, and drag-drop assignment; the Content Browser classifies `.mat` and image files as new `FileKind::Material`/`FileKind::Texture` (new badges, drag payloads `MATERIAL`/`TEXTURE`, status lines on double-click).
+- **Persistence**: `MaterialComponent` gains `material_path`/`texture_path`, serialized under the existing `"material"` object; old scenes load unchanged.
+- **Sample assets**: `assets/textures/checkerboard.bmp` (procedural 32×32 checker) and `assets/materials/Checker.mat`; the demo scene's cube references `Checker.mat`.
+
+### Changed
+
+- `Mesh` struct, `MaterialComponent`, and `EngineMath` gain the new `Vec2` UV type; OBJ face parsing now tracks position+UV pairs per corner.
+- `Application::Init` creates `MaterialLibrary`/`TextureLibrary`; `Shutdown` tears the texture library down before the renderer/window quit.
+- InspectorPanel and ContentBrowserPanel constructors take the new library pointers.
+
+### Fixed
+
+- (none)
+
+- Version bump from 0.18.0-alpha to 0.19.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.18.0-alpha] — 2026-08-07
 
 ### Added

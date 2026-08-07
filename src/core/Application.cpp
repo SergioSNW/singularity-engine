@@ -17,6 +17,8 @@
 #include "SceneSerializer.h"
 #include "PhysicsManager.h"
 #include "Mesh.h"
+#include "Material.h"
+#include "Texture.h"
 #include "EngineMath.h"
 #include "script/ScriptEngine.h"
 #include "editor/ContentBrowserPanel.h"
@@ -244,22 +246,32 @@ static bool ProjectToScreen(const Mat4 &view_proj, float near_p, int w, int h,
 }
 
 // One screen-space shaded triangle, collected for the global painter pass.
+// `texture` may be null (flat shading); when set, `r/g/b` act as the tint that
+// SDL multiplies against the texture and `u0..v2` are its per-vertex UVs.
 struct FillTri
 {
     float depth;
     int x0, y0, x1, y1, x2, y2;
+    float u0, v0, u1, v1, u2, v2;
     Uint8 r, g, b;
+    SDL_Texture *texture = nullptr;
 };
 
+// Project + shade one mesh into screen-space FillTri entries. `color` is the
+// RGBA albedo tint (already resolved from the entity's material asset when
+// assigned); `uvs` (parallel to positions) and `texture` are used together to
+// apply the diffuse map, otherwise flat normal shading is emitted.
 static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            const Mat4 &world, const Mat4 &view_proj, float near_p,
-                           int w, int h, const float color[3])
+                           int w, int h, const float color[4],
+                           SDL_Texture *texture, const std::vector<Vec2> *uvs)
 {
     static const Vec3 LIGHT = { 0.45f, 0.78f, 0.44f };
     Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
     Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
     Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
 
+    const bool textured = texture != nullptr;
     const std::vector<Vec3> &pos = mesh.positions;
     for (size_t i = 0; i + 2 < pos.size(); i += 3)
     {
@@ -274,21 +286,38 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             !ProjectToScreen(view_proj, near_p, w, h, c, cx, cy, dc))
             continue;
 
-        // Directional shading from the world-space face normal.
+        // Directional shading from the world-space face normal. Applied to the
+        // tint so textured triangles keep lighting on top of the map.
         Vec3 e1 = Vec3Sub(b, a);
         Vec3 e2 = Vec3Sub(c, a);
         Vec3 n = Vec3Normalize(Vec3Cross(e1, e2));
         float shade = 0.62f + 0.38f * std::max(0.0f, Vec3Dot(n, LIGHT));
 
-        tris.push_back({
-            (da + db + dc) / 3.0f,
-            ax, ay, bx, by, cx, cy,
-            (Uint8)(base_r * shade), (Uint8)(base_g * shade), (Uint8)(base_b * shade),
-        });
+        FillTri t;
+        t.depth = (da + db + dc) / 3.0f;
+        t.x0 = ax; t.y0 = ay;
+        t.x1 = bx; t.y1 = by;
+        t.x2 = cx; t.y2 = cy;
+        t.u0 = t.v0 = t.u1 = t.v1 = t.u2 = t.v2 = 0.0f;
+        t.r = (Uint8)(base_r * shade);
+        t.g = (Uint8)(base_g * shade);
+        t.b = (Uint8)(base_b * shade);
+        t.texture = texture;
+        if (textured)
+        {
+            const Vec2 &ta = (*uvs)[i];
+            const Vec2 &tb = (*uvs)[i + 1];
+            const Vec2 &tc = (*uvs)[i + 2];
+            t.u0 = ta.u; t.v0 = ta.v;
+            t.u1 = tb.u; t.v1 = tb.v;
+            t.u2 = tc.u; t.v2 = tc.v;
+        }
+        tris.push_back(t);
     }
 }
 
-static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts)
+static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts,
+                          SDL_Texture *texture)
 {
     if (verts.empty())
         return;
@@ -298,7 +327,7 @@ static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts
     while (offset < verts.size())
     {
         size_t count = std::min(MAX_VERTS, verts.size() - offset);
-        SDL_RenderGeometry(renderer, nullptr, verts.data() + offset, (int)count, nullptr, 0);
+        SDL_RenderGeometry(renderer, texture, verts.data() + offset, (int)count, nullptr, 0);
         offset += count;
     }
     verts.clear();
@@ -330,17 +359,24 @@ static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, in
 
     std::vector<SDL_Vertex> verts;
     verts.reserve(tris.size() * 3);
+    SDL_Texture *active_texture = nullptr;
     for (const FillTri &t : tris)
     {
+        // Break the batch when the texture changes so SDL_RenderGeometry always
+        // receives a coherent vertex set for one texture (or flat shading).
+        if (t.texture != active_texture)
+        {
+            FlushTriBatch(renderer, verts, active_texture);
+            active_texture = t.texture;
+        }
         SDL_Color col = { t.r, t.g, t.b, 255 };
-        SDL_FPoint uv = { 0.0f, 0.0f };
-        verts.push_back({ { (float)t.x0, (float)t.y0 }, col, uv });
-        verts.push_back({ { (float)t.x1, (float)t.y1 }, col, uv });
-        verts.push_back({ { (float)t.x2, (float)t.y2 }, col, uv });
+        verts.push_back({ { (float)t.x0, (float)t.y0 }, col, { t.u0, t.v0 } });
+        verts.push_back({ { (float)t.x1, (float)t.y1 }, col, { t.u1, t.v1 } });
+        verts.push_back({ { (float)t.x2, (float)t.y2 }, col, { t.u2, t.v2 } });
         if (verts.size() >= 6000)
-            FlushTriBatch(renderer, verts);
+            FlushTriBatch(renderer, verts, active_texture);
     }
-    FlushTriBatch(renderer, verts);
+    FlushTriBatch(renderer, verts, active_texture);
     tris.clear();
 }
 
@@ -413,8 +449,11 @@ void Application::RenderViewportTarget()
                     continue;
 
                 Mat4 world = m_scene->ComputeWorldMatrix(entity);
+                const float *tint = nullptr;
+                const std::vector<Vec2> *uvs = nullptr;
+                SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
                 EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
-                               entity.material.color);
+                               tint, texture, uvs);
             }
             DrawTriangles(renderer, tris, w, h);
 
@@ -619,6 +658,43 @@ const Mesh *Application::ResolveMesh(const Entity &entity, std::string &error)
     if (mesh)
         return mesh;
     return m_mesh_library->GetBuiltinCube();
+}
+
+// Resolve the texture + tint that shade `entity`. A .mat asset assigned to the
+// entity wins: its texture filename is looked up in the TextureLibrary and its
+// color becomes the tint. Without an asset the entity's own texture_path and
+// color are used. `out_uvs` is only non-null when a texture is active and the
+// mesh carries a full UV set (otherwise the caller falls back to flat shading).
+SDL_Texture *Application::ResolveEntityTexture(const Entity &entity, const Mesh &mesh,
+                                               const float *&out_tint,
+                                               const std::vector<Vec2> *&out_uvs)
+{
+    const Material *mat = nullptr;
+    if (!entity.material.material_path.empty() && m_material_library)
+        mat = m_material_library->Load(entity.material.material_path);
+
+    std::string texture_key = entity.material.texture_path;
+    if (mat && !mat->texture.empty())
+        texture_key = mat->texture;
+
+    std::string error;
+    SDL_Texture *texture = nullptr;
+    if (!texture_key.empty() && m_texture_library)
+        texture = m_texture_library->GetTexture(texture_key, &error);
+
+    out_tint = mat ? mat->color : entity.material.color;
+    out_uvs = nullptr;
+    if (texture && mesh.uvs.size() == mesh.positions.size())
+        out_uvs = &mesh.uvs;
+    return texture;
+}
+
+SDL_Texture *Application::ResolveEntityTexture(const Entity &entity)
+{
+    const float *tint = nullptr;
+    const std::vector<Vec2> *uvs = nullptr;
+    static const Mesh kEmptyMesh;  // mesh UVs never match an empty mesh
+    return ResolveEntityTexture(entity, kEmptyMesh, tint, uvs);
 }
 
 void Application::SaveScene()
@@ -1070,6 +1146,11 @@ bool Application::Init(int width, int height, const char *title)
 
     m_selection = new SelectionState();
     m_mesh_library = new MeshLibrary();
+    m_material_library = new MaterialLibrary();
+    m_texture_library = new TextureLibrary();
+    // Textures upload through the engine renderer, so the library must know it
+    // before the first Load(). Set right after renderer creation.
+    m_texture_library->SetRenderer(m_window->GetNativeRenderer());
     m_gizmo = new GizmoController();
     m_script_engine = new ScriptEngine();
     m_physics = new PhysicsManager();
@@ -1086,6 +1167,10 @@ bool Application::Init(int width, int height, const char *title)
     camera.camera.pitch = -14.0f;
     m_scene->CreateEntity("Directional Light");
     Entity &cube = m_scene->CreateEntity("Cube Object");
+    // Phase 19 demo: the cube carries a .mat asset that paints it with a
+    // procedural checkerboard BMP; MaterialLibrary/TextureLibrary resolve the
+    // material and texture on first render.
+    cube.material.material_path = "Checker.mat";
     // Parented child: its local position is relative to the parent's transform,
     // demonstrating the WorldMatrix = ParentWorld * LocalMatrix pipeline.
     Entity &cube_child = m_scene->CreateEntity("Cube Child", &cube);
@@ -1175,7 +1260,8 @@ bool Application::Init(int width, int height, const char *title)
     m_panels.push_back(
         std::make_shared<SceneHierarchyPanel>(m_selection, m_scene)
     );
-    m_inspector_panel = new InspectorPanel(m_selection, m_scene);
+    m_inspector_panel = new InspectorPanel(m_selection, m_scene,
+                                           m_material_library, m_texture_library);
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -1716,6 +1802,18 @@ void Application::Shutdown()
 
     delete m_mesh_library;
     m_mesh_library = nullptr;
+
+    // GPU textures must go while the renderer still owns its device; the
+    // library tears every SDL_Texture down before the window/SDL quit below.
+    if (m_texture_library)
+    {
+        m_texture_library->DestroyAll();
+        delete m_texture_library;
+        m_texture_library = nullptr;
+    }
+
+    delete m_material_library;
+    m_material_library = nullptr;
 
     delete m_selection;
     m_selection = nullptr;

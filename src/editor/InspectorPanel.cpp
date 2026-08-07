@@ -3,6 +3,8 @@
 #include "Scene.h"
 #include "Entity.h"
 #include "EngineMath.h"
+#include "Material.h"
+#include "Texture.h"
 
 #include <imgui.h>
 #include <algorithm>
@@ -29,6 +31,47 @@ std::vector<std::string> ListMeshAssets()
     std::sort(out.begin(), out.end());
     return out;
 }
+
+// .mat material assets under assets/materials/.
+std::vector<std::string> ListMaterialAssets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("assets/materials", ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::string path = entry.path().filename().string();
+        if (path.size() > 4 && path.substr(path.size() - 4) == ".mat")
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// Image assets under assets/textures/ (BMP/PNG/JPG by extension).
+std::vector<std::string> ListTextureAssets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("assets/textures", ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::string path = entry.path().filename().string();
+        const std::string ext = (path.size() > 4) ? path.substr(path.size() - 4) : std::string();
+        if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".tga" || ext == ".gif")
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// Drag payload type used by the Content Browser when a .mat / image asset is
+// dragged. Kept as string literals (same values in both panels).
+constexpr const char *kMaterialPayload = "MATERIAL";
+constexpr const char *kTexturePayload = "TEXTURE";
 
 // Collapsible component header with consistent spacing and a subtle action
 // button on the right edge of the header row. The button is a "ghost" — fully
@@ -60,9 +103,13 @@ bool ComponentHeader(const char *title, const char *action_label = nullptr,
 
 } // namespace
 
-InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene)
+InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
+                               MaterialLibrary *material_library,
+                               TextureLibrary *texture_library)
     : m_selection(selection)
     , m_scene(scene)
+    , m_material_library(material_library)
+    , m_texture_library(texture_library)
 {
 }
 
@@ -174,10 +221,134 @@ void InspectorPanel::OnImGuiRender(float dt)
         entity->material.color[2] = 1.0f;
         entity->material.color[3] = 1.0f;
         entity->material.active = true;
+        entity->material.material_path.clear();
+        entity->material.texture_path.clear();
     }))
     {
         ImGui::ColorEdit4("Albedo", entity->material.color);
         ImGui::Checkbox("Active", &entity->material.active);
+
+        // Resolve the effective texture/tint so the UI reflects what renders:
+        // an assigned .mat asset wins, otherwise the direct texture_path.
+        const Material *mat = nullptr;
+        if (!entity->material.material_path.empty() && m_material_library)
+            mat = m_material_library->Load(entity->material.material_path);
+        std::string tex_key = entity->material.texture_path;
+        if (mat && !mat->texture.empty())
+            tex_key = mat->texture;
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // --- Material asset (.mat) ---
+        const char *mat_preview = entity->material.material_path.empty()
+            ? "None" : entity->material.material_path.c_str();
+        if (ImGui::BeginCombo("Material Asset", mat_preview))
+        {
+            if (ImGui::Selectable("None", entity->material.material_path.empty()))
+                entity->material.material_path.clear();
+            for (const std::string &path : ListMaterialAssets())
+            {
+                bool selected = (entity->material.material_path == path);
+                if (ImGui::Selectable(path.c_str(), selected))
+                    entity->material.material_path = path;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled("A .mat asset sets tint, texture and shininess");
+
+        if (ImGui::Button("New Material"))
+            m_new_material_open = !m_new_material_open;
+        ImGui::SameLine();
+        ImGui::TextDisabled("Create a .mat asset from the current albedo");
+        if (m_new_material_open)
+        {
+            ImGui::InputText("File Name", m_new_material_buffer, sizeof(m_new_material_buffer));
+            if (ImGui::Button("Create"))
+            {
+                std::string name = m_new_material_buffer;
+                if (!name.empty())
+                {
+                    if (name.size() < 4 || name.substr(name.size() - 4) != ".mat")
+                        name += ".mat";
+                    Material new_mat;
+                    new_mat.color[0] = entity->material.color[0];
+                    new_mat.color[1] = entity->material.color[1];
+                    new_mat.color[2] = entity->material.color[2];
+                    new_mat.color[3] = entity->material.color[3];
+                    std::string error;
+                    if (m_material_library &&
+                        m_material_library->Create(name, new_mat, &error))
+                        entity->material.material_path = name;
+                    m_new_material_open = false;
+                    m_new_material_buffer[0] = '\0';
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                m_new_material_open = false;
+                m_new_material_buffer[0] = '\0';
+            }
+        }
+
+        // --- Texture map ---
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::BeginCombo("Texture", tex_key.empty() ? "None" : tex_key.c_str()))
+        {
+            if (ImGui::Selectable("None", tex_key.empty()))
+                entity->material.texture_path.clear();
+            for (const std::string &path : ListTextureAssets())
+            {
+                bool selected = (tex_key == path);
+                if (ImGui::Selectable(path.c_str(), selected))
+                    entity->material.texture_path = path;
+            }
+            ImGui::EndCombo();
+        }
+        if (!tex_key.empty())
+            ImGui::TextDisabled("Diffuse map from assets/textures/");
+        else
+            ImGui::TextDisabled("No texture: flat albedo shading");
+
+        // Texture preview (ImGui's SDL renderer backend stores the SDL texture
+        // handle directly in ImTextureID, so Image can render it in-panel).
+        if (!tex_key.empty() && m_texture_library)
+        {
+            if (const TextureInfo *info = m_texture_library->Load(tex_key))
+            {
+                const float size = 96.0f;
+                float aspect = (float)info->width / (float)std::max(1, info->height);
+                ImGui::Image((ImTextureID)info->texture,
+                             ImVec2(size, size / aspect));
+                ImGui::TextDisabled("%dx%d", info->width, info->height);
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                                   "Texture failed to load");
+            }
+        }
+
+        // Drop a .mat or image asset straight from the Content Browser.
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kMaterialPayload))
+            {
+                const char *data = (const char *)payload->Data;
+                if (data && *data)
+                    entity->material.material_path = data;
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kTexturePayload))
+            {
+                const char *data = (const char *)payload->Data;
+                if (data && *data)
+                    entity->material.texture_path = data;
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::TextDisabled("Drag a .mat / image from the Content Browser to assign");
     }
 
     // --- Mesh ---
