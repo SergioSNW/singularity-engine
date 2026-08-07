@@ -25,8 +25,10 @@ static bool ColorRow(const char *label, float color[4],
 
 } // namespace
 
-SettingsPanel::SettingsPanel(Theme::Colors *colors, std::function<void()> on_change)
+SettingsPanel::SettingsPanel(Theme::Colors *colors, SnapSettings *snap,
+                             std::function<void()> on_change)
     : m_colors(colors)
+    , m_snap(snap)
     , m_on_change(std::move(on_change))
     , m_visible(false)
 {
@@ -44,7 +46,7 @@ void SettingsPanel::OnImGuiRender(float dt)
     if (!m_visible)
         return;
 
-    if (!ImGui::Begin("Theme Settings", &m_visible, ImGuiWindowFlags_NoCollapse))
+    if (!ImGui::Begin("Editor Settings", &m_visible, ImGuiWindowFlags_NoCollapse))
     {
         ImGui::End();
         return;
@@ -81,7 +83,23 @@ void SettingsPanel::OnImGuiRender(float dt)
     if (ImGui::Button("Close"))
         m_visible = false;
 
-    ImGui::TextDisabled("Persisted to editor_theme.json (gitignored).");
+    ImGui::TextDisabled("Theme persisted to editor_theme.json (gitignored).");
+
+    // --- Grid & Snapping (Phase 18) ---
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextUnformatted("Grid & Snapping");
+    ImGui::Checkbox("Snap to grid", &m_snap->enabled);
+    ImGui::DragFloat("Translation step", &m_snap->translation,
+                     0.05f, 0.01f, 100.0f, "%.2f");
+    ImGui::DragFloat("Rotation step (deg)", &m_snap->rotation,
+                     1.0f, 1.0f, 360.0f, "%.0f");
+    ImGui::DragFloat("Scale step", &m_snap->scale,
+                     0.05f, 0.01f, 10.0f, "%.2f");
+    ImGui::TextDisabled("Hold Ctrl during a gizmo drag to snap regardless of "
+                        "the toggle. Steps are not persisted.");
 
     ImGui::End();
 }

@@ -19,6 +19,7 @@ private:
     void DrawEntityNode(Entity &entity, int &to_delete_id);
     void DrawPrefabSaveModal();
     void DrawSpawnPrefabModal();
+    void DuplicateNode(Entity &entity);
 
     SelectionState *m_selection;
     Scene *m_scene;

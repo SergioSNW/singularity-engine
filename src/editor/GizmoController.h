@@ -15,6 +15,19 @@ enum class GizmoMode
     Scale,
 };
 
+// Editor grid-snapping configuration (Phase 18). Applied to translate/rotate/
+// scale gizmo drags whenever GizmoFrame::snap_active is set — which happens
+// when the editor's snap toggle is enabled OR the Ctrl modifier is held during
+// the drag (hold-to-snap). The values are the grid steps for each operation;
+// a non-positive step disables snapping for that operation.
+struct SnapSettings
+{
+    bool enabled = false;    // persistent snap toggle (toolbar / Settings)
+    float translation = 0.5f; // world units per grid step
+    float rotation = 15.0f;   // degrees per step
+    float scale = 0.1f;       // scale multiplier per step
+};
+
 // Per-frame input/camera context handed to the gizmo controller by the editor.
 // Mouse coordinates are in viewport-pixel space (0..vp_width, 0..vp_height).
 struct GizmoFrame
@@ -37,6 +50,14 @@ struct GizmoFrame
     float near_p = 0.1f;
     Mat4 view_proj;
     float dt = 0.0f;
+
+    // Grid snapping (Phase 18): when snap_active is true, translate/rotate/
+    // scale drags snap to the configured increments. Filled by the editor from
+    // its SnapSettings (toggle or Ctrl-held).
+    float snap_translation = 0.5f;
+    float snap_rotation = 15.0f;
+    float snap_scale = 0.1f;
+    bool snap_active = false;
 
     // Pixels of the viewport render target per logical point (UI point) on
     // screen. This is the display's framebuffer scale (e.g. 2.0 on a 200%

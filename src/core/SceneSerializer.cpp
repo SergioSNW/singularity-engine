@@ -341,6 +341,16 @@ Entity *SceneSerializer::LoadPrefab(Scene &scene, const std::string &path,
     return &EntityTreeFromJson(scene, *root_ent, parent);
 }
 
+Entity *SceneSerializer::DuplicateEntity(Scene &scene, const Entity &entity,
+                                         Entity *parent)
+{
+    // Same round-trip the prefab instantiator uses: serialize the subtree to a
+    // JSON value in memory, then re-materialize it. EntityTreeFromJson assigns
+    // fresh ids/uuid per node, so the clone is an independent entity graph that
+    // shares no storage with the original.
+    return &EntityTreeFromJson(scene, EntityTreeToJson(entity), parent);
+}
+
 bool SceneSerializer::IsPrefabFile(const std::string &path)
 {
     json::Value root;

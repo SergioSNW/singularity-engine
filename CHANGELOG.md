@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0-alpha] — 2026-08-07
+
+### Added
+
+- **Grid snapping for gizmo drags**: translate (axis and planar), rotate (ring and trackball), and scale drags in `GizmoController` now snap their final result to a configurable step. Snapping the final value (rather than the incremental delta) keeps relative input feel natural. Snapping is active when the setting toggle is on **or** Ctrl is held during the drag (`snap_active = enabled || Ctrl`).
+- **`SnapSettings` struct** in `GizmoController.h` (`enabled`, `translation = 0.5`, `rotation = 15.0°`, `scale = 0.1`), owned by Application and wired into every `GizmoFrame` it builds. A `Snap: ON/OFF` toolbar button in the viewport flips the toggle (highlighted when on, tooltip documents the Ctrl override).
+- **Editor Settings window**: the theme customizer is renamed to Editor Settings and gains a **Grid & Snapping** section — a `Snap to grid` checkbox plus `DragFloat`s for the translation/rotation/scale steps. Snap steps are session-only (not persisted); the theme tokens keep round-tripping through `editor_theme.json`.
+- **Quick duplication**: `SceneSerializer::DuplicateEntity` clones an entity and its whole subtree as a sibling with fresh ids/uuids, implemented as an in-memory `EntityTreeToJson` → `EntityTreeFromJson` round-trip through the prefab machinery. Wired as **Ctrl+D** (Application, editor mode, text-input-guarded), a Hierarchy context-menu item, and a Hierarchy toolbar **Duplicate** button; the clone is selected so a follow-up Ctrl+D duplicates the newest copy.
+
+### Changed
+
+- `SettingsPanel` constructor now takes the live `SnapSettings*` alongside the theme colors; its class doc and window title drop "Theme" for "Editor Settings".
+- Version bump from 0.17.0-alpha to 0.18.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified: a headless harness (Scene + SceneSerializer + Json, no window) covers duplication of a 3-level subtree — fresh ids/uuids, correct parenting, preserved components, identical world-matrix folding, and independence from the original — all 16 checks pass. The engine rebuilds clean and the smoke run (`timeout 5 ./build/debug/singularity-engine.exe`) exits with code 124 (clean timeout, no crash).
+
 ## [0.17.0-alpha] — 2026-08-06
 
 ### Added

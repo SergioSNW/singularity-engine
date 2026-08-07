@@ -223,6 +223,15 @@ Vec3 AxisOf(const Mat4 &world, int i)
     return Vec3Normalize({ world.m[i * 4 + 0], world.m[i * 4 + 1], world.m[i * 4 + 2] });
 }
 
+// Round `v` to the nearest multiple of `step`. A non-positive step disables
+// snapping (identity). Applied to the final value edited by a gizmo drag, so a
+// snap lands exactly on the grid instead of accumulating drift from the raw
+// mouse delta.
+float SnapValue(float v, float step)
+{
+    return (step > 0.0f) ? std::round(v / step) * step : v;
+}
+
 // Convert a world-space displacement into the entity's local space (for parent
 // chains, local position is expressed relative to the parent).
 Vec3 WorldToLocalDir(const Entity &entity, const Scene &scene, const Vec3 &dir)
@@ -420,9 +429,15 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
         {
             Vec3 delta = Vec3Sub(hit, m_plane_start);
             Vec3 local = WorldToLocalDir(entity, *f.scene, delta);
-            entity.transform.position[0] = m_start_pos[0] + local.x;
-            entity.transform.position[1] = m_start_pos[1] + local.y;
-            entity.transform.position[2] = m_start_pos[2] + local.z;
+            entity.transform.position[0] = f.snap_active
+                ? SnapValue(m_start_pos[0] + local.x, f.snap_translation)
+                : m_start_pos[0] + local.x;
+            entity.transform.position[1] = f.snap_active
+                ? SnapValue(m_start_pos[1] + local.y, f.snap_translation)
+                : m_start_pos[1] + local.y;
+            entity.transform.position[2] = f.snap_active
+                ? SnapValue(m_start_pos[2] + local.z, f.snap_translation)
+                : m_start_pos[2] + local.z;
         }
     }
     else if (m_drag_axis == 4)
@@ -430,17 +445,19 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
         // Outer trackball: free rotation about the camera's view axis, driven
         // by the cursor angle around the projected center.
         float ang = std::atan2(f.mouse_y - m_center_sy, f.mouse_x - m_center_sx);
-        float delta = ang - m_angle_start;
+        float delta_deg = (ang - m_angle_start) * 180.0f / PI;
+        if (f.snap_active)
+            delta_deg = SnapValue(delta_deg, f.snap_rotation);
         Vec3 right, up, fwd;
         CameraBasis(f.cam_pitch, f.cam_yaw, right, up, fwd);
-        ApplyRotationAboutAxis(entity, fwd, delta * 180.0f / PI, m_start_rot);
+        ApplyRotationAboutAxis(entity, fwd, delta_deg, m_start_rot);
     }
     else if (mode == GizmoMode::Rotate)
     {
         // 3D ring: rotate about the ring's world-space axis. The cursor angle
         // is measured in the ring's plane (u/v basis) and delta is wrapped to
         // [-PI, PI] so the object tracks the cursor without snapping at the
-        // atan2 discontinuity.
+        // atan2 discontinuity. Snap rounds the delta to the configured step.
         Vec3 n = m_axis_world[m_drag_axis];
         Vec3 u, v;
         RingBasis(n, u, v);
@@ -452,7 +469,10 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
             float delta = ang - m_angle_start;
             while (delta >  PI) delta -= 2.0f * PI;
             while (delta < -PI) delta += 2.0f * PI;
-            ApplyRotationAboutAxis(entity, n, delta * 180.0f / PI, m_start_rot);
+            float delta_deg = delta * 180.0f / PI;
+            if (f.snap_active)
+                delta_deg = SnapValue(delta_deg, f.snap_rotation);
+            ApplyRotationAboutAxis(entity, n, delta_deg, m_start_rot);
         }
     }
     else if (mode == GizmoMode::Translate)
@@ -463,9 +483,18 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
             float delta = t - m_t_start;
             Vec3 wd = Vec3Scale(m_axis_world[m_drag_axis], delta);
             Vec3 local = WorldToLocalDir(entity, *f.scene, wd);
-            entity.transform.position[0] = m_start_pos[0] + local.x;
-            entity.transform.position[1] = m_start_pos[1] + local.y;
-            entity.transform.position[2] = m_start_pos[2] + local.z;
+            if (f.snap_active)
+            {
+                entity.transform.position[0] = SnapValue(m_start_pos[0] + local.x, f.snap_translation);
+                entity.transform.position[1] = SnapValue(m_start_pos[1] + local.y, f.snap_translation);
+                entity.transform.position[2] = SnapValue(m_start_pos[2] + local.z, f.snap_translation);
+            }
+            else
+            {
+                entity.transform.position[0] = m_start_pos[0] + local.x;
+                entity.transform.position[1] = m_start_pos[1] + local.y;
+                entity.transform.position[2] = m_start_pos[2] + local.z;
+            }
         }
     }
     else if (mode == GizmoMode::Scale)
@@ -480,6 +509,8 @@ void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)
         {
             float factor = 1.0f + (t - m_t_start) / m_radius_world;
             float v = m_start_scale[m_drag_axis] * factor;
+            if (f.snap_active)
+                v = SnapValue(v, f.snap_scale);
             if (!std::isfinite(v) || v > 10000.0f)
                 v = 10000.0f;
             if (v < 0.01f)

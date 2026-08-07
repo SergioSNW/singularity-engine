@@ -2,20 +2,23 @@
 
 #include "EditorPanel.h"
 #include "editor/Theme.h"
+#include "editor/GizmoController.h"
 
 #include <functional>
 
-// Live Theme Customizer. Exposes the six key color tokens from Theme::Colors
-// as color pickers that re-skin the whole editor the moment they change
-// (derived colors follow automatically). "Save Theme" persists the tokens to
-// editor_theme.json (gitignored) so a custom scheme survives restarts;
-// "Reset to Default" restores the warm charcoal + indigo palette.
+// Live Editor Settings window: the theme customizer (six key color tokens that
+// re-skin the editor on change) plus the grid-snapping configuration (Phase 18)
+// applied to gizmo translate/rotate/scale drags. "Save Theme" persists the
+// tokens to editor_theme.json (gitignored); the snap steps are session-only.
 class SettingsPanel : public EditorPanel
 {
 public:
-    // `colors` is the live token set owned by Application; `on_change` is
-    // invoked after any edit so Application can re-apply ConfigureStyle.
-    SettingsPanel(Theme::Colors *colors, std::function<void()> on_change);
+    // `colors` is the live token set owned by Application; `snap` is the live
+    // SnapSettings struct the Application reads when building GizmoFrames;
+    // `on_change` is invoked after any edit so Application can re-apply
+    // ConfigureStyle.
+    SettingsPanel(Theme::Colors *colors, SnapSettings *snap,
+                  std::function<void()> on_change);
 
     void OnImGuiRender(float dt) override;
 
@@ -24,6 +27,7 @@ public:
 
 private:
     Theme::Colors *m_colors;
+    SnapSettings *m_snap;
     std::function<void()> m_on_change;
     bool m_visible;
 };

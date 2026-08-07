@@ -536,6 +536,10 @@ void Application::RenderViewportTarget()
                 gf.near_p = near_p;
                 gf.view_proj = view_proj;
                 gf.dt = 0.0f;
+                gf.snap_translation = m_snap.translation;
+                gf.snap_rotation = m_snap.rotation;
+                gf.snap_scale = m_snap.scale;
+                gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
                 m_gizmo->Draw(renderer, gf);
             }
         }
@@ -811,7 +815,6 @@ void Application::ExitPlayMode()
 {
     if (m_state != EngineState::Play)
         return;
-
     if (m_flying)
     {
         m_flying = false;
@@ -892,6 +895,29 @@ void Application::RestorePlayModePanelState()
         m_console_panel->SetVisible(m_console_was_visible);
     if (m_inspector_panel)
         m_inspector_panel->SetVisible(m_inspector_was_visible);
+}
+
+void Application::DuplicateSelection()
+{
+    if (m_state != EngineState::Editor)
+        return;
+    if (!m_selection || m_selection->entity_id < 0)
+        return;
+
+    Entity *source = m_scene->GetEntityById(m_selection->entity_id);
+    if (!source)
+        return;
+
+    // Clone under the source's own parent so a child's duplicate stays a
+    // sibling inside the same subtree; a root duplicate lands at the root.
+    // The serializer assigns fresh ids/uuid, so the clone is fully independent.
+    Entity *clone = SceneSerializer::DuplicateEntity(*m_scene, *source, source->parent);
+    if (clone)
+    {
+        m_selection->entity_id = clone->id;
+        m_selection->entity_name = clone->tag.tag;
+        m_scene_status = "Duplicated '" + clone->tag.tag + "'";
+    }
 }
 
 void Application::UpdateCameraControls(float dt)
@@ -1168,9 +1194,10 @@ bool Application::Init(int width, int height, const char *title)
     });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
-    // Live theme customizer: owns no state itself — it edits Application's
-    // token set and asks for a ConfigureStyle re-apply on every change.
-    m_settings_panel = new SettingsPanel(&m_theme_colors, [this]() {
+    // Live theme customizer + grid snapping config: owns no state itself — it
+    // edits Application's token set (and SnapSettings) and asks for a
+    // ConfigureStyle re-apply on every theme change.
+    m_settings_panel = new SettingsPanel(&m_theme_colors, &m_snap, [this]() {
         Theme::ConfigureStyle(m_ui_scale, m_theme_colors);
     });
     m_panels.push_back(std::shared_ptr<SettingsPanel>(m_settings_panel));
@@ -1186,7 +1213,7 @@ bool Application::Init(int width, int height, const char *title)
         if (m_script_editor)
             m_script_editor->ToggleVisible();
     } });
-    cp.Register({ "Toggle Theme Customizer", "View", "", [this]() {
+    cp.Register({ "Toggle Editor Settings", "View", "", [this]() {
         if (m_settings_panel)
             m_settings_panel->ToggleVisible();
     } });
@@ -1329,6 +1356,17 @@ void Application::Run()
             m_command_palette->ToggleOpen();
         }
 
+        // Quick duplication: Ctrl+D clones the selected entity (picked in the
+        // Hierarchy or the viewport) as a sibling under its parent and selects
+        // the clone. Skipped while a text field is focused so the chord can't
+        // fire mid-typing (e.g. while naming a prefab).
+        if (m_state == EngineState::Editor &&
+            !ImGui::GetIO().WantTextInput &&
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D))
+        {
+            DuplicateSelection();
+        }
+
         // --- Main menu bar (transport controls + editor chrome) ---
         const bool playing = (m_state == EngineState::Play);
 
@@ -1376,6 +1414,25 @@ void Application::Run()
                         if (is_active)
                             ImGui::PopStyleColor(2);
                     }
+                    ImGui::SameLine();
+
+                    // Grid snap toggle. When on (or when Ctrl is held during a
+                    // gizmo drag), translate/rotate/scale snap to the steps
+                    // configured in the Editor Settings window.
+                    const bool snap_on = m_snap.enabled;
+                    if (snap_on)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
+                    }
+                    if (ImGui::Button(snap_on ? "Snap: ON" : "Snap: OFF"))
+                        m_snap.enabled = !m_snap.enabled;
+                    if (snap_on)
+                        ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Toggle grid snapping. Hold Ctrl during a gizmo drag to "
+                            "snap temporarily. Steps are set in Editor Settings.");
                     ImGui::SameLine();
                 }
 
@@ -1452,7 +1509,7 @@ void Application::Run()
 
                     if (m_settings_panel)
                     {
-                        if (ImGui::MenuItem("Theme Customizer", nullptr,
+                        if (ImGui::MenuItem("Editor Settings", nullptr,
                                             m_settings_panel->IsVisible()))
                             m_settings_panel->ToggleVisible();
                     }
@@ -1597,6 +1654,11 @@ void Application::Run()
                 gf.near_p = near_p;
                 gf.view_proj = view_proj;
                 gf.dt = (float)dt;
+                // Grid snapping: persistent toggle OR hold Ctrl while dragging.
+                gf.snap_translation = m_snap.translation;
+                gf.snap_rotation = m_snap.rotation;
+                gf.snap_scale = m_snap.scale;
+                gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
                 m_gizmo->Update(gf);
             }
         }

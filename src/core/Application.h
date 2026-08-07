@@ -7,6 +7,7 @@
 #include "Json.h"
 #include "editor/Theme.h"
 #include "core/LayoutManager.h"
+#include "editor/GizmoController.h"
 
 struct SDL_Texture;
 struct Mat4;
@@ -71,6 +72,10 @@ private:
     void EnterPlayMode();
     void ExitPlayMode();
 
+    // Duplicate the selected entity (and its whole subtree) as a sibling under
+    // its current parent, then select the clone. No-op without a selection.
+    void DuplicateSelection();
+
     // Play-mode panel isolation: snapshot the visibility of the non-essential
     // editor windows (script editor, content browser, console, inspector) and
     // hide them so play mode renders a clean game view; restore the snapshot
@@ -119,4 +124,9 @@ private:
     bool m_content_browser_was_visible;
     bool m_console_was_visible;
     bool m_inspector_was_visible;
+
+    // Editor grid-snapping configuration (Phase 18): steps for the translate/
+    // rotate/scale gizmos, plus the persistent snap toggle. Wire
+    // GizmoFrame::snap_active = m_snap.enabled || Ctrl-held.
+    SnapSettings m_snap;
 };

@@ -36,4 +36,13 @@ public:
     // True when the file is a prefab document (`"prefab": true` root key),
     // used by the Content Browser to tell scenes from prefabs.
     static bool IsPrefabFile(const std::string &path);
+
+    // --- Editor duplication ---
+    // Clone `entity` (and its whole descendant subtree) into `scene` under
+    // `parent` (nullptr = scene root). Fresh ids/uuid are assigned on every
+    // clone — exactly like instantiating a prefab — while the original's
+    // components, transforms, and relative child structure are preserved.
+    // Returns the clone's root entity (nullptr only if the source is invalid).
+    static Entity *DuplicateEntity(Scene &scene, const Entity &entity,
+                                   Entity *parent = nullptr);
 };

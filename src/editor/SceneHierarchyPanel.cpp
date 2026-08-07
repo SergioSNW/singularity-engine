@@ -39,6 +39,20 @@ static int CountDescendants(const Entity &entity)
     return count;
 }
 
+void SceneHierarchyPanel::DuplicateNode(Entity &entity)
+{
+    // Clone the node and its whole subtree as a sibling under the same parent
+    // (fresh ids/uuid), then select the clone so a follow-up Ctrl+D keeps
+    // duplicating the newest copy.
+    Entity *clone = SceneSerializer::DuplicateEntity(*m_scene, entity, entity.parent);
+    if (clone)
+    {
+        m_selection->entity_id = clone->id;
+        m_selection->entity_name = clone->tag.tag;
+        m_status = "Duplicated '" + clone->tag.tag + "'";
+    }
+}
+
 void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
 {
     ImGui::PushID(entity.id);
@@ -101,6 +115,8 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
     {
         if (ImGui::MenuItem("Add Child"))
             m_scene->CreateEntity("Child", &entity);
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+            DuplicateNode(entity);
         if (ImGui::MenuItem("Save as Prefab..."))
         {
             m_prefab_entity_id = entity.id;
@@ -259,6 +275,23 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
         Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
         if (selected)
             m_scene->CreateEntity("Child", selected);
+    }
+    if (!has_selection)
+    {
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SameLine();
+
+    if (!has_selection)
+    {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Duplicate"))
+    {
+        Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
+        if (selected)
+            DuplicateNode(*selected);
     }
     if (!has_selection)
     {
