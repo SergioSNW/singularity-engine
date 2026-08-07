@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.20.0-alpha] — 2026-08-07
+
+### Added
+
+- **`WorkspaceManager`** (`src/core/WorkspaceManager.{h,cpp}`, renamed from `LayoutManager`): owns the full-screen DockBuilder node tree and three task-oriented workspaces — **Level Design** (default), **Scripting**, and **Shading & Assets** — switched via `ApplyWorkspace()`. `WorkspaceName()` provides the human-readable labels.
+- **Workspace selector dropdown** in the main menu bar (replacing View → Layout): radio-checked items for the three workspaces, plus **Reset to Level Design** and **Save Current Layout as Default**. The command palette's `Layout` category is renamed **Workspace** and gains a "Switch to Shading & Assets Workspace" entry.
+- **Tab grouping**: related panels now share tabbed dock nodes. The right-hand rail tabs Inspector over Editor Settings; the bottom zone tabs Content Browser over Console; the Shading & Assets workspace tabs Content Browser into the right rail and Console over Stats in the bottom zone. DockBuilder focuses the last-docked window, so tab order is deterministic.
+
+### Changed
+
+- `LayoutManager`/`Preset` renamed to `WorkspaceManager`/`Workspace`; `ApplyPreset` → `ApplyWorkspace`, `GetPreset` → `GetWorkspace`. Application's member is now `m_workspace_manager`.
+- Workspace layouts reorganized for real-estate efficiency: Level Design moves the Console into the bottom zone (tabbed with Content Browser) and tabs Editor Settings into the right rail; Stats fills the left rail under Hierarchy.
+- `editor_layout.json` stores the active mode under a new `workspace` key (`"level_design" | "scripting" | "shading_assets"`); loading falls back to the legacy `preset` key so v0.18/v0.19 files migrate.
+
+### Fixed
+
+- (none)
+
+- Version bump from 0.19.0-alpha to 0.20.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.19.0-alpha] — 2026-08-07
 
 ### Added

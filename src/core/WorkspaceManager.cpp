@@ -1,0 +1,310 @@
+#include "WorkspaceManager.h"
+
+#include "Json.h"
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <fstream>
+#include <sstream>
+
+// The node tree is built around a full-screen DockSpace. A transparent host
+// window pins that DockSpace to the viewport's work area so every panel docks
+// into one unified workspace instead of scattering as floating windows.
+static const unsigned int kDockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
+
+// Panels grouped into the same dock node render as a single tabbed window.
+// DockBuilder focuses the LAST window docked into a node, so order below
+// controls which tab is active when a workspace is applied.
+static const char *kHierarchyWindow = "Hierarchy";
+static const char *kViewportWindow = "Viewport";
+static const char *kInspectorWindow = "Inspector";
+static const char *kSettingsWindow = "Editor Settings";
+static const char *kContentBrowserWindow = "Content Browser";
+static const char *kConsoleWindow = "Console";
+static const char *kStatsWindow = "Singularity Engine Stats";
+static const char *kScriptEditorWindow = "Script Editor";
+
+const char *WorkspaceManager::WorkspaceName(Workspace ws)
+{
+    switch (ws)
+    {
+        case Workspace::LevelDesign:     return "Level Design";
+        case Workspace::Scripting:       return "Scripting";
+        case Workspace::ShadingAndAssets:return "Shading & Assets";
+    }
+    return "Level Design";
+}
+
+WorkspaceManager::WorkspaceManager()
+    : m_workspace(Workspace::LevelDesign)
+    , m_dockspace_valid(false)
+    , m_needs_rebuild(false)
+    , m_use_loaded_layout(false)
+    , m_save_requested(false)
+    , m_dockspace_id(0)
+    , m_code_window_node(0)
+{
+}
+
+void WorkspaceManager::RebuildLayout()
+{
+    // A saved custom layout drives docking entirely through the .ini; never
+    // overwrite it with a canonical rebuild.
+    if (m_use_loaded_layout)
+        return;
+
+    if (m_dockspace_id == 0)
+        m_dockspace_id = ImGui::GetID("MainDockspace");
+    m_code_window_node = 0;
+
+    ImGui::DockBuilderRemoveNode(m_dockspace_id);
+    ImGui::DockBuilderAddNode(m_dockspace_id, kDockspaceFlags);
+    ImGui::DockBuilderSetNodeSize(m_dockspace_id, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID top, bottom;
+    ImGuiID left, center, right;
+
+    // Helper that docks the standard right-hand rail: Editor Settings tabbed
+    // under the Inspector (Settings first, so Inspector is the active tab).
+    auto dock_right_rail = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kSettingsWindow, node);
+        ImGui::DockBuilderDockWindow(kInspectorWindow, node);
+    };
+
+    // Helper for the Content Browser + Console tab group (Console first, so
+    // the Content Browser is the active tab).
+    auto dock_browser_console = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kConsoleWindow, node);
+        ImGui::DockBuilderDockWindow(kContentBrowserWindow, node);
+    };
+
+    switch (m_workspace)
+    {
+        case Workspace::Scripting:
+        {
+            // Scripting workspace: taller bottom strip dedicated to the IDE,
+            // with the code window docked in its own slot beside the sidebar
+            // so it is part of the unified dock rather than floating.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.62f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
+
+            ImGuiID left_top, left_bottom;
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
+
+            ImGuiID bottom_left, bottom_center, dev_right;
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.18f, &bottom_left, &bottom_center);
+            ImGui::DockBuilderSplitNode(bottom_center, ImGuiDir_Right, 0.22f, &dev_right, &bottom_center);
+
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
+            ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            dock_right_rail(right);
+            ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_left);
+            dock_browser_console(dev_right);
+
+            // The code window title embeds the file name, so it cannot be
+            // docked by name here; the Application routes it through
+            // SetNextWindowDockID with this node.
+            m_code_window_node = bottom_center;
+            break;
+        }
+        case Workspace::ShadingAndAssets:
+        {
+            // Shading & Assets workspace: a wide right rail devoted to
+            // materials/textures (Inspector + Settings + Content Browser
+            // tabs), a bottom Console + Stats tab group, and a maximized
+            // viewport for inspecting shaded geometry.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.70f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.16f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
+
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+
+            // Asset-focused right rail: Content Browser is the active tab.
+            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
+            ImGui::DockBuilderDockWindow(kInspectorWindow, right);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, right);
+
+            // Bottom zone: Console is the active tab over the stats.
+            ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
+            ImGui::DockBuilderDockWindow(kConsoleWindow, bottom);
+            break;
+        }
+        default: // Workspace::LevelDesign
+        {
+            // Level Design workspace: the bottom strip is the "Development
+            // Zone" — Content Browser + Console tabbed next to the Script
+            // Editor sidebar — so asset browsing and console output share one
+            // cohesive region. The right rail groups the Inspector and Editor
+            // Settings as tabs, and the left rail stacks Hierarchy over Stats.
+            // The code window stays free-floating.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.76f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.20f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
+
+            ImGuiID left_top, left_bottom;
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
+
+            ImGuiID bottom_left, bottom_right;
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
+
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
+            ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            dock_right_rail(right);
+            dock_browser_console(bottom_left);
+            ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_right);
+            break;
+        }
+    }
+
+    ImGui::DockBuilderFinish(m_dockspace_id);
+}
+
+void WorkspaceManager::DrawDockspace()
+{
+    // Stable identity for the dock node, shared by the host window, the
+    // DockBuilder tree, and the .ini persistence (must be computed the same way
+    // on every run so saved layouts match).
+    if (m_dockspace_id == 0)
+        m_dockspace_id = ImGui::GetID("MainDockspace");
+
+    if (m_use_loaded_layout)
+    {
+        // A saved custom layout was restored at startup; the .ini drives all
+        // docking, so only the host window is needed.
+        m_use_loaded_layout = false;
+        m_dockspace_valid = true;
+    }
+    else if (!m_dockspace_valid || m_needs_rebuild)
+    {
+        RebuildLayout();
+        m_dockspace_valid = true;
+        m_needs_rebuild = false;
+    }
+
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowViewport(viewport->ID);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
+    ImGuiWindowFlags host_flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoSavedSettings;
+
+    ImGui::Begin("##EditorDockHost", nullptr, host_flags);
+    ImGui::DockSpace(m_dockspace_id, ImVec2(0.0f, 0.0f), kDockspaceFlags);
+    ImGui::End();
+
+    ImGui::PopStyleVar(3);
+}
+
+void WorkspaceManager::RequestRebuild()
+{
+    m_use_loaded_layout = false;
+    m_needs_rebuild = true;
+}
+
+unsigned int WorkspaceManager::ApplyWorkspace(Workspace ws)
+{
+    m_workspace = ws;
+    m_use_loaded_layout = false;
+    RebuildLayout();
+    m_dockspace_valid = true;
+    m_needs_rebuild = false;
+    SaveToFile();
+    return m_code_window_node;
+}
+
+void WorkspaceManager::ResetToDefault()
+{
+    m_saved_layout.clear();
+    ApplyWorkspace(Workspace::LevelDesign);
+}
+
+void WorkspaceManager::RequestSaveCurrent()
+{
+    m_save_requested = true;
+}
+
+void WorkspaceManager::FinalizeSave()
+{
+    if (!m_save_requested)
+        return;
+    m_save_requested = false;
+
+    size_t size = 0;
+    const char *data = ImGui::SaveIniSettingsToMemory(&size);
+    m_saved_layout = (data && size > 0) ? std::string(data, size) : std::string();
+
+    SaveToFile();
+}
+
+void WorkspaceManager::SaveToFile() const
+{
+    const char *ws_name = (m_workspace == Workspace::Scripting)
+        ? "scripting"
+        : (m_workspace == Workspace::ShadingAndAssets) ? "shading_assets"
+                                                       : "level_design";
+
+    json::Value root = json::Value::MakeObject();
+    root.object.emplace_back("version", json::Value::MakeNumber(1.0));
+    root.object.emplace_back("workspace", json::Value::MakeString(ws_name));
+    if (!m_saved_layout.empty())
+        root.object.emplace_back("saved_layout",
+                                 json::Value::MakeString(m_saved_layout));
+
+    std::ofstream out("editor_layout.json", std::ios::out | std::ios::trunc);
+    if (!out)
+        return;
+    out << json::WritePretty(root) << "\n";
+    out.close();
+}
+
+void WorkspaceManager::LoadFromFile()
+{
+    std::ifstream in("editor_layout.json", std::ios::in | std::ios::binary);
+    if (!in)
+        return;
+
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+
+    std::string error;
+    json::Value root = json::Parse(buffer.str(), &error);
+    if (!root.IsObject())
+        return;
+
+    // "workspace" is the current key; older files (Phase 18/19) stored the
+    // layout mode under "preset" ("default" | "scripting"), so fall back to it
+    // for a smooth upgrade.
+    std::string ws = root.String("workspace");
+    if (ws.empty())
+        ws = root.String("preset", "default");
+    m_workspace = (ws == "scripting")
+        ? Workspace::Scripting
+        : (ws == "shading_assets") ? Workspace::ShadingAndAssets
+                                   : Workspace::LevelDesign;
+
+    const std::string saved = root.String("saved_layout");
+    if (!saved.empty())
+    {
+        // Restore the user's captured layout before the first NewFrame so the
+        // .ini drives all docking; the canonical workspace build is skipped.
+        ImGui::LoadIniSettingsFromMemory(saved.c_str(), saved.size());
+        m_saved_layout = saved;
+        m_use_loaded_layout = true;
+        m_dockspace_valid = true;
+        m_needs_rebuild = false;
+    }
+}

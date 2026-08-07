@@ -74,7 +74,6 @@ Application::Application()
     , m_dpi_scale(1.0f)
     , m_fonts()
     , m_theme_colors()
-    , m_layout()
     , m_recreate_viewport(false)
     , m_scene_path("assets/scenes/default.json")
     , m_scene_status()
@@ -936,7 +935,7 @@ void Application::ExitPlayMode()
     // the node tree and explicitly re-docks every editor panel, so the full
     // editor UI deterministically comes back into view.
     m_viewport->SetIsolated(false);
-    m_layout.RequestRebuild();
+    m_workspace_manager.RequestRebuild();
 }
 
 void Application::SavePlayModePanelState()
@@ -1142,7 +1141,7 @@ bool Application::Init(int width, int height, const char *title)
 
     // Restore the workspace before the first frame so a saved custom layout
     // (or the remembered preset) is active immediately.
-    m_layout.LoadFromFile();
+    m_workspace_manager.LoadFromFile();
 
     m_selection = new SelectionState();
     m_mesh_library = new MeshLibrary();
@@ -1310,20 +1309,24 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Reset UI Scale", "View", "", [this]() {
         m_ui_scale = 1.0f;
     } });
-    cp.Register({ "Switch to Default Workspace", "Layout", "", [this]() {
+    cp.Register({ "Switch to Level Design Workspace", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_layout.ApplyPreset(LayoutManager::Preset::Default));
+            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
     } });
-    cp.Register({ "Switch to Scripting Workspace", "Layout", "", [this]() {
+    cp.Register({ "Switch to Scripting Workspace", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_layout.ApplyPreset(LayoutManager::Preset::Scripting));
+            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
     } });
-    cp.Register({ "Reset View to Default Workspace", "Layout", "", [this]() {
-        m_layout.ResetToDefault();
+    cp.Register({ "Switch to Shading & Assets Workspace", "Workspace", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+    } });
+    cp.Register({ "Reset View to Default Workspace", "Workspace", "", [this]() {
+        m_workspace_manager.ResetToDefault();
         m_script_editor->RequestDockCodeWindow(0);
     } });
-    cp.Register({ "Save Current Layout as Default", "Layout", "", [this]() {
-        m_layout.RequestSaveCurrent();
+    cp.Register({ "Save Current Layout as Default", "Workspace", "", [this]() {
+        m_workspace_manager.RequestSaveCurrent();
     } });
     cp.Register({ "Save Scene", "File", "Ctrl+S", [this]() { SaveScene(); } });
     cp.Register({ "Open Scene", "File", "Ctrl+O", [this]() { OpenScene(); } });
@@ -1522,6 +1525,45 @@ void Application::Run()
                     ImGui::SameLine();
                 }
 
+                // Workspace selector: switches the whole dock layout to the
+                // arrangement best suited for the current task. Managed by
+                // WorkspaceManager, which persists the active workspace.
+                if (ImGui::BeginMenu("Workspace"))
+                {
+                    const WorkspaceManager::Workspace current = m_workspace_manager.GetWorkspace();
+                    if (ImGui::MenuItem(
+                            WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::LevelDesign),
+                            nullptr, current == WorkspaceManager::Workspace::LevelDesign))
+                    {
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
+                    }
+                    if (ImGui::MenuItem(
+                            WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Scripting),
+                            nullptr, current == WorkspaceManager::Workspace::Scripting))
+                    {
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
+                    }
+                    if (ImGui::MenuItem(
+                            WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::ShadingAndAssets),
+                            nullptr, current == WorkspaceManager::Workspace::ShadingAndAssets))
+                    {
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Reset to Level Design"))
+                    {
+                        m_workspace_manager.ResetToDefault();
+                        m_script_editor->RequestDockCodeWindow(0);
+                    }
+                    if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
+                                        m_workspace_manager.HasSavedLayout()))
+                        m_workspace_manager.RequestSaveCurrent();
+                    ImGui::EndMenu();
+                }
+
                 if (ImGui::BeginMenu("File"))
                 {
                     if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
@@ -1544,34 +1586,6 @@ void Application::Run()
                         m_ui_scale = 1.0f;
 
                     ImGui::Separator();
-                    if (ImGui::BeginMenu("Layout"))
-                    {
-                        const LayoutManager::Preset current = m_layout.GetPreset();
-                        if (ImGui::MenuItem("Default Workspace", nullptr,
-                                            current == LayoutManager::Preset::Default))
-                        {
-                            m_script_editor->RequestDockCodeWindow(
-                                m_layout.ApplyPreset(LayoutManager::Preset::Default));
-                        }
-                        if (ImGui::MenuItem("Scripting Workspace", nullptr,
-                                            current == LayoutManager::Preset::Scripting))
-                        {
-                            m_script_editor->RequestDockCodeWindow(
-                                m_layout.ApplyPreset(LayoutManager::Preset::Scripting));
-                        }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Reset to Default Workspace"))
-                        {
-                            m_layout.ResetToDefault();
-                            m_script_editor->RequestDockCodeWindow(0);
-                        }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
-                                            m_layout.HasSavedLayout()))
-                            m_layout.RequestSaveCurrent();
-                        ImGui::EndMenu();
-                    }
-
                     if (m_script_editor)
                     {
                         ImGui::Separator();
@@ -1645,9 +1659,9 @@ void Application::Run()
 
             // Master dockspace: one transparent full-screen host window, so
             // every panel docks into a single unified workspace (see
-            // LayoutManager). Rebuilds itself after play mode or preset
+            // WorkspaceManager). Rebuilds itself after play mode or workspace
             // changes.
-            m_layout.DrawDockspace();
+            m_workspace_manager.DrawDockspace();
 
             for (auto &panel : m_panels)
                 panel->OnImGuiRender((float)dt);
@@ -1659,7 +1673,7 @@ void Application::Run()
 
         // Persist a "Save Current Layout as Default" capture now that the frame
         // (and its window state) is fully serializable.
-        m_layout.FinalizeSave();
+        m_workspace_manager.FinalizeSave();
 
         int vp_w = m_viewport ? m_viewport->GetWidth() : 0;
         int vp_h = m_viewport ? m_viewport->GetHeight() : 0;
@@ -1825,7 +1839,7 @@ void Application::Shutdown()
 
     // Flush any pending layout capture while the ImGui context is still alive
     // (SaveIniSettingsToMemory needs it), then persist the preset state.
-    m_layout.FinalizeSave();
+    m_workspace_manager.FinalizeSave();
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

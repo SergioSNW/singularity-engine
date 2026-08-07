@@ -6,7 +6,7 @@
 
 #include "Json.h"
 #include "editor/Theme.h"
-#include "core/LayoutManager.h"
+#include "core/WorkspaceManager.h"
 #include "editor/GizmoController.h"
 
 struct SDL_Texture;
@@ -122,7 +122,7 @@ private:
     float m_dpi_scale;
     Theme::Fonts m_fonts;
     Theme::Colors m_theme_colors;
-    LayoutManager m_layout;
+    WorkspaceManager m_workspace_manager;
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;
