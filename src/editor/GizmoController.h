@@ -2,6 +2,8 @@
 
 #include "EngineMath.h"
 
+#include <functional>
+
 class Scene;
 class SelectionState;
 class MeshLibrary;
@@ -100,6 +102,17 @@ public:
     // by Update() every editor frame, used by the editor to draw the hover
     // bounds box. Distinct from selection: hovering never changes selection.
     int GetHoverEntity() const { return m_hover_entity; }
+
+    // True while an axis drag is active (between mouse-down on a handle and
+    // mouse release). The editor suppresses undo shortcuts during a drag so
+    // Ctrl (hold-to-snap) can't accidentally pop history.
+    bool IsDragging() const { return m_dragging; }
+
+    // Undo hooks (Phase 22): fired when a gizmo drag begins (with the dragged
+    // entity's id) and when it ends, so the editor can wrap the drag in an
+    // undo transaction. Wired by the Application; left null for headless use.
+    std::function<void(int entity_id)> on_drag_start;
+    std::function<void()> on_drag_end;
 
 private:
     int m_drag_axis = -1;    // 0/1/2 = X/Y/Z axis, 3 = planar center, 4 = rotate ring

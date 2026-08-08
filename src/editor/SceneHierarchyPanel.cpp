@@ -3,6 +3,7 @@
 #include "Scene.h"
 #include "Entity.h"
 #include "SceneSerializer.h"
+#include "core/CommandHistory.h"
 
 #include <imgui.h>
 
@@ -13,9 +14,11 @@
 
 namespace fs = std::filesystem;
 
-SceneHierarchyPanel::SceneHierarchyPanel(SelectionState *selection, Scene *scene)
+SceneHierarchyPanel::SceneHierarchyPanel(SelectionState *selection, Scene *scene,
+                                         CommandHistory *history)
     : m_selection(selection)
     , m_scene(scene)
+    , m_history(history)
 {
 }
 
@@ -39,14 +42,24 @@ static int CountDescendants(const Entity &entity)
     return count;
 }
 
+void SceneHierarchyPanel::DeleteEntity(Entity &entity)
+{
+    if (m_history)
+        m_history->ExecuteDelete(entity, ("Delete '" + entity.tag.tag + "'").c_str());
+    else
+        m_scene->DestroyEntity(entity.id);
+}
+
 void SceneHierarchyPanel::DuplicateNode(Entity &entity)
 {
     // Clone the node and its whole subtree as a sibling under the same parent
     // (fresh ids/uuid), then select the clone so a follow-up Ctrl+D keeps
-    // duplicating the newest copy.
+    // duplicating the newest copy. The spawn is undoable.
     Entity *clone = SceneSerializer::DuplicateEntity(*m_scene, entity, entity.parent);
     if (clone)
     {
+        if (m_history)
+            m_history->PushSpawn(*clone, ("Duplicate '" + entity.tag.tag + "'").c_str());
         m_selection->entity_id = clone->id;
         m_selection->entity_name = clone->tag.tag;
         m_status = "Duplicated '" + clone->tag.tag + "'";
@@ -102,7 +115,11 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
                 int dragged_id = *(const int *)payload->Data;
                 if (Entity *dragged = m_scene->GetEntityById(dragged_id))
                 {
+                    if (m_history)
+                        m_history->BeginEntityEdit(dragged_id, "Re-parent");
                     m_scene->SetParent(dragged_id, entity.id);
+                    if (m_history)
+                        m_history->EndEntityEdit();
                     m_status = "Parented '" + dragged->tag.tag + "' to '" +
                                entity.tag.tag + "'";
                 }
@@ -114,7 +131,11 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
     if (ImGui::BeginPopupContextItem())
     {
         if (ImGui::MenuItem("Add Child"))
-            m_scene->CreateEntity("Child", &entity);
+        {
+            Entity &created = m_scene->CreateEntity("Child", &entity);
+            if (m_history)
+                m_history->PushSpawn(created, "Create 'Child'");
+        }
         if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
             DuplicateNode(entity);
         if (ImGui::MenuItem("Save as Prefab..."))
@@ -234,10 +255,16 @@ void SceneHierarchyPanel::DrawSpawnPrefabModal()
             if (ImGui::Selectable(path.c_str()))
             {
                 std::string error;
-                if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                {
+                    if (m_history)
+                        m_history->PushSpawn(*spawned, ("Spawn prefab '" + path + "'").c_str());
                     m_status = "Spawned prefab: " + path;
+                }
                 else
+                {
                     m_status = "Prefab spawn failed: " + error;
+                }
                 ImGui::CloseCurrentPopup();
             }
         }
@@ -260,7 +287,9 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 
     if (ImGui::Button("Add Entity"))
     {
-        m_scene->CreateEntity("New Entity");
+        Entity &created = m_scene->CreateEntity("New Entity");
+        if (m_history)
+            m_history->PushSpawn(created, "Create 'New Entity'");
     }
 
     ImGui::SameLine();
@@ -274,7 +303,11 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
     {
         Entity *selected = m_scene->GetEntityById(m_selection->entity_id);
         if (selected)
-            m_scene->CreateEntity("Child", selected);
+        {
+            Entity &created = m_scene->CreateEntity("Child", selected);
+            if (m_history)
+                m_history->PushSpawn(created, "Create 'Child'");
+        }
     }
     if (!has_selection)
     {
@@ -308,7 +341,8 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
     {
         int id = m_selection->entity_id;
         ClearSelectionIfAffected(m_scene, m_selection, id);
-        m_scene->DestroyEntity(id);
+        if (Entity *to_delete = m_scene->GetEntityById(id))
+            DeleteEntity(*to_delete);
     }
     if (!has_selection)
     {
@@ -333,10 +367,16 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                     path.pop_back();
 
                 std::string error;
-                if (SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                {
+                    if (m_history)
+                        m_history->PushSpawn(*spawned, ("Spawn prefab '" + path + "'").c_str());
                     m_status = "Spawned prefab: " + path;
+                }
                 else
+                {
                     m_status = "Prefab spawn failed: " + error;
+                }
             }
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
             {
@@ -345,7 +385,11 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                 {
                     if (dragged->parent)
                     {
+                        if (m_history)
+                            m_history->BeginEntityEdit(dragged_id, "Detach to root");
                         m_scene->SetParent(dragged_id, -1);
+                        if (m_history)
+                            m_history->EndEntityEdit();
                         m_status = "Detached '" + dragged->tag.tag + "' to scene root";
                     }
                 }
@@ -364,7 +408,8 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
         if (to_delete_id != -1)
         {
             ClearSelectionIfAffected(m_scene, m_selection, to_delete_id);
-            m_scene->DestroyEntity(to_delete_id);
+            if (Entity *to_delete = m_scene->GetEntityById(to_delete_id))
+                DeleteEntity(*to_delete);
         }
 
         // The remaining tree area doubles as a detach drop zone: dragging an
@@ -382,7 +427,11 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                     {
                         if (dragged->parent)
                         {
+                            if (m_history)
+                                m_history->BeginEntityEdit(dragged_id, "Detach to root");
                             m_scene->SetParent(dragged_id, -1);
+                            if (m_history)
+                                m_history->EndEntityEdit();
                             m_status = "Detached '" + dragged->tag.tag + "' to scene root";
                         }
                     }

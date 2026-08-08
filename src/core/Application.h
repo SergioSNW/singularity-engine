@@ -33,6 +33,8 @@ class ContentBrowserPanel;
 class ConsolePanel;
 class InspectorPanel;
 class MaterialPanel;
+class CommandHistory;
+class HistoryPanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -115,6 +117,8 @@ private:
     ConsolePanel *m_console_panel;
     InspectorPanel *m_inspector_panel;
     MaterialPanel *m_material_panel;
+    CommandHistory *m_history;       // global undo/redo stack (Phase 22)
+    HistoryPanel *m_history_panel;   // read-only view over m_history
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
@@ -140,6 +144,7 @@ private:
     bool m_console_was_visible;
     bool m_inspector_was_visible;
     bool m_material_panel_was_visible;
+    bool m_history_panel_was_visible;
 
     // Editor grid-snapping configuration (Phase 18): steps for the translate/
     // rotate/scale gizmos, plus the persistent snap toggle. Wire

@@ -25,6 +25,8 @@
 #include "editor/ConsolePanel.h"
 #include "editor/InspectorPanel.h"
 #include "editor/MaterialPanel.h"
+#include "editor/HistoryPanel.h"
+#include "core/CommandHistory.h"
 #include "core/Console.h"
 
 #include <SDL.h>
@@ -66,6 +68,8 @@ Application::Application()
     , m_content_browser(nullptr)
     , m_console_panel(nullptr)
     , m_inspector_panel(nullptr)
+    , m_history(nullptr)
+    , m_history_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -87,6 +91,8 @@ Application::Application()
     , m_content_browser_was_visible(true)
     , m_console_was_visible(true)
     , m_inspector_was_visible(true)
+    , m_material_panel_was_visible(true)
+    , m_history_panel_was_visible(true)
 {
 }
 
@@ -947,6 +953,7 @@ void Application::SavePlayModePanelState()
     m_console_was_visible = m_console_panel ? m_console_panel->IsVisible() : false;
     m_inspector_was_visible = m_inspector_panel ? m_inspector_panel->IsVisible() : false;
     m_material_panel_was_visible = m_material_panel ? m_material_panel->IsVisible() : false;
+    m_history_panel_was_visible = m_history_panel ? m_history_panel->IsVisible() : false;
 
     if (m_script_editor)
         m_script_editor->SetVisible(false);
@@ -958,6 +965,8 @@ void Application::SavePlayModePanelState()
         m_inspector_panel->SetVisible(false);
     if (m_material_panel)
         m_material_panel->SetVisible(false);
+    if (m_history_panel)
+        m_history_panel->SetVisible(false);
 }
 
 void Application::RestorePlayModePanelState()
@@ -976,6 +985,8 @@ void Application::RestorePlayModePanelState()
         m_inspector_panel->SetVisible(m_inspector_was_visible);
     if (m_material_panel)
         m_material_panel->SetVisible(m_material_panel_was_visible);
+    if (m_history_panel)
+        m_history_panel->SetVisible(m_history_panel_was_visible);
 }
 
 void Application::DuplicateSelection()
@@ -992,9 +1003,13 @@ void Application::DuplicateSelection()
     // Clone under the source's own parent so a child's duplicate stays a
     // sibling inside the same subtree; a root duplicate lands at the root.
     // The serializer assigns fresh ids/uuid, so the clone is fully independent.
+    // The spawn is registered in the undo history: first Undo deletes the
+    // clone, Redo re-creates it from the serialized capture.
     Entity *clone = SceneSerializer::DuplicateEntity(*m_scene, *source, source->parent);
     if (clone)
     {
+        if (m_history)
+            m_history->PushSpawn(*clone, ("Duplicate '" + source->tag.tag + "'").c_str());
         m_selection->entity_id = clone->id;
         m_selection->entity_name = clone->tag.tag;
         m_scene_status = "Duplicated '" + clone->tag.tag + "'";
@@ -1166,6 +1181,26 @@ bool Application::Init(int width, int height, const char *title)
     m_scene_manager = new SceneManager();
     m_scene = m_scene_manager->GetScene();
 
+    // Global undo/redo history (Phase 22): CommandHistory owns the undo and
+    // redo stacks; every editor action (gizmo drags, inspector edits, entity
+    // deletes) routes through it, and the History panel renders its contents.
+    m_history = new CommandHistory(m_scene);
+
+    // Gizmo drags are undo transactions: BeginEntityEdit snapshots the entity
+    // when the drag starts, EndEntityEdit compares it with the final transform
+    // and pushes a single command when something actually changed.
+    m_gizmo->on_drag_start = [this](int entity_id) {
+        const char *desc = "Move";
+        if (m_gizmo->mode == GizmoMode::Rotate)
+            desc = "Rotate";
+        else if (m_gizmo->mode == GizmoMode::Scale)
+            desc = "Scale";
+        m_history->BeginEntityEdit(entity_id, desc);
+    };
+    m_gizmo->on_drag_end = [this]() {
+        m_history->EndEntityEdit();
+    };
+
     Entity &camera = m_scene->CreateEntity("Camera");
     camera.transform.position[1] = 2.0f;
     camera.transform.position[2] = 8.0f;
@@ -1263,10 +1298,11 @@ bool Application::Init(int width, int height, const char *title)
         std::make_shared<StatsPanel>(m_window)
     );
     m_panels.push_back(
-        std::make_shared<SceneHierarchyPanel>(m_selection, m_scene)
+        std::make_shared<SceneHierarchyPanel>(m_selection, m_scene, m_history)
     );
     m_inspector_panel = new InspectorPanel(m_selection, m_scene,
-                                           m_material_library, m_texture_library);
+                                           m_material_library, m_texture_library,
+                                           m_history);
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -1344,7 +1380,8 @@ bool Application::Init(int width, int height, const char *title)
     // load & spawn, script open, folder/file ops). Its window is docked by
     // name in both workspace presets; the command toggles visibility so the
     // docked slot can be dismissed and restored.
-    m_content_browser = new ContentBrowserPanel(m_scene_manager, m_script_editor);
+    m_content_browser = new ContentBrowserPanel(m_scene_manager, m_script_editor,
+                                                m_material_library, m_texture_library);
     m_content_browser->on_load_scene = [this](const std::string &path) { LoadSceneFile(path); };
     m_panels.push_back(std::shared_ptr<ContentBrowserPanel>(m_content_browser));
     cp.Register({ "Toggle Content Browser", "View", "", [this]() {
@@ -1369,6 +1406,22 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Toggle Material Editor", "View", "", [this]() {
         if (m_material_panel)
             m_material_panel->ToggleVisible();
+    } });
+
+    // History panel (Phase 22): read-only undo/redo stacks with Undo/Redo/
+    // Clear buttons. A dockable tab in the dev zone; the palette command and
+    // the Edit menu toggle it.
+    m_history_panel = new HistoryPanel(m_history);
+    m_panels.push_back(std::shared_ptr<HistoryPanel>(m_history_panel));
+    cp.Register({ "Toggle History Panel", "View", "", [this]() {
+        if (m_history_panel)
+            m_history_panel->ToggleVisible();
+    } });
+    cp.Register({ "Undo", "Edit", "Ctrl+Z", [this]() {
+        if (m_history) m_history->Undo();
+    } });
+    cp.Register({ "Redo", "Edit", "Ctrl+Y", [this]() {
+        if (m_history) m_history->Redo();
     } });
 
     // Flush anything that printed during startup (SDL/ImGui chatter, test
@@ -1472,6 +1525,23 @@ void Application::Run()
             DuplicateSelection();
         }
 
+        // Global undo/redo (Phase 22): Ctrl+Z pops the undo stack, Ctrl+Y
+        // (and Ctrl+Shift+Z) re-applies a popped command. Skipped while a text
+        // field is focused so typing "z" in an input never fires history, and
+        // while a gizmo drag is in flight (Ctrl also means hold-to-snap) so a
+        // snap-drag can't mid-cancel into an undo.
+        if (m_state == EngineState::Editor &&
+            m_gizmo && !m_gizmo->IsDragging() &&
+            !ImGui::GetIO().WantTextInput &&
+            m_history)
+        {
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
+                m_history->Undo();
+            else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
+                     ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
+                m_history->Redo();
+        }
+
         // --- Main menu bar (transport controls + editor chrome) ---
         const bool playing = (m_state == EngineState::Play);
 
@@ -1543,10 +1613,14 @@ void Application::Run()
 
                 // Workspace selector: switches the whole dock layout to the
                 // arrangement best suited for the current task. Managed by
-                // WorkspaceManager, which persists the active workspace.
+                // WorkspaceManager, which persists the active workspace. The
+                // menu is grouped by section — presets first, then layout
+                // utilities — and the active workspace carries a checkmark.
                 if (ImGui::BeginMenu("Workspace"))
                 {
                     const WorkspaceManager::Workspace current = m_workspace_manager.GetWorkspace();
+                    ImGui::TextDisabled("Workspace Presets");
+                    ImGui::Separator();
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::LevelDesign),
                             nullptr, current == WorkspaceManager::Workspace::LevelDesign))
@@ -1568,6 +1642,8 @@ void Application::Run()
                         m_script_editor->RequestDockCodeWindow(
                             m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
                     }
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Layout");
                     ImGui::Separator();
                     if (ImGui::MenuItem("Reset to Level Design"))
                     {
@@ -1580,6 +1656,29 @@ void Application::Run()
                     ImGui::EndMenu();
                 }
 
+                if (ImGui::BeginMenu("Edit"))
+                {
+                    ImGui::BeginDisabled(!(m_history && m_history->CanUndo()));
+                    if (ImGui::MenuItem("Undo", "Ctrl+Z"))
+                        m_history->Undo();
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!(m_history && m_history->CanRedo()));
+                    if (ImGui::MenuItem("Redo", "Ctrl+Y"))
+                        m_history->Redo();
+                    ImGui::EndDisabled();
+                    ImGui::Separator();
+                    ImGui::BeginDisabled(!(m_selection && m_selection->entity_id >= 0));
+                    if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D"))
+                        DuplicateSelection();
+                    ImGui::EndDisabled();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Clear Undo History"))
+                    {
+                        if (m_history)
+                            m_history->Clear();
+                    }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("File"))
                 {
                     if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
@@ -1635,6 +1734,13 @@ void Application::Run()
                         if (ImGui::MenuItem("Material Editor", nullptr,
                                             m_material_panel->IsVisible()))
                             m_material_panel->ToggleVisible();
+                    }
+
+                    if (m_history_panel)
+                    {
+                        if (ImGui::MenuItem("History", nullptr,
+                                            m_history_panel->IsVisible()))
+                            m_history_panel->ToggleVisible();
                     }
 
                     if (m_command_palette)

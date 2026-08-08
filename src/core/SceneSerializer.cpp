@@ -355,6 +355,27 @@ Entity *SceneSerializer::DuplicateEntity(Scene &scene, const Entity &entity,
     return &EntityTreeFromJson(scene, EntityTreeToJson(entity), parent);
 }
 
+json::Value SceneSerializer::SerializeEntityTree(const Entity &entity)
+{
+    // The prefab component encoding plus the root's uuid, so the undo history
+    // can re-spawn a deleted subtree with its persistent identity intact.
+    json::Value ent = EntityTreeToJson(entity);
+    ent.object.emplace_back("uuid", json::Value::MakeString(entity.uuid));
+    return ent;
+}
+
+Entity *SceneSerializer::SpawnEntityTree(Scene &scene, const json::Value &tree,
+                                         Entity *parent)
+{
+    if (!tree.IsObject())
+        return nullptr;
+    Entity &e = EntityTreeFromJson(scene, tree, parent);
+    const std::string uuid = tree.String("uuid", "");
+    if (!uuid.empty())
+        e.uuid = uuid;
+    return &e;
+}
+
 bool SceneSerializer::IsPrefabFile(const std::string &path)
 {
     json::Value root;

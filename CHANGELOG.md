@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.22.0-alpha] — 2026-08-08
+
+### Added
+
+- **Custom editor font**: `assets/fonts/Roboto-Regular.ttf` and `Roboto-Medium.ttf` are bundled and preferred by `Theme::LoadFonts` (`src/editor/Theme.cpp`) via a new `LoadFont` helper with a fallback chain (`assets/fonts/Roboto-*.ttf` → Segoe UI → Arial), so the editor renders in a modern sans-serif face with the exact same high-DPI pipeline as before. The mono font is unchanged.
+- **Global Undo/Redo** (`src/core/CommandHistory.{h,cpp}`): a Command-pattern history shared by every editor panel that mutates the scene.
+  - `Command` base + concrete commands: `EntityStateCommand` (whole-entity before/after snapshots), `DeleteEntityCommand` (subtree delete, restored byte-for-byte via `SceneSerializer::SerializeEntityTree`/`SpawnEntityTree`, live-id tracked through undo/redo cycles), and `SpawnEntityCommand` (undoable duplicate/asset spawn).
+  - `CommandHistory` exposes `Execute` (apply now + record), `Push` (register an already-applied action), `Undo`/`Redo`/`Clear`, `PushSpawn`, `ExecuteDelete`, and `BeginEntityEdit`/`EndEntityEdit` transaction pairs (a `Begin` supersedes any dangling session; `End` pushes nothing when the entity state is unchanged). Stacks are capped at 100 steps.
+  - `SceneSerializer` gains the public tree helpers `SerializeEntityTree` (components + children + root uuid) and `SpawnEntityTree` (re-materialize under a parent, restoring the uuid).
+- **Wiring**: gizmo drags are undo transactions (new `on_drag_start`/`on_drag_end` callbacks on `GizmoController`, `IsDragging()` guard); `Ctrl+Z`/`Ctrl+Y` (and `Ctrl+Shift+Z`) undo/redo in editor mode, text-input- and drag-guarded; **Edit** menu (Undo/Redo/Duplicate Selected/Clear Undo History) and View → **History**; `Ctrl+D` duplicates, Hierarchy create/duplicate/delete/re-parent/prefab-spawn, and Inspector property edits (transform drags, color, collider, camera, mesh/script/material/parent combos, drag-drop assigns, Reset actions) all route through history.
+- **History panel** (`src/editor/HistoryPanel.{h,cpp}`): read-only view of the undo/redo stacks with Undo/Redo/Clear buttons, docked as a tab in the development zone of every workspace (Material Editor → Console → History → Content Browser). Hidden during play mode like the other editor panels.
+- **Content Browser thumbnails**: texture assets render a live aspect-correct image preview in their grid cell (`ImGui::Image` via the SDL2 backend), `.mat` assets show a rounded swatch of their diffuse color, and the cell height grows to 64px to fit; other types keep the colored per-type badge.
+- **Workspace dropdown modernization**: the Workspace menu is grouped into **Workspace Presets** (with an active-workspace checkmark) and **Layout** sections with section headers and separators.
+
+### Changed
+
+- Inspector/SceneHierarchy/ContentBrowser constructors take the shared `CommandHistory*` (and `MaterialLibrary*`/`TextureLibrary*` for the Content Browser); `InspectorPanel` commits one undo step per user gesture via `IsItemDeactivatedAfterEdit`, not one per frame.
+- WorkspaceManager docks the History panel in the development-zone tab group; Material Editor stays first so Content Browser remains the active tab.
+- Version bump from 0.21.0-alpha to 0.22.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+- Verified with a headless undo/redo harness (Scene + SceneSerializer + Json + CommandHistory, no window): property-edit push/undo/redo, no-op edit pushes nothing, delete→undo re-spawns with state, undo/redo cycle stability, subtree delete/restore with re-parented children, duplicate spawn undo/redo, tree round-trip with uuid preservation, and Clear — all 25 checks pass. The engine rebuilds clean and the smoke run stays alive without crashing.
+
 ## [0.21.0-alpha] — 2026-08-08
 
 ### Added

@@ -8,6 +8,8 @@
 
 class SceneManager;
 class ScriptEditorPanel;
+class MaterialLibrary;
+class TextureLibrary;
 
 // Content Browser: a dockable asset-management panel over the project's
 // assets/ tree.
@@ -31,7 +33,8 @@ class ScriptEditorPanel;
 class ContentBrowserPanel : public EditorPanel
 {
 public:
-    ContentBrowserPanel(SceneManager *scene_manager, ScriptEditorPanel *script_editor);
+    ContentBrowserPanel(SceneManager *scene_manager, ScriptEditorPanel *script_editor,
+                        MaterialLibrary *material_library, TextureLibrary *texture_library);
 
     void OnImGuiRender(float dt) override;
 
@@ -63,6 +66,8 @@ private:
 
     SceneManager *m_scene_manager;
     ScriptEditorPanel *m_script_editor;
+    MaterialLibrary *m_material_library;
+    TextureLibrary *m_texture_library;
 
     std::string m_root;              // e.g. "assets" (relative to working dir)
     std::string m_current;           // currently browsed directory

@@ -3,6 +3,8 @@
 #include "SceneManager.h"
 #include "SceneSerializer.h"
 #include "editor/ScriptEditorPanel.h"
+#include "Material.h"
+#include "Texture.h"
 
 #include <imgui.h>
 
@@ -60,9 +62,13 @@ std::string ClipToWidth(const std::string &label, float max_width)
 } // namespace
 
 ContentBrowserPanel::ContentBrowserPanel(SceneManager *scene_manager,
-                                         ScriptEditorPanel *script_editor)
+                                         ScriptEditorPanel *script_editor,
+                                         MaterialLibrary *material_library,
+                                         TextureLibrary *texture_library)
     : m_scene_manager(scene_manager)
     , m_script_editor(script_editor)
+    , m_material_library(material_library)
+    , m_texture_library(texture_library)
     , m_root("assets")
 {
     m_current = m_root;
@@ -296,7 +302,7 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 
     const bool selected = (m_selected == path);
     if (ImGui::Selectable("##cell", selected, ImGuiSelectableFlags_DontClosePopups,
-                          ImVec2(cell_w, 42.0f)))
+                          ImVec2(cell_w, 64.0f)))
         m_selected = path;
 
     // Drag source: prefabs spawn into the Hierarchy, .mat / image assets
@@ -327,28 +333,67 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         OpenItem(path, kind);
 
-    // Overlay the icon badge + clipped label inside the cell.
+    // Overlay the preview badge/thumbnail + clipped label inside the cell.
+    // Textures render a live image preview (scaled to the preview box), .mat
+    // assets show a swatch of their diffuse color; everything else keeps the
+    // colored per-type badge.
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 pmin = ImGui::GetItemRectMin();
+    const float box = 44.0f;
+    const ImVec2 box_min(pmin.x + 10.0f, pmin.y + 8.0f);
+    const ImVec2 box_max(box_min.x + box, box_min.y + box);
 
-    ImU32 color;
-    switch (kind)
+    bool preview_drawn = false;
+
+    if (kind == FileKind::Texture && m_texture_library)
     {
-        case FileKind::Folder:   color = IM_COL32(210, 175, 90, 255); break;
-        case FileKind::Scene:    color = IM_COL32(90, 175, 220, 255); break;
-        case FileKind::Prefab:   color = IM_COL32(220, 120, 220, 255); break;
-        case FileKind::Script:   color = IM_COL32(110, 200, 110, 255); break;
-        case FileKind::Mesh:     color = IM_COL32(220, 140, 90, 255); break;
-        case FileKind::Material: color = IM_COL32(120, 180, 235, 255); break;
-        case FileKind::Texture:  color = IM_COL32(240, 210, 130, 255); break;
-        default:                 color = IM_COL32(150, 150, 150, 255); break;
+        if (const TextureInfo *info = m_texture_library->Load(path))
+        {
+            // Fit the image into the box preserving aspect ratio.
+            const float iw = (float)std::max(1, info->width);
+            const float ih = (float)std::max(1, info->height);
+            float w = box, h = box;
+            if (iw > ih) h = box * (ih / iw);
+            else         w = box * (iw / ih);
+            const ImVec2 tl(box_min.x + (box - w) * 0.5f, box_min.y + (box - h) * 0.5f);
+            dl->AddImage((ImTextureID)info->texture, tl, ImVec2(tl.x + w, tl.y + h));
+            preview_drawn = true;
+        }
     }
-    dl->AddRectFilled(ImVec2(pmin.x + 6.0f, pmin.y + 6.0f),
-                      ImVec2(pmin.x + 18.0f, pmin.y + 18.0f), color, 3.0f);
+    else if (kind == FileKind::Material && m_material_library)
+    {
+        if (const Material *mat = m_material_library->Load(path))
+        {
+            const ImU32 tint = ImGui::GetColorU32(
+                ImVec4(mat->color[0], mat->color[1], mat->color[2], mat->color[3]));
+            dl->AddRectFilled(box_min, box_max, tint, 4.0f);
+            dl->AddRect(box_min, box_max, ImGui::GetColorU32(ImGuiCol_Border), 4.0f);
+            preview_drawn = true;
+        }
+    }
 
-    dl->AddText(ImVec2(pmin.x + 6.0f, pmin.y + 24.0f),
+    if (!preview_drawn)
+    {
+        // Fallback per-type badge (small square in the preview box corner).
+        ImU32 color;
+        switch (kind)
+        {
+            case FileKind::Folder:   color = IM_COL32(210, 175, 90, 255); break;
+            case FileKind::Scene:    color = IM_COL32(90, 175, 220, 255); break;
+            case FileKind::Prefab:   color = IM_COL32(220, 120, 220, 255); break;
+            case FileKind::Script:   color = IM_COL32(110, 200, 110, 255); break;
+            case FileKind::Mesh:     color = IM_COL32(220, 140, 90, 255); break;
+            case FileKind::Material: color = IM_COL32(120, 180, 235, 255); break;
+            case FileKind::Texture:  color = IM_COL32(240, 210, 130, 255); break;
+            default:                 color = IM_COL32(150, 150, 150, 255); break;
+        }
+        dl->AddRectFilled(ImVec2(box_min.x, box_min.y),
+                          ImVec2(box_min.x + 12.0f, box_min.y + 12.0f), color, 3.0f);
+    }
+
+    dl->AddText(ImVec2(pmin.x + 10.0f, pmin.y + 56.0f),
                 ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_Text),
-                ClipToWidth(Leaf(path), cell_w - 14.0f).c_str());
+                ClipToWidth(Leaf(path), cell_w - 18.0f).c_str());
 
     ImGui::PopID();
 }

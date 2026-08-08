@@ -5,6 +5,7 @@
 #include "EngineMath.h"
 #include "Material.h"
 #include "Texture.h"
+#include "core/CommandHistory.h"
 
 #include <imgui.h>
 #include <algorithm>
@@ -105,12 +106,51 @@ bool ComponentHeader(const char *title, const char *action_label = nullptr,
 
 InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
                                MaterialLibrary *material_library,
-                               TextureLibrary *texture_library)
+                               TextureLibrary *texture_library,
+                               CommandHistory *history)
     : m_selection(selection)
     , m_scene(scene)
     , m_material_library(material_library)
     , m_texture_library(texture_library)
+    , m_history(history)
 {
+}
+
+void InspectorPanel::BeginEditSession(const char *description)
+{
+    if (!m_history || m_selection->entity_id < 0)
+        return;
+    if (m_edit_entity == m_selection->entity_id)
+        return;  // one open session covers the whole entity
+    if (m_edit_entity >= 0)
+        m_history->EndEntityEdit();  // commit / discard the stale session
+    m_history->BeginEntityEdit(m_selection->entity_id, description);
+    m_edit_entity = m_selection->entity_id;
+}
+
+void InspectorPanel::EndEditSessionIfReleased()
+{
+    if (!m_history || m_edit_entity < 0)
+        return;
+    if (ImGui::IsItemDeactivatedAfterEdit())
+    {
+        m_history->EndEntityEdit();
+        m_edit_entity = -1;
+    }
+}
+
+void InspectorPanel::CommitEdit(const char *description,
+                                const std::function<void()> &mutate)
+{
+    if (!m_history)
+    {
+        mutate();
+        return;
+    }
+    m_history->BeginEntityEdit(m_selection->entity_id, description);
+    mutate();
+    m_history->EndEntityEdit();
+    m_edit_entity = -1;  // resync: CommitEdit owned the transaction
 }
 
 void InspectorPanel::OnImGuiRender(float dt)
@@ -160,25 +200,38 @@ void InspectorPanel::OnImGuiRender(float dt)
     }
 
     // --- Identity header: rename the tag, show the stable id ---
+    BeginEditSession("Rename Tag");
     if (ImGui::InputText("Tag", m_tag_buffer, sizeof(m_tag_buffer)))
         entity->tag.tag = m_tag_buffer;
+    EndEditSessionIfReleased();
     ImGui::TextDisabled("Entity id %d", entity->id);
 
     ImGui::Spacing();
     ImGui::Separator();
 
     // --- Transform ---
-    if (ComponentHeader("Transform", "Reset", [entity]() {
+    if (ComponentHeader("Transform", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Transform");
         std::fill(std::begin(entity->transform.position), std::end(entity->transform.position), 0.0f);
         std::fill(std::begin(entity->transform.rotation), std::end(entity->transform.rotation), 0.0f);
         entity->transform.scale[0] = 1.0f;
         entity->transform.scale[1] = 1.0f;
         entity->transform.scale[2] = 1.0f;
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;  // resync: the reset owned the transaction
+        }
     }))
     {
+        BeginEditSession("Edit Transform");
         ImGui::DragFloat3("Position", entity->transform.position, 0.1f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat3("Rotation", entity->transform.rotation, 0.1f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat3("Scale",    entity->transform.scale,    0.1f);
+        EndEditSessionIfReleased();
 
         // Read-only world position: local transform folded through the parent
         // chain (WorldMatrix = ParentWorld * LocalMatrix), so a child reports
@@ -197,7 +250,9 @@ void InspectorPanel::OnImGuiRender(float dt)
                               entity->parent ? entity->parent->tag.tag.c_str() : "None"))
         {
             if (ImGui::Selectable("None", entity->parent == nullptr))
-                m_scene->SetParent(entity->id, -1);
+                CommitEdit("Re-parent", [this, entity]() {
+                    m_scene->SetParent(entity->id, -1);
+                });
 
             for (auto &candidate : m_scene->GetEntities())
             {
@@ -206,7 +261,9 @@ void InspectorPanel::OnImGuiRender(float dt)
                     continue;
                 bool is_current = entity->parent == candidate.get();
                 if (ImGui::Selectable(candidate->tag.tag.c_str(), is_current))
-                    m_scene->SetParent(entity->id, candidate->id);
+                    CommitEdit("Re-parent", [this, entity, &candidate]() {
+                        m_scene->SetParent(entity->id, candidate->id);
+                    });
             }
             ImGui::EndCombo();
         }
@@ -215,7 +272,9 @@ void InspectorPanel::OnImGuiRender(float dt)
     }
 
     // --- Material ---
-    if (ComponentHeader("Material", "Reset", [entity]() {
+    if (ComponentHeader("Material", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Material");
         entity->material.color[0] = 1.0f;
         entity->material.color[1] = 1.0f;
         entity->material.color[2] = 1.0f;
@@ -223,10 +282,18 @@ void InspectorPanel::OnImGuiRender(float dt)
         entity->material.active = true;
         entity->material.material_path.clear();
         entity->material.texture_path.clear();
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }))
     {
+        BeginEditSession("Edit Material");
         ImGui::ColorEdit4("Albedo", entity->material.color);
+        EndEditSessionIfReleased();
         ImGui::Checkbox("Active", &entity->material.active);
+        EndEditSessionIfReleased();
 
         // Resolve the effective texture/tint so the UI reflects what renders:
         // an assigned .mat asset wins, otherwise the direct texture_path.
@@ -246,12 +313,16 @@ void InspectorPanel::OnImGuiRender(float dt)
         if (ImGui::BeginCombo("Material Asset", mat_preview))
         {
             if (ImGui::Selectable("None", entity->material.material_path.empty()))
-                entity->material.material_path.clear();
+                CommitEdit("Assign Material", [this, entity]() {
+                    entity->material.material_path.clear();
+                });
             for (const std::string &path : ListMaterialAssets())
             {
                 bool selected = (entity->material.material_path == path);
                 if (ImGui::Selectable(path.c_str(), selected))
-                    entity->material.material_path = path;
+                    CommitEdit("Assign Material", [this, entity, path]() {
+                        entity->material.material_path = path;
+                    });
             }
             ImGui::EndCombo();
         }
@@ -279,7 +350,9 @@ void InspectorPanel::OnImGuiRender(float dt)
                     std::string error;
                     if (m_material_library &&
                         m_material_library->Create(name, new_mat, &error))
-                        entity->material.material_path = name;
+                        CommitEdit("Assign Material", [this, entity, name]() {
+                            entity->material.material_path = name;
+                        });
                     m_new_material_open = false;
                     m_new_material_buffer[0] = '\0';
                 }
@@ -298,12 +371,16 @@ void InspectorPanel::OnImGuiRender(float dt)
         if (ImGui::BeginCombo("Texture", tex_key.empty() ? "None" : tex_key.c_str()))
         {
             if (ImGui::Selectable("None", tex_key.empty()))
-                entity->material.texture_path.clear();
+                CommitEdit("Assign Texture", [this, entity]() {
+                    entity->material.texture_path.clear();
+                });
             for (const std::string &path : ListTextureAssets())
             {
                 bool selected = (tex_key == path);
                 if (ImGui::Selectable(path.c_str(), selected))
-                    entity->material.texture_path = path;
+                    CommitEdit("Assign Texture", [this, entity, path]() {
+                        entity->material.texture_path = path;
+                    });
             }
             ImGui::EndCombo();
         }
@@ -338,13 +415,17 @@ void InspectorPanel::OnImGuiRender(float dt)
             {
                 const char *data = (const char *)payload->Data;
                 if (data && *data)
-                    entity->material.material_path = data;
+                    CommitEdit("Assign Material", [this, entity, data]() {
+                        entity->material.material_path = data;
+                    });
             }
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kTexturePayload))
             {
                 const char *data = (const char *)payload->Data;
                 if (data && *data)
-                    entity->material.texture_path = data;
+                    CommitEdit("Assign Texture", [this, entity, data]() {
+                        entity->material.texture_path = data;
+                    });
             }
             ImGui::EndDragDropTarget();
         }
@@ -353,8 +434,15 @@ void InspectorPanel::OnImGuiRender(float dt)
 
     // --- Mesh ---
     if (ComponentHeader("Mesh", "Reset to Cube", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Mesh");
         entity->mesh.path.clear();
         m_mesh_buffer[0] = '\0';
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }))
     {
         const char *preview = entity->mesh.path.empty()
@@ -363,102 +451,158 @@ void InspectorPanel::OnImGuiRender(float dt)
         if (ImGui::BeginCombo("Asset", preview))
         {
             if (ImGui::Selectable("Cube Primitive", entity->mesh.path.empty()))
-                entity->mesh.path.clear();
+                CommitEdit("Change Mesh", [this, entity]() {
+                    entity->mesh.path.clear();
+                });
             for (const std::string &path : ListMeshAssets())
             {
                 bool selected = (entity->mesh.path == path);
                 if (ImGui::Selectable(path.c_str(), selected))
-                {
-                    entity->mesh.path = path;
-                    std::strncpy(m_mesh_buffer, path.c_str(), sizeof(m_mesh_buffer) - 1);
-                    m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
-                }
+                    CommitEdit("Change Mesh", [this, entity, path]() {
+                        entity->mesh.path = path;
+                        std::strncpy(m_mesh_buffer, path.c_str(), sizeof(m_mesh_buffer) - 1);
+                        m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
+                    });
             }
             ImGui::EndCombo();
         }
 
+        BeginEditSession("Change Mesh");
         if (ImGui::InputText("Path", m_mesh_buffer, sizeof(m_mesh_buffer)))
         {
             if (m_mesh_buffer[0] == '\0')
                 entity->mesh.path.clear();
         }
+        EndEditSessionIfReleased();
         if (ImGui::Button("Apply Path"))
-            entity->mesh.path = m_mesh_buffer;
+            CommitEdit("Change Mesh", [this, entity]() {
+                entity->mesh.path = m_mesh_buffer;
+            });
         ImGui::SameLine();
         if (ImGui::Button("Reset to Cube"))
-        {
-            entity->mesh.path.clear();
-            m_mesh_buffer[0] = '\0';
-        }
+            CommitEdit("Change Mesh", [this, entity]() {
+                entity->mesh.path.clear();
+                m_mesh_buffer[0] = '\0';
+            });
         ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
     }
 
     // --- Collider ---
-    if (ComponentHeader("Collider", "Reset", [entity]() {
+    if (ComponentHeader("Collider", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Collider");
         entity->collider.enabled = false;
         entity->collider.type = ColliderComponent::Type::Solid;
         entity->collider.center = { 0.0f, 0.0f, 0.0f };
         entity->collider.extents = { 0.5f, 0.5f, 0.5f };
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }))
     {
+        BeginEditSession("Edit Collider");
         ImGui::Checkbox("Enabled", &entity->collider.enabled);
+        EndEditSessionIfReleased();
         const char *preview = (entity->collider.type == ColliderComponent::Type::Trigger)
             ? "Trigger" : "Solid";
         if (ImGui::BeginCombo("Type", preview))
         {
             if (ImGui::Selectable("Solid", entity->collider.type == ColliderComponent::Type::Solid))
-                entity->collider.type = ColliderComponent::Type::Solid;
+                CommitEdit("Edit Collider", [this, entity]() {
+                    entity->collider.type = ColliderComponent::Type::Solid;
+                });
             if (ImGui::Selectable("Trigger", entity->collider.type == ColliderComponent::Type::Trigger))
-                entity->collider.type = ColliderComponent::Type::Trigger;
+                CommitEdit("Edit Collider", [this, entity]() {
+                    entity->collider.type = ColliderComponent::Type::Trigger;
+                });
             ImGui::EndCombo();
         }
         ImGui::DragFloat3("Center", &entity->collider.center.x, 0.1f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat3("Extents", &entity->collider.extents.x, 0.05f, 0.01f, 100.0f);
+        EndEditSessionIfReleased();
         ImGui::TextDisabled("Solid blocks solids; Trigger is pass-through (events only)");
     }
 
     // --- Script ---
     if (ComponentHeader("Script", "Clear", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Clear Script");
         entity->script.path.clear();
         m_script_buffer[0] = '\0';
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }))
     {
         // Text input writes the buffer live (like the mesh path field); Apply
         // commits it, and empty means no script. Scripts bind when the scene
         // enters play mode.
+        BeginEditSession("Change Script");
         ImGui::InputText("Path", m_script_buffer, sizeof(m_script_buffer));
+        EndEditSessionIfReleased();
         if (ImGui::Button("Apply Script"))
-        {
-            if (m_script_buffer[0] == '\0')
-                entity->script.path.clear();
-            else
-                entity->script.path = m_script_buffer;
-        }
+            CommitEdit("Change Script", [this, entity]() {
+                if (m_script_buffer[0] == '\0')
+                    entity->script.path.clear();
+                else
+                    entity->script.path = m_script_buffer;
+            });
         ImGui::SameLine();
         if (ImGui::Button("Clear"))
-        {
-            entity->script.path.clear();
-            m_script_buffer[0] = '\0';
-        }
+            CommitEdit("Change Script", [this, entity]() {
+                entity->script.path.clear();
+                m_script_buffer[0] = '\0';
+            });
         ImGui::TextDisabled("Lua file under assets/scripts/; empty = no script");
     }
 
     // --- Camera ---
-    if (ComponentHeader("Camera", "Reset", [entity]() {
+    if (ComponentHeader("Camera", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Camera");
         entity->camera.fov = 60.0f;
         entity->camera.near_plane = 0.1f;
         entity->camera.far_plane = 100.0f;
         entity->camera.pitch = 0.0f;
         entity->camera.yaw = 0.0f;
         entity->camera.primary = false;
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }))
     {
+        BeginEditSession("Edit Camera");
         ImGui::DragFloat("FOV", &entity->camera.fov, 0.5f, 1.0f, 179.0f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat("Pitch", &entity->camera.pitch, 0.1f, -89.0f, 89.0f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat("Yaw",   &entity->camera.yaw,   0.1f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat("Near", &entity->camera.near_plane, 0.01f, 0.001f, 10.0f);
+        EndEditSessionIfReleased();
         ImGui::DragFloat("Far",  &entity->camera.far_plane,  0.1f,  0.1f, 1000.0f);
+        EndEditSessionIfReleased();
         ImGui::Checkbox("Primary", &entity->camera.primary);
+        EndEditSessionIfReleased();
+    }
+
+    // If the panel loses the session target (selection cleared/changed without
+    // a commit), close the dangling transaction now so the next selection
+    // starts clean.
+    if (m_edit_entity >= 0 && m_history)
+    {
+        if (m_selection->entity_id != m_edit_entity)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
     }
 
     ImGui::End();

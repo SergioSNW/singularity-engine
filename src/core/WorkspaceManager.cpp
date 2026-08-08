@@ -25,6 +25,7 @@ static const char *kConsoleWindow = "Console";
 static const char *kStatsWindow = "Singularity Engine Stats";
 static const char *kScriptEditorWindow = "Script Editor";
 static const char *kMaterialEditorWindow = "Material Editor";
+static const char *kHistoryWindow = "History";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -79,6 +80,7 @@ void WorkspaceManager::RebuildLayout()
     auto dock_dev_zone = [](ImGuiID node) {
         ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
         ImGui::DockBuilderDockWindow(kConsoleWindow, node);
+        ImGui::DockBuilderDockWindow(kHistoryWindow, node);
         ImGui::DockBuilderDockWindow(kContentBrowserWindow, node);
     };
 

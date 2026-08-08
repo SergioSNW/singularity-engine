@@ -108,12 +108,15 @@ void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui, float base_mono)
     const float ui = base_ui * dpi_scale;
     const float mono = base_mono * dpi_scale;
 
-    fonts.ui = LoadFont("C:/Windows/Fonts/segoeui.ttf",
-                        "C:/Windows/Fonts/arial.ttf",
-                        "C:/Windows/Fonts/verdana.ttf", ui);
-    fonts.ui_bold = LoadFont("C:/Windows/Fonts/seguisb.ttf",
-                             "C:/Windows/Fonts/arialbd.ttf",
-                             "C:/Windows/Fonts/verdana.ttf", ui);
+    // The bundled Roboto (assets/fonts, copied next to the executable) is the
+    // preferred UI face — a clean, modern sans-serif — with the Windows system
+    // fonts as fallback so the editor still opens without the assets folder.
+    fonts.ui = LoadFont("assets/fonts/Roboto-Regular.ttf",
+                        "C:/Windows/Fonts/segoeui.ttf",
+                        "C:/Windows/Fonts/arial.ttf", ui);
+    fonts.ui_bold = LoadFont("assets/fonts/Roboto-Medium.ttf",
+                             "C:/Windows/Fonts/seguisb.ttf",
+                             "C:/Windows/Fonts/arialbd.ttf", ui);
     fonts.mono = LoadFont("C:/Windows/Fonts/CascadiaMono.ttf",
                           "C:/Windows/Fonts/consola.ttf",
                           "C:/Windows/Fonts/cour.ttf", mono);

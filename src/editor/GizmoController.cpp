@@ -278,6 +278,8 @@ void GizmoController::Update(const GizmoFrame &f)
         {
             m_dragging = false;
             m_drag_axis = -1;
+            if (on_drag_end)
+                on_drag_end();
             return;
         }
         Entity *sel = f.scene->GetEntityById(f.selection->entity_id);
@@ -415,6 +417,9 @@ void GizmoController::StartDrag(const GizmoFrame &f, Entity &entity)
         if (AxisTFromRay(m_center, m_axis_world[m_drag_axis], MakeRay(f), t))
             m_t_start = t;
     }
+
+    if (on_drag_start)
+        on_drag_start(entity.id);
 }
 
 void GizmoController::ApplyDrag(const GizmoFrame &f, Entity &entity)

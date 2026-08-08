@@ -45,4 +45,14 @@ public:
     // Returns the clone's root entity (nullptr only if the source is invalid).
     static Entity *DuplicateEntity(Scene &scene, const Entity &entity,
                                    Entity *parent = nullptr);
+
+    // --- Undo / history support (Phase 22) ---
+    // Capture an entity subtree as JSON (components + children, plus each
+    // node's uuid) so a deleted entity can be restored byte-for-byte by the
+    // editor's undo history.
+    static json::Value SerializeEntityTree(const Entity &entity);
+    // Re-spawn a captured entity subtree under `parent` (nullptr = scene
+    // root), restoring the stored uuids. Returns the root entity.
+    static Entity *SpawnEntityTree(Scene &scene, const json::Value &tree,
+                                   Entity *parent = nullptr);
 };
