@@ -60,6 +60,12 @@ const Colors &DefaultColors();
 // from drifting across repeated calls (UI-scale changes, live color edits).
 void ConfigureStyle(float ui_scale, const Colors &colors);
 
+// Accent-styled colors for a window's primary action button (Save, Create).
+// Push before the button and Pop immediately after; derived from the accent
+// token most recently applied by ConfigureStyle().
+void PushPrimaryButtonColor();
+void PopPrimaryButtonColor();
+
 // Persist the current token set to `path` (editor_theme.json) so a custom
 // color scheme survives restarts. Returns true on success.
 bool SaveThemeToFile(const Colors &colors, const char *path = "editor_theme.json");

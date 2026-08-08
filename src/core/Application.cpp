@@ -24,6 +24,7 @@
 #include "editor/ContentBrowserPanel.h"
 #include "editor/ConsolePanel.h"
 #include "editor/InspectorPanel.h"
+#include "editor/MaterialPanel.h"
 #include "core/Console.h"
 
 #include <SDL.h>
@@ -945,6 +946,7 @@ void Application::SavePlayModePanelState()
     m_content_browser_was_visible = m_content_browser ? m_content_browser->IsVisible() : false;
     m_console_was_visible = m_console_panel ? m_console_panel->IsVisible() : false;
     m_inspector_was_visible = m_inspector_panel ? m_inspector_panel->IsVisible() : false;
+    m_material_panel_was_visible = m_material_panel ? m_material_panel->IsVisible() : false;
 
     if (m_script_editor)
         m_script_editor->SetVisible(false);
@@ -954,6 +956,8 @@ void Application::SavePlayModePanelState()
         m_console_panel->SetVisible(false);
     if (m_inspector_panel)
         m_inspector_panel->SetVisible(false);
+    if (m_material_panel)
+        m_material_panel->SetVisible(false);
 }
 
 void Application::RestorePlayModePanelState()
@@ -970,6 +974,8 @@ void Application::RestorePlayModePanelState()
         m_console_panel->SetVisible(m_console_was_visible);
     if (m_inspector_panel)
         m_inspector_panel->SetVisible(m_inspector_was_visible);
+    if (m_material_panel)
+        m_material_panel->SetVisible(m_material_panel_was_visible);
 }
 
 void Application::DuplicateSelection()
@@ -1355,6 +1361,16 @@ bool Application::Init(int width, int height, const char *title)
             m_console_panel->ToggleVisible();
     } });
 
+    // Material Editor: dedicated dockable authoring panel over assets/materials/
+    // (diffuse tint, texture slot + live preview, shininess, create/save). The
+    // primary zone of the Shading & Assets workspace; a tab elsewhere.
+    m_material_panel = new MaterialPanel(m_material_library, m_texture_library);
+    m_panels.push_back(std::shared_ptr<MaterialPanel>(m_material_panel));
+    cp.Register({ "Toggle Material Editor", "View", "", [this]() {
+        if (m_material_panel)
+            m_material_panel->ToggleVisible();
+    } });
+
     // Flush anything that printed during startup (SDL/ImGui chatter, test
     // output) so the first rendered frame already shows it.
     Console::Instance().DrainPipes();
@@ -1612,6 +1628,13 @@ void Application::Run()
                         if (ImGui::MenuItem("Editor Settings", nullptr,
                                             m_settings_panel->IsVisible()))
                             m_settings_panel->ToggleVisible();
+                    }
+
+                    if (m_material_panel)
+                    {
+                        if (ImGui::MenuItem("Material Editor", nullptr,
+                                            m_material_panel->IsVisible()))
+                            m_material_panel->ToggleVisible();
                     }
 
                     if (m_command_palette)

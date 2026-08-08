@@ -57,6 +57,13 @@ public:
     const Material* Create(const std::string &filename, const Material &material,
                            std::string *error = nullptr);
 
+    // Update an existing material asset in place: rewrites
+    // assets/materials/<filename> and refreshes every cached copy (both the
+    // bare-filename and prefixed keys) so edits appear immediately on the next
+    // render. Returns nullptr and sets `error` on failure.
+    const Material* Save(const std::string &filename, const Material &material,
+                         std::string *error = nullptr);
+
 private:
     std::map<std::string, Material> m_materials;  // keyed by caller path
 };

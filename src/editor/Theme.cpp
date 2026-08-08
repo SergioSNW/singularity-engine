@@ -55,7 +55,7 @@ const Colors &DefaultColors()
         {0.133f, 0.145f, 0.173f, 1.0f},   // popup_bg  0x22252C
         {0.141f, 0.153f, 0.180f, 1.0f},   // frame_bg  0x24272E
         {0.788f, 0.804f, 0.839f, 1.0f},   // text      0xC9CDD6
-        {0.357f, 0.486f, 0.980f, 1.0f},   // accent    0x5B7CFA
+        {0.302f, 0.553f, 1.000f, 1.0f},   // accent    0x4D8DFF
     };
     return defaults;
 }
@@ -65,6 +65,10 @@ static const ImVec4 Green        = rgb(0x3E, 0xA0, 0x5E);
 static const ImVec4 GreenHovered = rgb(0x4C, 0xB4, 0x6E);
 static const ImVec4 Red          = rgb(0xB5, 0x4A, 0x4A);
 static const ImVec4 RedHovered   = rgb(0xC9, 0x5C, 0x5C);
+
+// Accent token applied by the most recent ConfigureStyle() call, captured so
+// PushPrimaryButtonColor() can tint a control without re-deriving the palette.
+static ImVec4 s_accent;
 
 float ComputeDpiScale(void *window, void *renderer)
 {
@@ -123,31 +127,33 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     // theme edits) can never drift the palette or metrics.
     style = ImGuiStyle();
 
-    // --- Metrics: refined rounding, generous but tight spacing ---
-    style.WindowPadding    = ImVec2(10.0f, 10.0f);
-    style.FramePadding     = ImVec2(7.0f, 5.0f);
-    style.CellPadding      = ImVec2(6.0f, 5.0f);
-    style.ItemSpacing      = ImVec2(8.0f, 6.0f);
-    style.ItemInnerSpacing = ImVec2(6.0f, 6.0f);
+    // --- Metrics: breathable padding, generous spacing, soft rounding ---
+    style.WindowPadding    = ImVec2(16.0f, 16.0f);
+    style.FramePadding     = ImVec2(8.0f, 6.0f);
+    style.CellPadding      = ImVec2(8.0f, 6.0f);
+    style.ItemSpacing      = ImVec2(10.0f, 8.0f);
+    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
     style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
-    style.IndentSpacing    = 18.0f;
-    style.ScrollbarSize    = 13.0f;
-    style.GrabMinSize      = 9.0f;
+    style.IndentSpacing    = 22.0f;
+    style.ScrollbarSize    = 14.0f;
+    style.GrabMinSize      = 10.0f;
 
-    style.WindowBorderSize   = 1.0f;
-    style.ChildBorderSize    = 1.0f;
+    // Borders are toned down to near-invisible hairlines; surfaces separate
+    // through rounding and subtle color contrast instead of hard outlines.
+    style.WindowBorderSize   = 0.0f;
+    style.ChildBorderSize    = 0.0f;
     style.PopupBorderSize    = 1.0f;
     style.FrameBorderSize    = 0.0f;
-    style.TabBorderSize      = 1.0f;
+    style.TabBorderSize      = 0.0f;
 
-    style.WindowRounding    = 8.0f;
-    style.ChildRounding     = 6.0f;
-    style.FrameRounding     = 4.0f;
-    style.PopupRounding     = 8.0f;
-    style.ScrollbarRounding = 8.0f;
-    style.GrabRounding      = 5.0f;
-    style.TabRounding       = 4.0f;
-    style.TabBarOverlineSize = 2.0f; // selected-tab highlight
+    style.WindowRounding    = 12.0f;
+    style.ChildRounding     = 8.0f;
+    style.FrameRounding     = 6.0f;
+    style.PopupRounding     = 12.0f;
+    style.ScrollbarRounding = 10.0f;
+    style.GrabRounding      = 6.0f;
+    style.TabRounding       = 8.0f;
+    style.TabBarOverlineSize = 3.0f; // selected-tab highlight
 
     style.WindowTitleAlign    = ImVec2(0.5f, 0.5f);
     style.WindowMenuButtonPosition = ImGuiDir_Right;
@@ -161,41 +167,46 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     const ImVec4 accent  = V4(colors.accent);
 
     const ImVec4 textMuted   = Lerp(text, window, 0.45f);
-    const ImVec4 textBright  = Lerp(text, ImVec4(1, 1, 1, 1), 0.20f);
+    const ImVec4 textBright  = Lerp(text, ImVec4(1, 1, 1, 1), 0.24f);
 
     const ImVec4 menuBg      = Darken(window, 0.05f);
     const ImVec4 titleBg     = Darken(window, 0.02f);
-    const ImVec4 titleActive = Lerp(window, accent, 0.05f);
+    const ImVec4 titleActive = Lerp(window, accent, 0.07f);
 
     const ImVec4 frameHovered = Lerp(frame, ImVec4(1, 1, 1, 1), 0.06f);
     const ImVec4 frameActive  = Lerp(frame, ImVec4(1, 1, 1, 1), 0.12f);
 
+    // Buttons warm up toward the accent on hover/active so any button reads as
+    // a professional, reactive control; the primary-action tint lives in
+    // PushPrimaryButtonColor().
     const ImVec4 button        = Lerp(frame, ImVec4(1, 1, 1, 1), 0.03f);
-    const ImVec4 buttonHovered = Lerp(frame, ImVec4(1, 1, 1, 1), 0.12f);
-    const ImVec4 buttonActive  = Lerp(frame, ImVec4(1, 1, 1, 1), 0.22f);
+    const ImVec4 buttonHovered = Lerp(frame, accent, 0.20f);
+    const ImVec4 buttonActive  = Lerp(frame, accent, 0.32f);
 
-    const ImVec4 border        = Lerp(window, ImVec4(1, 1, 1, 1), 0.09f);
-    const ImVec4 borderBright  = Lerp(window, ImVec4(1, 1, 1, 1), 0.16f);
-    const ImVec4 separator     = Lerp(window, ImVec4(1, 1, 1, 1), 0.07f);
+    const ImVec4 border        = Lerp(window, ImVec4(1, 1, 1, 1), 0.07f);
+    const ImVec4 borderBright  = Lerp(window, ImVec4(1, 1, 1, 1), 0.13f);
+    const ImVec4 separator     = Lerp(window, ImVec4(1, 1, 1, 1), 0.06f);
 
     const ImVec4 scrollbarBg     = Darken(window, 0.03f);
-    const ImVec4 scrollbarGrab   = Lerp(window, ImVec4(1, 1, 1, 1), 0.24f);
-    const ImVec4 scrollbarActive = Lerp(window, ImVec4(1, 1, 1, 1), 0.32f);
+    const ImVec4 scrollbarGrab   = Lerp(window, ImVec4(1, 1, 1, 1), 0.26f);
+    const ImVec4 scrollbarActive = Lerp(window, ImVec4(1, 1, 1, 1), 0.34f);
 
     const ImVec4 accentHovered = Lighten(accent, 0.06f);
     const ImVec4 accentActive  = Darken(accent, 0.08f);
 
     // Accent tints (alpha composited over the window background).
-    const ImVec4 accentSoft   = Over(window, ImVec4(accent.x, accent.y, accent.z, 40.0f / 255.0f));
-    const ImVec4 accentTint   = Over(window, ImVec4(accent.x, accent.y, accent.z, 80.0f / 255.0f));
-    const ImVec4 accentStrong = Over(window, ImVec4(accent.x, accent.y, accent.z, 130.0f / 255.0f));
+    const ImVec4 accentSoft   = Over(window, ImVec4(accent.x, accent.y, accent.z, 48.0f / 255.0f));
+    const ImVec4 accentTint   = Over(window, ImVec4(accent.x, accent.y, accent.z, 96.0f / 255.0f));
+    const ImVec4 accentStrong = Over(window, ImVec4(accent.x, accent.y, accent.z, 160.0f / 255.0f));
 
     const ImVec4 tab           = Darken(window, 0.02f);
-    const ImVec4 tabHovered    = Lerp(window, accent, 0.12f);
-    const ImVec4 tabSelected   = Lerp(window, accent, 0.08f);
+    const ImVec4 tabHovered    = Lerp(window, accent, 0.16f);
+    const ImVec4 tabSelected   = Lerp(window, accent, 0.12f);
     const ImVec4 tabDimmed     = Lerp(window, ImVec4(1, 1, 1, 1), 0.01f);
 
-    const ImVec4 tableHeader   = Lerp(window, ImVec4(1, 1, 1, 1), 0.06f);
+    const ImVec4 tableHeader   = Lerp(window, ImVec4(1, 1, 1, 1), 0.08f);
+
+    s_accent = accent;
 
     ImVec4 *colors_out = style.Colors;
 
@@ -283,6 +294,18 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
 
     // Apply the user's global UI zoom to every metric.
     style.ScaleAllSizes(ui_scale);
+}
+
+void PushPrimaryButtonColor()
+{
+    ImGui::PushStyleColor(ImGuiCol_Button, s_accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Lighten(s_accent, 0.10f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, Darken(s_accent, 0.10f));
+}
+
+void PopPrimaryButtonColor()
+{
+    ImGui::PopStyleColor(3);
 }
 
 bool SaveThemeToFile(const Colors &colors, const char *path)

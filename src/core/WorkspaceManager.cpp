@@ -24,6 +24,7 @@ static const char *kContentBrowserWindow = "Content Browser";
 static const char *kConsoleWindow = "Console";
 static const char *kStatsWindow = "Singularity Engine Stats";
 static const char *kScriptEditorWindow = "Script Editor";
+static const char *kMaterialEditorWindow = "Material Editor";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -72,9 +73,11 @@ void WorkspaceManager::RebuildLayout()
         ImGui::DockBuilderDockWindow(kInspectorWindow, node);
     };
 
-    // Helper for the Content Browser + Console tab group (Console first, so
-    // the Content Browser is the active tab).
-    auto dock_browser_console = [](ImGuiID node) {
+    // Helper for the bottom "Development Zone" tab group: Material Editor,
+    // Console and Content Browser share one tabbed region (Material Editor
+    // docked first so the Content Browser stays the active tab).
+    auto dock_dev_zone = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
         ImGui::DockBuilderDockWindow(kConsoleWindow, node);
         ImGui::DockBuilderDockWindow(kContentBrowserWindow, node);
     };
@@ -102,7 +105,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
             dock_right_rail(right);
             ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_left);
-            dock_browser_console(dev_right);
+            dock_dev_zone(dev_right);
 
             // The code window title embeds the file name, so it cannot be
             // docked by name here; the Application routes it through
@@ -112,21 +115,26 @@ void WorkspaceManager::RebuildLayout()
         }
         case Workspace::ShadingAndAssets:
         {
-            // Shading & Assets workspace: a wide right rail devoted to
-            // materials/textures (Inspector + Settings + Content Browser
-            // tabs), a bottom Console + Stats tab group, and a maximized
-            // viewport for inspecting shaded geometry.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.70f, &top, &bottom);
+            // Shading & Assets workspace: the Material Editor owns the right
+            // rail as the primary material-authoring zone, with the Inspector
+            // + Editor Settings + Content Browser tabbed beneath it, and a
+            // bottom Console + Stats tab group. The viewport is maximized for
+            // inspecting shaded geometry.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.68f, &top, &bottom);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.16f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, &right, &center);
+
+            ImGuiID mat_top, mat_bottom;
+            ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.58f, &mat_top, &mat_bottom);
 
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            ImGui::DockBuilderDockWindow(kMaterialEditorWindow, mat_top);
 
-            // Asset-focused right rail: Content Browser is the active tab.
-            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
-            ImGui::DockBuilderDockWindow(kInspectorWindow, right);
-            ImGui::DockBuilderDockWindow(kContentBrowserWindow, right);
+            // Asset-focused right-rail group: Content Browser is the active tab.
+            ImGui::DockBuilderDockWindow(kSettingsWindow, mat_bottom);
+            ImGui::DockBuilderDockWindow(kInspectorWindow, mat_bottom);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, mat_bottom);
 
             // Bottom zone: Console is the active tab over the stats.
             ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
@@ -155,7 +163,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
             dock_right_rail(right);
-            dock_browser_console(bottom_left);
+            dock_dev_zone(bottom_left);
             ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_right);
             break;
         }

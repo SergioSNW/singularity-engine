@@ -22,9 +22,10 @@
 //                        window (center), and the Content Browser + Console
 //                        tabs (right), so the whole IDE is part of the unified
 //                        dock.
-//   * ShadingAndAssets — an asset/material workspace: a wide right rail of
-//                        Inspector + Editor Settings + Content Browser tabs and
-//                        a bottom Console + Stats tab group, maximizing the
+//   * ShadingAndAssets — an asset/material workspace: the Material Editor is
+//                        the primary right-rail authoring zone, with Inspector
+//                        + Editor Settings + Content Browser tabbed beneath it
+//                        and a bottom Console + Stats tab group, maximizing the
 //                        viewport for inspecting shaded geometry.
 //
 // Tab groups conserve screen real estate: several windows docked into one node

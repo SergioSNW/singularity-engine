@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.21.0-alpha] — 2026-08-08
+
+### Added
+
+- **`MaterialPanel`** (`src/editor/MaterialPanel.{h,cpp}`): a dedicated dockable **Material Editor** for inspecting, creating and modifying `.mat` assets. A two-pane layout — scrollable asset list on the left, property editor on the right — exposes the **diffuse color tint** (`ColorEdit4`), **texture slot** selection (None + every `assets/textures/` image), a **live `ImGui::Image` preview** with dimensions, and a shininess knob. Dirty edits are marked, then persisted by a primary **Save Material** button (with Revert); **Create** builds a fresh white `.mat` from a typed file name.
+- **`MaterialLibrary::Save(filename, material)`** (`src/core/Material.{h,cpp}`): rewrites `assets/materials/<filename>` and refreshes every cached copy (both the bare-filename and prefixed keys) so meshes re-tint on the next rendered frame — no restart or asset reload needed. Reloading through a fresh library instance returns the edited values, so the .mat file stays the single source of truth.
+- **Workspace integration**: the Material Editor is docked as the **primary authoring zone** of the **Shading & Assets** workspace (full right rail, with Inspector + Editor Settings + Content Browser tabbed beneath it); in **Level Design** and **Scripting** it joins the bottom development-zone tab group. It also gets a **Toggle Material Editor** command-palette entry and a View-menu item, and is hidden during play mode like the other editor panels.
+
+### Changed
+
+- **UI modernization pass** in `Theme::ConfigureStyle` (`src/editor/Theme.cpp`), giving the editor a breathable, professional studio feel:
+  - **Metrics**: window padding 10→16, frame padding 7×5→8×6, item spacing 8×6→10×8, indent 18→22, scrollbar 13→14.
+  - **Rounding** softened: window 8→12, child 6→8, frame 4→6, popup 8→12, scrollbar 8→10, tab 4→8; the selected-tab overline grows to 3px.
+  - **Borders** toned down to hairline status: window/child/tab borders go to 0, relying on contrast and rounding instead of hard outlines.
+  - **Palette**: default accent becomes a clearer studio blue (0x5B7CFA → 0x4D8DFF); button hover/active warm toward the accent, tab hover/selected tints and selection-header tints are strengthened, and borders/separators are softened.
+- **`Theme::PushPrimaryButtonColor()` / `PopPrimaryButtonColor()`**: a reusable accent-styled button palette for primary actions (Save, Create), derived from the last configured accent token.
+
+### Fixed
+
+- (none)
+
+- Version bump from 0.20.0-alpha to 0.21.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
 ## [0.20.0-alpha] — 2026-08-07
 
 ### Added

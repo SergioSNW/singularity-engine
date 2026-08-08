@@ -152,3 +152,41 @@ const Material* MaterialLibrary::Create(const std::string &filename,
     if (error) error->clear();
     return &res.first->second;
 }
+
+const Material* MaterialLibrary::Save(const std::string &filename,
+                                      const Material &material, std::string *error)
+{
+    const std::string dir = "assets/materials";
+    const std::string path = dir + "/" + filename;
+
+    Material copy = material;
+    if (copy.name.empty())
+        copy.name = std::filesystem::path(filename).stem().string();
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out)
+    {
+        if (error) *error = "cannot write material file '" + path + "'";
+        return nullptr;
+    }
+    out << MaterialToJson(copy);
+    out.close();
+    if (!out.good())
+    {
+        if (error) *error = "failed writing material file '" + path + "'";
+        return nullptr;
+    }
+
+    // Refresh every cached copy of this asset: Load() caches under the bare
+    // filename while Create() uses the prefixed path, so both keys may exist.
+    auto it = m_materials.find(path);
+    if (it != m_materials.end())
+        it->second = copy;
+    it = m_materials.find(filename);
+    if (it != m_materials.end())
+        it->second = copy;
+
+    if (error) error->clear();
+    const Material *result = Get(path);
+    return result ? result : Get(filename);
+}
