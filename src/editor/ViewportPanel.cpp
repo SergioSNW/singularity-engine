@@ -1,5 +1,6 @@
 #include "ViewportPanel.h"
 #include <SDL.h>
+#include <imgui_internal.h>  // BeginDragDropTargetCustom (moved out of imgui.h)
 
 ViewportPanel::ViewportPanel()
     : m_viewport_width(0)
@@ -60,6 +61,29 @@ void ViewportPanel::OnImGuiRender(float dt)
                    ImGui::GetCursorScreenPos().y + size.y),
             color
         );
+    }
+
+    // Drop target for asset payloads from the Content Browser: dropping a
+    // prefab/mesh spawns it at the cursor, dropping a material/texture assigns
+    // it to the current selection. Hand-rolled with a custom rect + explicit id
+    // because this ImGui build's Image() registers the item with id 0, so the
+    // plain BeginDragDropTarget() id-from-rect fallback is not dependable here.
+    if (ImGui::BeginDragDropTargetCustom(ImRect(m_image_min,
+        ImVec2(m_image_min.x + m_image_size.x, m_image_min.y + m_image_size.y)),
+        ImGui::GetID("##viewport_drop")))
+    {
+        static const char *kDropTypes[] = { "PREFAB", "MESH", "MATERIAL", "TEXTURE" };
+        for (const char *type : kDropTypes)
+        {
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(type))
+            {
+                const char *data = (const char *)payload->Data;
+                if (on_drop && data && *data)
+                    on_drop(type, data);
+                break;
+            }
+        }
+        ImGui::EndDragDropTarget();
     }
 
     ImGui::End();

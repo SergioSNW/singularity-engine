@@ -82,6 +82,20 @@ private:
     // its current parent, then select the clone. No-op without a selection.
     void DuplicateSelection();
 
+    // Phase 23 drop ingestion:
+    //   ProcessExternalDrops   - routes queued SDL_DROPFILE batches into the
+    //                            assets tree after the frame (Content Browser
+    //                            refresh), and spawns mesh entities at the
+    //                            drop point when it lands over the viewport.
+    //   SpawnMeshEntity        - create + select an entity carrying `mesh_path`.
+    //   ComputeDropWorldPos    - unproject a viewport pixel onto the y=0 grid
+    //                            plane (same ray math as the gizmo controller).
+    //   ComputeDropWorldPosFromMouse - convenience: drop pos from GetMousePos.
+    void ProcessExternalDrops();
+    void SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position);
+    bool ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h, Vec3 &out);
+    bool ComputeDropWorldPosFromMouse(Vec3 &out);
+
     // Resolve the texture that should shade `entity`: honors an assigned .mat
     // asset first, then a direct texture_path, then returns nullptr (flat
     // shading). `out_tint` receives the effective RGBA tint (asset color or
@@ -150,4 +164,9 @@ private:
     // rotate/scale gizmos, plus the persistent snap toggle. Wire
     // GizmoFrame::snap_active = m_snap.enabled || Ctrl-held.
     SnapSettings m_snap;
+
+    // OS file-drop queue (Phase 23): SDL_DROPFILE events push their paths here
+    // during the event pump; the editor processes the batch after the ImGui
+    // frame has drawn (routing into the assets tree, spawning viewport meshes).
+    std::vector<std::string> m_pending_drops;
 };

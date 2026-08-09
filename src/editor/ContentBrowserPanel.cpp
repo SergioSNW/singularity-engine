@@ -305,12 +305,20 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
                           ImVec2(cell_w, 64.0f)))
         m_selected = path;
 
-    // Drag source: prefabs spawn into the Hierarchy, .mat / image assets
-    // assign onto the Inspector's Material section. Payload carries the path.
+    // Drag source: prefabs spawn into the Hierarchy, mesh assets spawn as
+    // entities there or on the viewport, .mat / image assets assign onto the
+    // Inspector's Material section. Payload carries the path.
     if (kind == FileKind::Prefab && ImGui::BeginDragDropSource(
             ImGuiDragDropFlags_SourceAllowNullID))
     {
         ImGui::SetDragDropPayload("PREFAB", path.c_str(), path.size() + 1, ImGuiCond_Once);
+        ImGui::TextUnformatted(Leaf(path).c_str());
+        ImGui::EndDragDropSource();
+    }
+    if (kind == FileKind::Mesh && ImGui::BeginDragDropSource(
+            ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        ImGui::SetDragDropPayload("MESH", path.c_str(), path.size() + 1, ImGuiCond_Once);
         ImGui::TextUnformatted(Leaf(path).c_str());
         ImGui::EndDragDropSource();
     }
@@ -572,18 +580,50 @@ void ContentBrowserPanel::OpenItem(const std::string &path, FileKind kind)
 
 void ContentBrowserPanel::OnImGuiRender(float dt)
 {
-    (void)dt;
+    if (m_import_flash_timer > 0.0f)
+        m_import_flash_timer -= dt;
 
     if (!m_visible)
         return;
 
     ImGui::Begin("Content Browser", nullptr, ImGuiWindowFlags_NoCollapse);
 
+    // Record the window rect for OS file-drop routing (the editor checks
+    // whether a dropped file landed over this panel before choosing a folder).
+    m_window_min = ImGui::GetWindowPos();
+    m_window_max = ImVec2(m_window_min.x + ImGui::GetWindowWidth(),
+                          m_window_min.y + ImGui::GetWindowHeight());
+
     DrawFolderTree();
     ImGui::SameLine();
     DrawFileGrid();
 
+    // Transient overlay after an OS file drop imported assets (Phase 23).
+    if (m_import_flash_timer > 0.0f)
+    {
+        const char *label = m_import_flash_count == 1
+            ? "Imported 1 file"
+            : ("Imported " + std::to_string(m_import_flash_count) + " files").c_str();
+        const ImVec2 size = ImGui::CalcTextSize(label);
+        const ImVec2 center = ImVec2(m_window_min.x + (m_window_max.x - m_window_min.x) * 0.5f,
+                                     m_window_min.y + 40.0f);
+        ImGui::SetCursorScreenPos(ImVec2(center.x - size.x * 0.5f, center.y));
+        ImGui::Text("%s", label);
+    }
+
     ImGui::End();
 
     DrawConfirmDeleteModal();
+}
+
+void ContentBrowserPanel::FlashImportResult(int imported)
+{
+    m_import_flash_count = imported;
+    m_import_flash_timer = 2.0f;
+}
+
+bool ContentBrowserPanel::IsPointInside(const ImVec2 &screen_pos) const
+{
+    return screen_pos.x >= m_window_min.x && screen_pos.x <= m_window_max.x &&
+           screen_pos.y >= m_window_min.y && screen_pos.y <= m_window_max.y;
 }

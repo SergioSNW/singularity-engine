@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.22.0-alpha — Advanced UI Polish & Workflow Suite
+v0.23.0-alpha — OS File Drop Ingestion & Viewport Drag-Drop Spawning
 
 ## Dependencies
 

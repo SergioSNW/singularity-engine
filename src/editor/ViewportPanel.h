@@ -3,6 +3,8 @@
 #include "EditorPanel.h"
 #include <imgui.h>
 
+#include <functional>
+
 struct SDL_Texture;
 
 class ViewportPanel : public EditorPanel
@@ -26,6 +28,13 @@ public:
     // In "isolated" (play) mode the viewport detaches from the dock layout and
     // fills the whole window below the menu bar as a true game viewport.
     void SetIsolated(bool isolated) { m_isolated = isolated; }
+
+    // Drag-drop handler for asset payloads dropped onto the 3D view: fires
+    // with the payload type ("PREFAB"/"MESH"/"MATERIAL"/"TEXTURE") and its
+    // null-terminated path string. Wired by the Application, which computes the
+    // drop point from GetImageMin()/GetImageSize() and the current mouse
+    // position; left null for headless use.
+    std::function<void(const char *type, const char *payload)> on_drop;
 
 private:
     int m_viewport_width;

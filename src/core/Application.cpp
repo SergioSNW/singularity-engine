@@ -28,6 +28,7 @@
 #include "editor/HistoryPanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
+#include "core/AssetImporter.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -36,6 +37,7 @@
 #include <backends/imgui_impl_sdlrenderer2.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 
@@ -1016,6 +1018,156 @@ void Application::DuplicateSelection()
     }
 }
 
+void Application::SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position)
+{
+    if (!m_scene || mesh_path.empty())
+        return;
+
+    // Display name = file stem, e.g. "assets/meshes/gear.obj" -> "gear".
+    const size_t slash = mesh_path.find_last_of('/');
+    const std::string leaf = (slash == std::string::npos)
+        ? mesh_path : mesh_path.substr(slash + 1);
+    std::string name = leaf;
+    const size_t dot = name.rfind('.');
+    if (dot != std::string::npos)
+        name = name.substr(0, dot);
+
+    Entity &created = m_scene->CreateEntity(name.empty() ? "Mesh" : name);
+    created.mesh.path = mesh_path;
+    created.transform.position[0] = position.x;
+    created.transform.position[1] = position.y;
+    created.transform.position[2] = position.z;
+    if (m_history)
+        m_history->PushSpawn(created, ("Create '" + created.tag.tag + "'").c_str());
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_scene_status = "Spawned '" + created.tag.tag + "' at drop position";
+}
+
+bool Application::ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h, Vec3 &out)
+{
+    Mat4 view_proj;
+    Vec3 cam_pos;
+    float fov, pitch, yaw, near_p, far_p;
+    if (!BuildViewProj(view_proj, cam_pos, fov, pitch, yaw, near_p, far_p))
+        return false;
+    if (vp_w <= 0.0f || vp_h <= 0.0f)
+        return false;
+
+    // Same camera-basis ray as the gizmo controller's MakeRay (matches the
+    // RotX(-pitch) * RotY(-yaw) * Translate(-pos) view), intersected with the
+    // y=0 grid plane.
+    const float PI = 3.1415926535f;
+    float nx = (2.0f * sx / vp_w - 1.0f);
+    float ny = (1.0f - 2.0f * sy / vp_h);
+    float tan_half = std::tan(fov * PI / 360.0f);
+    float aspect = vp_w / vp_h;
+    float p = pitch * PI / 180.0f, y = yaw * PI / 180.0f;
+    float sp = std::sin(p), cp = std::cos(p);
+    float syv = std::sin(y), cy = std::cos(y);
+    Vec3 right{ cy, 0.0f, -syv };
+    Vec3 up{ sp * syv, cp, sp * cy };
+    Vec3 fwd{ cp * syv, -sp, cp * cy };
+    Vec3 dir = Vec3Normalize(Vec3Add(
+        Vec3Add(Vec3Scale(right, nx * tan_half * aspect),
+                Vec3Scale(up, ny * tan_half)),
+        Vec3Scale(fwd, -1.0f)));
+
+    if (std::fabs(dir.y) < 1e-6f)
+        return false;
+    float t = (0.0f - cam_pos.y) / dir.y;
+    out = Vec3Add(cam_pos, Vec3Scale(dir, t));
+    return true;
+}
+
+bool Application::ComputeDropWorldPosFromMouse(Vec3 &out)
+{
+    if (!m_viewport || m_viewport_target_w <= 0 || m_viewport_target_h <= 0)
+        return false;
+    ImVec2 img_min = m_viewport->GetImageMin();
+    ImVec2 img_size = m_viewport->GetImageSize();
+    if (img_size.x <= 1.0f || img_size.y <= 1.0f)
+        return false;
+    ImVec2 mouse = ImGui::GetMousePos();
+    const float sx = (mouse.x - img_min.x) * ((float)m_viewport_target_w / img_size.x);
+    const float sy = (mouse.y - img_min.y) * ((float)m_viewport_target_h / img_size.y);
+    return ComputeDropWorldPos(sx, sy, (float)m_viewport_target_w,
+                               (float)m_viewport_target_h, out);
+}
+
+void Application::ProcessExternalDrops()
+{
+    if (m_pending_drops.empty())
+        return;
+
+    // The SDL_DROPFILE event does not carry reliable window coordinates on
+    // every platform, and the ImGui panels live in logical screen space, so
+    // route against the current (logical) mouse position - which is exactly
+    // where the drop landed this frame.
+    const ImVec2 logical = ImGui::GetIO().MousePos;
+
+    // Dropped inside the Content Browser -> import into the folder it is
+    // currently browsing; anywhere else -> let AssetImporter classify.
+    std::string dir;
+    if (m_content_browser && m_content_browser->IsVisible() &&
+        m_content_browser->IsPointInside(logical))
+        dir = m_content_browser->CurrentDir();
+
+    std::vector<std::string> mesh_dests;  // imported mesh paths for viewport spawn
+    int imported = 0;
+    std::string last_error;
+    for (const std::string &path : m_pending_drops)
+    {
+        AssetImporter::Result r = dir.empty()
+            ? AssetImporter::Import(path) : AssetImporter::Import(path, dir);
+        if (r.ok)
+        {
+            ++imported;
+            if (AssetImporter::ClassifyDir(path) == "meshes")
+                mesh_dests.push_back(r.dest);
+        }
+        else
+        {
+            last_error = r.error;
+        }
+    }
+
+    // Freshly imported assets appear in the browser without a manual refresh.
+    if (m_content_browser)
+    {
+        m_content_browser->Refresh();
+        if (imported > 0)
+            m_content_browser->FlashImportResult(imported);
+    }
+
+    // Mesh files dropped over the 3D viewport also spawn as entities at the
+    // cursor's ground point (editor only; undoable via PushSpawn).
+    if (m_state == EngineState::Editor && !mesh_dests.empty() && m_viewport)
+    {
+        ImVec2 img_min = m_viewport->GetImageMin();
+        ImVec2 img_size = m_viewport->GetImageSize();
+        const bool inside = img_size.x > 1.0f && img_size.y > 1.0f &&
+            logical.x >= img_min.x && logical.x <= img_min.x + img_size.x &&
+            logical.y >= img_min.y && logical.y <= img_min.y + img_size.y;
+        if (inside)
+        {
+            const float sx = (logical.x - img_min.x) * ((float)m_viewport_target_w / img_size.x);
+            const float sy = (logical.y - img_min.y) * ((float)m_viewport_target_h / img_size.y);
+            Vec3 pos;
+            if (ComputeDropWorldPos(sx, sy, (float)m_viewport_target_w,
+                                    (float)m_viewport_target_h, pos))
+                for (const std::string &dest : mesh_dests)
+                    SpawnMeshEntity(dest, pos);
+        }
+    }
+
+    m_scene_status = imported > 0
+        ? "Imported " + std::to_string(imported) + " file(s) into assets/"
+        : "Import failed: " + last_error;
+
+    m_pending_drops.clear();
+}
+
 void Application::UpdateCameraControls(float dt)
 {
     if (!m_scene || !m_viewport)
@@ -1294,6 +1446,66 @@ bool Application::Init(int width, int height, const char *title)
 
     m_viewport = new ViewportPanel();
 
+    // Viewport drag-drop (Phase 23): a prefab/mesh dropped onto the 3D view
+    // spawns an instance at the cursor's ground point; a material/texture is
+    // assigned to the current selection. Editor-only.
+    m_viewport->on_drop = [this](const char *type, const char *payload) {
+        if (!payload || !*payload || m_state != EngineState::Editor || !m_scene)
+            return;
+
+        const bool is_mesh = (type[0] == 'M') && type[1] == 'E';
+        const bool is_prefab = (type[0] == 'P');
+        const bool is_material = (type[0] == 'M') && type[1] == 'A';
+
+        if (is_mesh || is_prefab)
+        {
+            Vec3 pos{0.0f, 0.0f, 0.0f};
+            ComputeDropWorldPosFromMouse(pos);
+            if (is_mesh)
+            {
+                SpawnMeshEntity(payload, pos);
+            }
+            else
+            {
+                std::string error;
+                if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, payload, nullptr, &error))
+                {
+                    spawned->transform.position[0] = pos.x;
+                    spawned->transform.position[1] = pos.y;
+                    spawned->transform.position[2] = pos.z;
+                    if (m_history)
+                        m_history->PushSpawn(*spawned,
+                            ("Spawn prefab '" + std::string(payload) + "'").c_str());
+                    m_selection->entity_id = spawned->id;
+                    m_selection->entity_name = spawned->tag.tag;
+                    m_scene_status = "Spawned prefab '" + std::string(payload) +
+                                     "' at drop position";
+                }
+                else
+                {
+                    m_scene_status = "Prefab spawn failed: " + error;
+                }
+            }
+        }
+        else if (m_selection && m_selection->entity_id >= 0)
+        {
+            if (Entity *selected = m_scene->GetEntityById(m_selection->entity_id))
+            {
+                if (m_history)
+                    m_history->BeginEntityEdit(selected->id,
+                        is_material ? "Assign Material" : "Assign Texture");
+                if (is_material)
+                    selected->material.material_path = payload;
+                else
+                    selected->material.texture_path = payload;
+                if (m_history)
+                    m_history->EndEntityEdit();
+                m_scene_status = std::string(is_material ? "Assigned material " : "Assigned texture ") +
+                                 payload + " to '" + selected->tag.tag + "'";
+            }
+        }
+    };
+
     m_panels.push_back(
         std::make_shared<StatsPanel>(m_window)
     );
@@ -1480,6 +1692,19 @@ void Application::Run()
             }
             if (event.type == SDL_MOUSEWHEEL)
                 m_camera_scroll += (float)event.wheel.preciseY;
+            if (event.type == SDL_DROPFILE)
+            {
+                // OS file drop (Phase 23): queue the path and the window-relative
+                // mouse position; the batch is routed into the assets tree after
+                // the ImGui frame has drawn (and meshes dropped over the viewport
+                // spawn as entities at the cursor). The path string is owned by
+                // SDL and must be freed here.
+                if (event.drop.file)
+                {
+                    m_pending_drops.emplace_back(event.drop.file);
+                    SDL_free(event.drop.file);
+                }
+            }
             if (event.type == SDL_WINDOWEVENT)
             {
                 // Keep the cached window size in sync so GetWidth/GetHeight and
@@ -1797,6 +2022,11 @@ void Application::Run()
 
             DrawSaveAsModal();
         }
+
+        // Route OS file drops into the assets tree now that every panel drew
+        // itself (so window/rect queries like the Content Browser's and the
+        // viewport's are current for this frame).
+        ProcessExternalDrops();
 
         ImGui::Render();
 

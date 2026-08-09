@@ -8,6 +8,13 @@ Window::Window(int width, int height, const char *title)
     , m_width(width)
     , m_height(height)
 {
+    // Accept OS-level file drops (SDL_DROPFILE). Required for the drop-input
+    // ingestion on older X11/Linux builds where drops are opt-in; newer SDL
+    // (>= ~2.30) enables them by default and no longer defines the hint.
+#ifdef SDL_HINT_DROPFILES
+    SDL_SetHint(SDL_HINT_DROPFILES, "1");
+#endif
+
     m_window = SDL_CreateWindow(
         title,
         SDL_WINDOWPOS_CENTERED,

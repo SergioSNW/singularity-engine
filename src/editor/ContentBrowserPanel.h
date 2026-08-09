@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorPanel.h"
+#include <imgui.h>
 
 #include <functional>
 #include <string>
@@ -28,8 +29,10 @@ class TextureLibrary;
 // Standard file operations are provided via a toolbar and per-item context
 // menus: create folder, rename (inline), and delete (with a confirm dialog).
 // Prefab files can be dragged onto the Hierarchy window to spawn an instance
-// (drag payload "PREFAB"); material (.mat) and image assets drag onto the
-// Inspector's Material section to assign them (payloads "MATERIAL"/"TEXTURE").
+// (drag payload "PREFAB"); mesh (.obj) assets drag onto the Hierarchy or the
+// viewport to spawn an entity (payload "MESH"); material (.mat) and image
+// assets drag onto the Inspector's Material section to assign them (payloads
+// "MATERIAL"/"TEXTURE").
 class ContentBrowserPanel : public EditorPanel
 {
 public:
@@ -45,6 +48,24 @@ public:
     // Invoked when a scene asset is double-clicked. The Application wires this
     // to LoadSceneFile so m_scene_path / status / play-mode guard stay in sync.
     std::function<void(const std::string &)> on_load_scene;
+
+    // Re-scan the assets tree and the current folder. Called after OS file
+    // drops ingest new assets (Phase 23) so they appear without a manual
+    // Refresh click.
+    void Refresh() { RefreshTree(); RefreshFiles(); }
+
+    const std::string &CurrentDir() const { return m_current; }
+
+    // Show a transient "Imported N file(s)" overlay after an OS drop ingested
+    // files into the browsed folder (Phase 23). The Application calls this
+    // right after Refresh().
+    void FlashImportResult(int imported);
+
+    // True when `screen_pos` lies inside this panel's window rect. The rect is
+    // recorded every frame in OnImGuiRender, so the result is only meaningful
+    // when called during or just after the panel drew itself (the editor
+    // routes dropped files to the browsed folder this way).
+    bool IsPointInside(const ImVec2 &screen_pos) const;
 
 private:
     enum class FileKind { Folder, Scene, Prefab, Script, Mesh, Material, Texture, Other };
@@ -86,4 +107,13 @@ private:
 
     std::string m_status;            // last-action feedback line
     bool m_visible = true;
+
+    // Transient import feedback: countdown (seconds) and count for the overlay
+    // flashed after an OS file drop ingested new assets (Phase 23).
+    float m_import_flash_timer = 0.0f;
+    int m_import_flash_count = 0;
+
+    // On-screen rect of the Content Browser window, refreshed each frame.
+    ImVec2 m_window_min{0.0f, 0.0f};
+    ImVec2 m_window_max{0.0f, 0.0f};
 };

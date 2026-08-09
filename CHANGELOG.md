@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.23.0-alpha] — 2026-08-09
+
+### Added
+
+- **OS file-drop ingestion** (`src/core/AssetImporter.{h,cpp}`): a dependency-free filesystem module (`ClassifyDir`/`Import`) that maps dropped files to `assets/` sub-folders by extension (`.obj`→`meshes`, `.mat`→`materials`, images→`textures`, `.lua`→`scripts`, `*.prefab.json`→`prefabs`, other `.json`→`scenes`, case-insensitive), normalizes target folders, resolves name collisions with `_1`/`_2` suffixes, and rejects the bare `assets/` root as a target. `Application` queues `SDL_DROPFILE` events each frame, routes them after the frame into the Content Browser's browsed folder (or by classification elsewhere), refreshes the browser, and flashes a transient "Imported N file(s)" overlay — new assets appear without a manual Refresh. Older SDL builds re-enable drops via `SDL_HINT_DROPFILES` (guarded, since SDL 2.30.x drops it).
+- **Viewport drag-drop spawning**: the viewport now registers a custom drop target (`BeginDragDropTargetCustom`) over its image rect and accepts `PREFAB`, `MESH`, `MATERIAL` and `TEXTURE` payloads. Prefabs/meshes drop at the cursor's `y=0` ground point (new `SpawnMeshEntity`, `ComputeDropWorldPos` ray helpers matching the gizmo controller's camera basis) — spawned, selected, and undoable via `PushSpawn`; materials/textures assign to the current selection as undo transactions. OS-dropped mesh files that land over the viewport also spawn as entities.
+- **Hierarchy/Content Browser drop extensions**: entity rows, the Scene Root header, and empty tree space accept `MESH`/`MATERIAL`/`TEXTURE` payloads — mesh assets instantiate as children (`InstantiateMeshAsset`), materials/textures assign to the target entity (undo-aware). Content Browser mesh assets drag with a `"MESH"` payload (alongside the existing `"PREFAB"`).
+
+### Changed
+
+- Version bump from 0.22.0-alpha to 0.23.0-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
+### Fixed
+
+- (none)
+
+- Verified with a headless AssetImporter harness (pure filesystem, no engine deps): classification for every extension plus case-insensitivity, import into every sub-folder, `_1`/`_2` collision suffixes, nested targets, `assets/` root rejection, and missing-source rejection — all 23 checks pass. The engine rebuilds clean and the smoke run stays alive without crashing.
+
 ## [0.22.0-alpha] — 2026-08-08
 
 ### Added

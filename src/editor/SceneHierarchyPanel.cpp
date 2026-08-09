@@ -66,6 +66,26 @@ void SceneHierarchyPanel::DuplicateNode(Entity &entity)
     }
 }
 
+void SceneHierarchyPanel::InstantiateMeshAsset(const std::string &mesh_path, Entity *parent)
+{
+    // Display name = file stem, e.g. "assets/meshes/gear.obj" -> "gear".
+    const size_t slash = mesh_path.find_last_of('/');
+    const std::string leaf = (slash == std::string::npos)
+        ? mesh_path : mesh_path.substr(slash + 1);
+    std::string name = leaf;
+    const size_t dot = name.rfind('.');
+    if (dot != std::string::npos)
+        name = name.substr(0, dot);
+
+    Entity &created = m_scene->CreateEntity(name.empty() ? "Mesh" : name, parent);
+    created.mesh.path = mesh_path;
+    if (m_history)
+        m_history->PushSpawn(created, ("Create '" + created.tag.tag + "'").c_str());
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_status = "Spawned '" + created.tag.tag + "' from " + mesh_path;
+}
+
 void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
 {
     ImGui::PushID(entity.id);
@@ -121,6 +141,45 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
                     if (m_history)
                         m_history->EndEntityEdit();
                     m_status = "Parented '" + dragged->tag.tag + "' to '" +
+                               entity.tag.tag + "'";
+                }
+            }
+
+            // Mesh asset: spawn a child carrying the dropped .obj.
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
+            {
+                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
+                while (!path.empty() && path.back() == '\0')
+                    path.pop_back();
+                InstantiateMeshAsset(path, &entity);
+            }
+
+            // Material / texture asset: assign to this entity.
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MATERIAL"))
+            {
+                const char *data = (const char *)payload->Data;
+                if (data && *data)
+                {
+                    if (m_history)
+                        m_history->BeginEntityEdit(entity.id, "Assign Material");
+                    entity.material.material_path = data;
+                    if (m_history)
+                        m_history->EndEntityEdit();
+                    m_status = "Assigned material '" + std::string(data) + "' to '" +
+                               entity.tag.tag + "'";
+                }
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("TEXTURE"))
+            {
+                const char *data = (const char *)payload->Data;
+                if (data && *data)
+                {
+                    if (m_history)
+                        m_history->BeginEntityEdit(entity.id, "Assign Texture");
+                    entity.material.texture_path = data;
+                    if (m_history)
+                        m_history->EndEntityEdit();
+                    m_status = "Assigned texture '" + std::string(data) + "' to '" +
                                entity.tag.tag + "'";
                 }
             }
@@ -378,6 +437,13 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                     m_status = "Prefab spawn failed: " + error;
                 }
             }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
+            {
+                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
+                while (!path.empty() && path.back() == '\0')
+                    path.pop_back();
+                InstantiateMeshAsset(path, nullptr);
+            }
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
             {
                 int dragged_id = *(const int *)payload->Data;
@@ -435,6 +501,13 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                             m_status = "Detached '" + dragged->tag.tag + "' to scene root";
                         }
                     }
+                }
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
+                {
+                    std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
+                    while (!path.empty() && path.back() == '\0')
+                        path.pop_back();
+                    InstantiateMeshAsset(path, nullptr);
                 }
                 ImGui::EndDragDropTarget();
             }

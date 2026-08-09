@@ -26,6 +26,11 @@ private:
     // inverse so Ctrl+Z re-spawns it. Leaves selection cleanup to the caller.
     void DeleteEntity(Entity &entity);
 
+    // Spawn an entity carrying `mesh_path` (a mesh asset dropped from the
+    // Content Browser), under `parent` (nullptr = scene root). Names it from
+    // the file stem, selects it, and records the action for undo.
+    void InstantiateMeshAsset(const std::string &mesh_path, Entity *parent);
+
     SelectionState *m_selection;
     Scene *m_scene;
     CommandHistory *m_history;
