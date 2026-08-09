@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.23.1-alpha — Prefab Drop-Instantiation Hotfix
+v0.24.0-alpha — Directional Lighting, Shadows & Environment Controls
 
 ## Dependencies
 

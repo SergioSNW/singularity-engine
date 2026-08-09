@@ -206,3 +206,21 @@ Mat4 Scene::ComputeWorldMatrix(const Entity &entity) const
 
     return local;
 }
+
+Entity& CreateDirectionalLightEntity(Scene &scene, const std::string &tag)
+{
+    Entity &light = scene.CreateEntity(tag);
+    light.light.active = true;
+    // Lights are pure volume-less light sources: keep them out of the render
+    // passes so no placeholder cube shows up in the viewport.
+    light.material.active = false;
+    return light;
+}
+
+Entity* EnsureActiveLight(Scene &scene)
+{
+    for (auto &entity : scene.GetEntities())
+        if (entity->light.active)
+            return entity.get();
+    return &CreateDirectionalLightEntity(scene, "Directional Light");
+}

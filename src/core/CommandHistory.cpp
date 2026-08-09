@@ -44,6 +44,15 @@ struct EntitySnapshot
     float collider_extents[3] = { 0.5f, 0.5f, 0.5f };
 
     std::string script_path;
+
+    bool  light_active = false;
+    float light_color[3] = { 1.0f, 1.0f, 1.0f };
+    float light_intensity = 1.0f;
+    float light_direction[3] = { 0.4f, -0.8f, -0.45f };
+    float light_ambient = 0.25f;
+    float light_shadow_strength = 0.6f;
+    float light_shadow_bias = 0.05f;
+    float light_shadow_distance = 30.0f;
 };
 
 static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
@@ -70,6 +79,14 @@ static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
     std::memcpy(out.collider_center, &e.collider.center.x, sizeof(out.collider_center));
     std::memcpy(out.collider_extents, &e.collider.extents.x, sizeof(out.collider_extents));
     out.script_path = e.script.path;
+    out.light_active = e.light.active;
+    std::memcpy(out.light_color, e.light.color, sizeof(out.light_color));
+    out.light_intensity = e.light.intensity;
+    std::memcpy(out.light_direction, e.light.direction, sizeof(out.light_direction));
+    out.light_ambient = e.light.ambient;
+    out.light_shadow_strength = e.light.shadow_strength;
+    out.light_shadow_bias = e.light.shadow_bias;
+    out.light_shadow_distance = e.light.shadow_distance;
 }
 
 static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
@@ -98,6 +115,14 @@ static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
     std::memcpy(&e->collider.center.x, snap.collider_center, sizeof(snap.collider_center));
     std::memcpy(&e->collider.extents.x, snap.collider_extents, sizeof(snap.collider_extents));
     e->script.path = snap.script_path;
+    e->light.active = snap.light_active;
+    std::memcpy(e->light.color, snap.light_color, sizeof(snap.light_color));
+    e->light.intensity = snap.light_intensity;
+    std::memcpy(e->light.direction, snap.light_direction, sizeof(snap.light_direction));
+    e->light.ambient = snap.light_ambient;
+    e->light.shadow_strength = snap.light_shadow_strength;
+    e->light.shadow_bias = snap.light_shadow_bias;
+    e->light.shadow_distance = snap.light_shadow_distance;
 
     if ((e->parent ? e->parent->id : -1) != snap.parent_id)
         scene->SetParent(e->id, snap.parent_id);
@@ -329,7 +354,17 @@ void CommandHistory::EndEntityEdit()
                                     sizeof(after.collider_center)) == 0 &&
                         std::memcmp(m_edit_before->collider_extents, after.collider_extents,
                                     sizeof(after.collider_extents)) == 0 &&
-                        m_edit_before->script_path == after.script_path;
+                        m_edit_before->script_path == after.script_path &&
+                        m_edit_before->light_active == after.light_active &&
+                        std::memcmp(m_edit_before->light_color, after.light_color,
+                                    sizeof(after.light_color)) == 0 &&
+                        m_edit_before->light_intensity == after.light_intensity &&
+                        std::memcmp(m_edit_before->light_direction, after.light_direction,
+                                    sizeof(after.light_direction)) == 0 &&
+                        m_edit_before->light_ambient == after.light_ambient &&
+                        m_edit_before->light_shadow_strength == after.light_shadow_strength &&
+                        m_edit_before->light_shadow_bias == after.light_shadow_bias &&
+                        m_edit_before->light_shadow_distance == after.light_shadow_distance;
             if (!same)
             {
                 Push(std::make_unique<EntityStateCommand>(

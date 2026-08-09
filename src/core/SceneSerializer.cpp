@@ -94,6 +94,17 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     json::Value script = json::Value::MakeObject();
     script.object.emplace_back("path", json::Value::MakeString(e.script.path));
     ent.object.emplace_back("script", std::move(script));
+
+    json::Value light = json::Value::MakeObject();
+    light.object.emplace_back("active", json::Value::MakeBool(e.light.active));
+    light.object.emplace_back("color", Vec3ToJson(e.light.color));
+    light.object.emplace_back("intensity", json::Value::MakeNumber(e.light.intensity));
+    light.object.emplace_back("direction", Vec3ToJson(e.light.direction));
+    light.object.emplace_back("ambient", json::Value::MakeNumber(e.light.ambient));
+    light.object.emplace_back("shadow_strength", json::Value::MakeNumber(e.light.shadow_strength));
+    light.object.emplace_back("shadow_bias", json::Value::MakeNumber(e.light.shadow_bias));
+    light.object.emplace_back("shadow_distance", json::Value::MakeNumber(e.light.shadow_distance));
+    ent.object.emplace_back("light", std::move(light));
 }
 
 // Read every component of `ent` into an already-created `e`.
@@ -141,6 +152,18 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
 
     if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())
         e.script.path = scr->String("path", "");
+
+    if (const json::Value *lgt = ent.Find("light"); lgt && lgt->IsObject())
+    {
+        e.light.active = lgt->Bool("active", e.light.active);
+        Vec3FromJson(e.light.color, lgt->Find("color"));
+        e.light.intensity = (float)lgt->Number("intensity", e.light.intensity);
+        Vec3FromJson(e.light.direction, lgt->Find("direction"));
+        e.light.ambient = (float)lgt->Number("ambient", e.light.ambient);
+        e.light.shadow_strength = (float)lgt->Number("shadow_strength", e.light.shadow_strength);
+        e.light.shadow_bias = (float)lgt->Number("shadow_bias", e.light.shadow_bias);
+        e.light.shadow_distance = (float)lgt->Number("shadow_distance", e.light.shadow_distance);
+    }
 }
 
 // Build the JSON node for one entity plus its whole descendant subtree.

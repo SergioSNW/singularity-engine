@@ -265,16 +265,73 @@ struct FillTri
     SDL_Texture *texture = nullptr;
 };
 
+// Resolved directional light used by the shading pass. `dir` is the normalized
+// world-space direction the light TRAVELS; shading uses `-dir` (toward the
+// light) so a surface is lit when its normal faces the source. `color` tints
+// the diffuse term, `intensity` scales it, and `ambient` is the view-independent
+// floor. The shadow group drives the ray-cast directional shadow attenuation.
+struct RenderLight
+{
+    Vec3 dir{ 0.0f, -1.0f, 0.0f };
+    Vec3 color{ 1.0f, 1.0f, 1.0f };
+    float intensity = 1.0f;
+    float ambient = 0.25f;
+    float shadow_strength = 0.6f;
+    float shadow_bias = 0.05f;
+    float shadow_distance = 30.0f;
+};
+
+// World-space AABB blocker used by the directional shadow ray cast. The entity
+// reference lets a surface ignore its own volume (no self-shadowing).
+struct WorldAABB
+{
+    Vec3 min{ 0.0f, 0.0f, 0.0f };
+    Vec3 max{ 0.0f, 0.0f, 0.0f };
+    const Entity *entity = nullptr;
+};
+
+// Directional shadow factor for one triangle: a ray from the biased surface
+// point toward the light is tested against every other entity's world AABB.
+// The occlusion darkens by `shadow_strength` and fades out as the blocker
+// moves toward `shadow_distance`. Returns 1.0 when the surface is unshadowed.
+static float DirectionalShadowFactor(const RenderLight &light, const Vec3 &centroid,
+                                     const Vec3 &normal,
+                                     const std::vector<WorldAABB> &occluders,
+                                     const Entity *self)
+{
+    const Vec3 origin = Vec3Add(centroid, Vec3Scale(normal, light.shadow_bias));
+    const Vec3 toward_light = Vec3Scale(light.dir, -1.0f);
+    const float max_dist = std::max(light.shadow_distance, 1e-6f);
+    float t_near, t_far;
+    for (const WorldAABB &box : occluders)
+    {
+        if (box.entity == self)
+            continue;
+        if (!RayAABB(origin, toward_light, box.min, box.max, t_near, t_far))
+            continue;
+        if (t_far <= 0.0f || t_near > light.shadow_distance)
+            continue;  // blocker behind the surface or beyond the fade distance
+        const float t = std::max(t_near, 0.0f);
+        const float fade = 1.0f - t / max_dist;
+        return 1.0f - light.shadow_strength * fade;
+    }
+    return 1.0f;
+}
+
 // Project + shade one mesh into screen-space FillTri entries. `color` is the
 // RGBA albedo tint (already resolved from the entity's material asset when
 // assigned); `uvs` (parallel to positions) and `texture` are used together to
-// apply the diffuse map, otherwise flat normal shading is emitted.
+// apply the diffuse map, otherwise flat normal shading is emitted. `lights`
+// drive the shading (diffuse + ambient + directional shadow); with no active
+// light the surface keeps its flat albedo.
 static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            const Mat4 &world, const Mat4 &view_proj, float near_p,
                            int w, int h, const float color[4],
-                           SDL_Texture *texture, const std::vector<Vec2> *uvs)
+                           SDL_Texture *texture, const std::vector<Vec2> *uvs,
+                           const std::vector<RenderLight> &lights,
+                           const std::vector<WorldAABB> &occluders,
+                           const Entity *self)
 {
-    static const Vec3 LIGHT = { 0.45f, 0.78f, 0.44f };
     Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
     Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
     Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
@@ -294,12 +351,30 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             !ProjectToScreen(view_proj, near_p, w, h, c, cx, cy, dc))
             continue;
 
-        // Directional shading from the world-space face normal. Applied to the
-        // tint so textured triangles keep lighting on top of the map.
+        // Directional shading: diffuse from the world-space face normal, an
+        // ambient floor, and a ray-cast directional shadow. Every active light
+        // contributes additively; the shadow term only applies to lit faces.
         Vec3 e1 = Vec3Sub(b, a);
         Vec3 e2 = Vec3Sub(c, a);
         Vec3 n = Vec3Normalize(Vec3Cross(e1, e2));
-        float shade = 0.62f + 0.38f * std::max(0.0f, Vec3Dot(n, LIGHT));
+        Vec3 centroid = Vec3Scale(Vec3Add(Vec3Add(a, b), c), 1.0f / 3.0f);
+
+        float shade_r = 1.0f, shade_g = 1.0f, shade_b = 1.0f;
+        if (!lights.empty())
+        {
+            shade_r = shade_g = shade_b = 0.0f;
+            for (const RenderLight &l : lights)
+            {
+                float diffuse = std::max(0.0f, Vec3Dot(n, Vec3Scale(l.dir, -1.0f))) * l.intensity;
+                float shadow = 1.0f;
+                if (diffuse > 0.0f && l.shadow_strength > 0.0f && !occluders.empty())
+                    shadow = DirectionalShadowFactor(l, centroid, n, occluders, self);
+                float factor = l.ambient + (1.0f - l.ambient) * diffuse * shadow;
+                shade_r += factor * l.color.x;
+                shade_g += factor * l.color.y;
+                shade_b += factor * l.color.z;
+            }
+        }
 
         FillTri t;
         t.depth = (da + db + dc) / 3.0f;
@@ -307,9 +382,9 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
         t.x1 = bx; t.y1 = by;
         t.x2 = cx; t.y2 = cy;
         t.u0 = t.v0 = t.u1 = t.v1 = t.u2 = t.v2 = 0.0f;
-        t.r = (Uint8)(base_r * shade);
-        t.g = (Uint8)(base_g * shade);
-        t.b = (Uint8)(base_b * shade);
+        t.r = (Uint8)std::min(255.0f, base_r * shade_r);
+        t.g = (Uint8)std::min(255.0f, base_g * shade_g);
+        t.b = (Uint8)std::min(255.0f, base_b * shade_b);
         t.texture = texture;
         if (textured)
         {
@@ -438,6 +513,49 @@ void Application::RenderViewportTarget()
                 }
             }
 
+            // Gather the scene's active directional lights. With none active
+            // the surfaces render at flat albedo (the shading loop falls back).
+            std::vector<RenderLight> lights;
+            for (auto &entity_ptr : m_scene->GetEntities())
+            {
+                const Entity &e = *entity_ptr;
+                if (!e.light.active)
+                    continue;
+                RenderLight l;
+                Vec3 dir = Vec3Normalize({ e.light.direction[0],
+                                           e.light.direction[1],
+                                           e.light.direction[2] });
+                if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+                    dir = { 0.0f, -1.0f, 0.0f };
+                l.dir = dir;
+                l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
+                l.intensity = e.light.intensity;
+                l.ambient = e.light.ambient;
+                l.shadow_strength = e.light.shadow_strength;
+                l.shadow_bias = e.light.shadow_bias;
+                l.shadow_distance = e.light.shadow_distance;
+                lights.push_back(l);
+            }
+
+            // World AABBs of the visible mesh-bearing entities, used as
+            // directional-shadow blockers for the ray cast in EmitEntityTris.
+            std::vector<WorldAABB> occluders;
+            for (auto &entity_ptr : m_scene->GetEntities())
+            {
+                Entity &e = *entity_ptr;
+                if (&e == camera_entity || !e.material.active)
+                    continue;
+                std::string mesh_error;
+                const Mesh *mesh = ResolveMesh(e, mesh_error);
+                if (!mesh)
+                    continue;
+                Mat4 world = m_scene->ComputeWorldMatrix(e);
+                WorldAABB box;
+                TransformAABB(e.bounds.local_min, e.bounds.local_max, world, box.min, box.max);
+                box.entity = &e;
+                occluders.push_back(box);
+            }
+
             // --- Pass 1: solid fills, one global painter's pass ---
             std::vector<FillTri> tris;
             for (auto &entity_ptr : m_scene->GetEntities())
@@ -461,7 +579,7 @@ void Application::RenderViewportTarget()
                 const std::vector<Vec2> *uvs = nullptr;
                 SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
                 EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
-                               tint, texture, uvs);
+                               tint, texture, uvs, lights, occluders, &entity);
             }
             DrawTriangles(renderer, tris, w, h);
 
@@ -469,7 +587,7 @@ void Application::RenderViewportTarget()
             for (auto &entity_ptr : m_scene->GetEntities())
             {
                 Entity &entity = *entity_ptr;
-                if (&entity == camera_entity)
+                if (&entity == camera_entity || !entity.material.active)
                     continue;
 
                 std::string mesh_error;
@@ -1359,7 +1477,7 @@ bool Application::Init(int width, int height, const char *title)
     camera.transform.position[1] = 2.0f;
     camera.transform.position[2] = 8.0f;
     camera.camera.pitch = -14.0f;
-    m_scene->CreateEntity("Directional Light");
+    CreateDirectionalLightEntity(*m_scene, "Directional Light");
     Entity &cube = m_scene->CreateEntity("Cube Object");
     // Phase 19 demo: the cube carries a .mat asset that paints it with a
     // procedural checkerboard BMP; MaterialLibrary/TextureLibrary resolve the

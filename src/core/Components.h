@@ -84,3 +84,25 @@ struct CameraComponent
     float yaw = 0.0f;     // degrees, about the world Y axis
     bool primary = false;
 };
+
+// Directional light for the forward-shading pipeline. Light travels along
+// `direction` (world space; normalized by the renderer), so a surface is lit
+// when its normal faces the light source. `color` tints the diffuse term,
+// `intensity` scales it, and `ambient` is the view-independent floor added to
+// every surface. The shadow group tunes the cheap ray-cast directional shadow:
+// `shadow_strength` is how dark occluded surfaces get (0 = none, 1 = black),
+// `shadow_bias` offsets the shadow ray along the surface normal to avoid
+// self-shadow acne, and `shadow_distance` is the max blocker distance before
+// the shadow fades out. `active` gates the light in the renderer.
+struct DirectionalLightComponent
+{
+    bool active = false;
+    float color[3] = { 1.0f, 1.0f, 1.0f };
+    float intensity = 1.0f;
+    float direction[3] = { 0.4f, -0.8f, -0.45f };
+    float ambient = 0.25f;
+
+    float shadow_strength = 0.6f;
+    float shadow_bias = 0.05f;
+    float shadow_distance = 30.0f;
+};

@@ -40,6 +40,10 @@ bool SceneManager::LoadScene(const std::string &filepath, std::string *error)
     if (!SceneSerializer::LoadFromFile(*m_scene, filepath, error))
         return false;
 
+    // Level-design guarantee: every scene (new or loaded) carries at least one
+    // active light, so freshly opened maps are never stuck in the dark.
+    EnsureActiveLight(*m_scene);
+
     m_path = filepath;
     m_name = std::filesystem::path(filepath).stem().string();
     if (m_scene->Meta().name.empty())
@@ -73,6 +77,7 @@ bool SceneManager::NewScene(std::string *error)
     camera.transform.position[1] = 2.0f;
     camera.transform.position[2] = 8.0f;
     camera.camera.pitch = -14.0f;
+    EnsureActiveLight(*m_scene);
     m_scene->Meta().name = "Untitled Scene";
     m_scene->Meta().author.clear();
     m_scene->Meta().created.clear();

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.24.0-alpha] — 2026-08-09
+
+### Added
+
+- **Directional lighting component**: entities carry a `DirectionalLightComponent` (`active`, `color`, `intensity`, `direction`, `ambient`, plus directional-shadow attenuation params `shadow_strength` / `shadow_bias` / `shadow_distance`). The forward-shading pass in `Application::EmitEntityTris` now shades each triangle from the scene's active lights — diffuse from the world-space face normal toward the light, an ambient floor, and the light's color/intensity — replacing the hardcoded light vector. With no active light the surfaces render at flat albedo.
+- **Directional shadow attenuation**: per-triangle shadow ray against the world AABBs of the other visible mesh entities; occlusion darkens by `shadow_strength` and fades out as the blocker moves toward `shadow_distance`. Since the engine rasterizes on the CPU (SDL2, no z-buffer), the task's "shadow mapping *or* directional shadow attenuation parameters" route is implemented.
+- **Default light guarantee**: `CreateDirectionalLightEntity` builds a lit, mesh-less "Directional Light" entity and `EnsureActiveLight` guarantees at least one active light after the default map setup, `New Scene`, and every `LoadScene` — freshly opened maps are never left in the dark.
+- **Inspector & Hierarchy light management**: the Inspector edits the Directional Light component (color, intensity, direction, ambient, shadow params) through the same undo transactions as every other component; the Hierarchy's Scene Root context menu adds new `Add Directional Light` entities (undoable, auto-selected).
+- **Level Design workspace refinement**: the Hierarchy now owns the full-height left rail (room to manage entities and light sources), with the Stats panel moved into the bottom "Development Zone" tab group alongside Material Editor / Console / History / Content Browser and the Script Editor sidebar.
+
+### Fixed
+
+- The wireframe overlay pass now honors `material.active`, so hidden-mesh entities (lights, disabled materials) no longer draw a wireframe in the viewport.
+- Legacy scene files without a `light` block load cleanly (the component stays off, so old entities are not accidentally lights).
+
+### Verified
+
+- New `phase24_light_test` harness: light entity creation, `EnsureActiveLight` idempotence + inactive-only fallback, full light-field serialization round-trip, legacy-file compat, undo/redo of light edits, and `NewScene` camera+light composition — 43/43 checks pass. Prior regression harnesses (prefab-drop, undo, import, phase19) pass from the repo root; clean rebuild and editor smoke run stay alive.
+
 ## [0.23.1-alpha] — 2026-08-09
 
 ### Fixed

@@ -593,6 +593,43 @@ void InspectorPanel::OnImGuiRender(float dt)
         EndEditSessionIfReleased();
     }
 
+    // --- Directional Light ---
+    if (ComponentHeader("Directional Light", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Light");
+        entity->light = DirectionalLightComponent();
+        entity->light.active = true;  // reset restores a lit light, like Material
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
+    }))
+    {
+        BeginEditSession("Edit Light");
+        ImGui::Checkbox("Active", &entity->light.active);
+        EndEditSessionIfReleased();
+        ImGui::ColorEdit3("Color", entity->light.color);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Intensity", &entity->light.intensity, 0.05f, 0.0f, 10.0f);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat3("Direction", entity->light.direction, 0.05f);
+        EndEditSessionIfReleased();
+        ImGui::SliderFloat("Ambient", &entity->light.ambient, 0.0f, 1.0f);
+        EndEditSessionIfReleased();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Directional shadow attenuation");
+        ImGui::SliderFloat("Shadow Strength", &entity->light.shadow_strength, 0.0f, 1.0f);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Shadow Bias", &entity->light.shadow_bias, 0.001f, 0.0f, 1.0f);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Shadow Distance", &entity->light.shadow_distance, 0.5f, 0.0f, 500.0f);
+        EndEditSessionIfReleased();
+        ImGui::TextDisabled("Light travels along 'Direction'; faces toward the source are lit");
+    }
+
     // If the panel loses the session target (selection cleared/changed without
     // a commit), close the dangling transaction now so the next selection
     // starts clean.

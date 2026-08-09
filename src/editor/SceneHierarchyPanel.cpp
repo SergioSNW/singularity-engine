@@ -437,6 +437,22 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 
     if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
+        // Right-click the root to add scene-level light sources (hierarchy
+        // light management); the spawn is undoable and selects the new light.
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem("Add Directional Light"))
+            {
+                Entity &light = CreateDirectionalLightEntity(*m_scene, "Directional Light");
+                if (m_history)
+                    m_history->PushSpawn(light, "Create 'Directional Light'");
+                m_selection->entity_id = light.id;
+                m_selection->entity_name = light.tag.tag;
+                m_status = "Created 'Directional Light'";
+            }
+            ImGui::EndPopup();
+        }
+
         // Drop target on the root header: prefabs dragged from the Content
         // Browser spawn at the scene root, and entities dragged here are
         // detached to the root (unparented).

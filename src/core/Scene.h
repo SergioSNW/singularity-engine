@@ -45,3 +45,11 @@ private:
     SceneMetadata m_meta;
     int m_next_id;
 };
+
+// Create a ready-to-use directional light entity: the light is active and its
+// material is disabled so it never rasterizes a placeholder mesh.
+Entity& CreateDirectionalLightEntity(Scene &scene, const std::string &tag);
+
+// Ensure the scene has at least one active light; if every light is inactive
+// (or there are none), add a default one and return it.
+Entity* EnsureActiveLight(Scene &scene);

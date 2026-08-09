@@ -145,26 +145,23 @@ void WorkspaceManager::RebuildLayout()
         }
         default: // Workspace::LevelDesign
         {
-            // Level Design workspace: the bottom strip is the "Development
-            // Zone" — Content Browser + Console tabbed next to the Script
-            // Editor sidebar — so asset browsing and console output share one
-            // cohesive region. The right rail groups the Inspector and Editor
-            // Settings as tabs, and the left rail stacks Hierarchy over Stats.
-            // The code window stays free-floating.
+            // Level Design workspace: the full-height left rail is the
+            // Hierarchy (max room to manage entities and light sources), the
+            // right rail tabs Inspector over Editor Settings, and the bottom
+            // "Development Zone" groups the Material Editor, Console, History,
+            // Stats and Content Browser in one tabbed strip beside the Script
+            // Editor sidebar. The code window stays free-floating.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.76f, &top, &bottom);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.20f, &left, &center);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
 
-            ImGuiID left_top, left_bottom;
-            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
-
             ImGuiID bottom_left, bottom_right;
             ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
 
-            ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
-            ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
             dock_right_rail(right);
+            ImGui::DockBuilderDockWindow(kStatsWindow, bottom_left);
             dock_dev_zone(bottom_left);
             ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_right);
             break;
