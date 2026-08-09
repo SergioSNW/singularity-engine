@@ -30,10 +30,23 @@ private:
     // Content Browser), under `parent` (nullptr = scene root). Names it from
     // the file stem, selects it, and records the action for undo.
     void InstantiateMeshAsset(const std::string &mesh_path, Entity *parent);
+    // Flush entity-creating drops queued while the tree was being drawn.
+    void FlushPendingSpawns();
 
     SelectionState *m_selection;
     Scene *m_scene;
     CommandHistory *m_history;
+
+    // Mesh drops onto an entity row must not CreateEntity while the tree
+    // range-for over Scene::GetEntities() is live (a vector reallocation
+    // would invalidate its iterators and crash). They are queued here and
+    // flushed after the iteration completes.
+    struct PendingMeshSpawn
+    {
+        std::string path;
+        int parent_id;
+    };
+    std::vector<PendingMeshSpawn> m_pending_mesh_spawns;
 
     // Prefab authoring: save the selected entity (and its children) as a
     // reusable .prefab.json under assets/prefabs/.

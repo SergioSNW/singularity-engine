@@ -70,6 +70,12 @@ const Value &Value::At(size_t index) const
 
 static bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
+// Maximum value-nesting depth the parser will descend before rejecting the
+// document. Each entity tree level costs a couple of nested value calls, so
+// this comfortably covers every real scene/prefab while leaving the call
+// stack far from exhaustion on hostile input.
+static const int kMaxJsonDepth = 1024;
+
 static void SkipWhitespace(const std::string &text, size_t &i)
 {
     while (i < text.size() &&
@@ -84,7 +90,7 @@ static bool Fail(std::string *error, const char *msg)
     return false;
 }
 
-static bool ParseValue(const std::string &text, size_t &i, Value &out, std::string *error);
+static bool ParseValue(const std::string &text, size_t &i, Value &out, std::string *error, int depth);
 
 static bool ParseString(const std::string &text, size_t &i, std::string &out, std::string *error)
 {
@@ -200,7 +206,7 @@ static bool ParseNumber(const std::string &text, size_t &i, Value &out, std::str
     return true;
 }
 
-static bool ParseArray(const std::string &text, size_t &i, Value &out, std::string *error)
+static bool ParseArray(const std::string &text, size_t &i, Value &out, std::string *error, int depth)
 {
     ++i; // '['
     Value arr = Value::MakeArray();
@@ -216,7 +222,7 @@ static bool ParseArray(const std::string &text, size_t &i, Value &out, std::stri
     while (i < text.size())
     {
         Value element;
-        if (!ParseValue(text, i, element, error))
+        if (!ParseValue(text, i, element, error, depth + 1))
             return false;
         arr.array.push_back(std::move(element));
 
@@ -238,7 +244,7 @@ static bool ParseArray(const std::string &text, size_t &i, Value &out, std::stri
     return Fail(error, "unterminated array");
 }
 
-static bool ParseObject(const std::string &text, size_t &i, Value &out, std::string *error)
+static bool ParseObject(const std::string &text, size_t &i, Value &out, std::string *error, int depth)
 {
     ++i; // '{'
     Value obj = Value::MakeObject();
@@ -266,7 +272,7 @@ static bool ParseObject(const std::string &text, size_t &i, Value &out, std::str
         ++i;
 
         Value value;
-        if (!ParseValue(text, i, value, error))
+        if (!ParseValue(text, i, value, error, depth + 1))
             return false;
         obj.object.emplace_back(std::move(key), std::move(value));
 
@@ -287,8 +293,13 @@ static bool ParseObject(const std::string &text, size_t &i, Value &out, std::str
     return Fail(error, "unterminated object");
 }
 
-static bool ParseValue(const std::string &text, size_t &i, Value &out, std::string *error)
+static bool ParseValue(const std::string &text, size_t &i, Value &out, std::string *error, int depth)
 {
+    // Recursive-descent guard: hostile / hand-edited documents nested deeper
+    // than this are rejected cleanly instead of overflowing the call stack.
+    if (depth > kMaxJsonDepth)
+        return Fail(error, "nesting too deep");
+
     SkipWhitespace(text, i);
     if (i >= text.size())
         return Fail(error, "unexpected end of input");
@@ -296,8 +307,8 @@ static bool ParseValue(const std::string &text, size_t &i, Value &out, std::stri
     char c = text[i];
     switch (c)
     {
-        case '{': return ParseObject(text, i, out, error);
-        case '[': return ParseArray(text, i, out, error);
+        case '{': return ParseObject(text, i, out, error, depth);
+        case '[': return ParseArray(text, i, out, error, depth);
         case '"':
         {
             std::string s;
@@ -326,7 +337,7 @@ Value Parse(const std::string &text, std::string *error)
 {
     size_t i = 0;
     Value result;
-    if (!ParseValue(text, i, result, error))
+    if (!ParseValue(text, i, result, error, 0))
         return Value();
     SkipWhitespace(text, i);
     if (i != text.size())

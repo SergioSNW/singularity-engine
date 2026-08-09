@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.1-alpha] — 2026-08-09
+
+### Fixed
+
+- **Prefab/mesh drop-instantiation crash**: dropping an asset onto the editor no longer crashes when the spawn reallocates `Scene`'s entity vector mid-iteration. `SceneHierarchyPanel` now defers entity-creating mesh drops queued on tree rows (`PendingMeshSpawn` queue + `FlushPendingSpawns`, flushed after the `GetEntities()` range-for completes) instead of calling `CreateEntity` inside `DrawEntityNode`; Scene Root / detach-zone drops were already iteration-safe and stay immediate.
+- **Robust drop payload processing**: every drop target (viewport `on_drop`, hierarchy rows, Scene Root, detach zone) now null/size-guards `type`/`payload`/`Data`/`DataSize` before reading, the viewport dispatcher no longer indexes `type[1]` on a short type string, `m_selection` is guarded, and `ProcessExternalDrops` skips empty queue entries — `.dat`/binary/unknown drops degrade to a status message instead of a crash.
+- **Safe entity tree instantiation**: the recursive-descent JSON parser (`Json.cpp`) gains a `kMaxJsonDepth` nesting cap and `SceneSerializer::EntityTreeFromJson` a `kMaxTreeDepth` cap, so a hostile or hand-edited prefab nested thousands of levels deep is rejected cleanly ("nesting too deep") instead of overflowing the call stack.
+- Version bump from 0.23.0-alpha to 0.23.1-alpha across `main.cpp` title, README, architecture doc, and CMake project version.
+
+### Verified
+
+- Headless prefab-drop harness (`phase23.1_prefab_drop_test.cpp`) re-run against the fixed tree/parser: valid prefab spawn + drop-position write + `PushSpawn`/undo/redo, scene-mislabeled-as-prefab rejection, binary `.dat` rejection, malformed JSON and missing-root rejection, 64-deep tree spawn/depth/undo/redo, 40k-deep hostile JSON clean rejection, over-cap tree instantiation capped without crashing, prefab-under-parent parenting, and mesh-spawn undo/redo — all 22 checks pass. Prior phase regression harnesses (undo, material, import, phase19) pass from the repo root. Clean rebuild succeeds and the editor smoke run stays alive.
+
 ## [0.23.0-alpha] — 2026-08-09
 
 ### Added

@@ -86,6 +86,20 @@ void SceneHierarchyPanel::InstantiateMeshAsset(const std::string &mesh_path, Ent
     m_status = "Spawned '" + created.tag.tag + "' from " + mesh_path;
 }
 
+void SceneHierarchyPanel::FlushPendingSpawns()
+{
+    // Runs only after the Scene::GetEntities() iteration has finished, so
+    // CreateEntity can safely reallocate the entity vector. A dropped row's
+    // parent may no longer exist by then (e.g. it was deleted via the row's
+    // own delete button in the same frame) - fall back to the scene root.
+    for (const PendingMeshSpawn &spawn : m_pending_mesh_spawns)
+    {
+        Entity *parent = m_scene->GetEntityById(spawn.parent_id);
+        InstantiateMeshAsset(spawn.path, parent);
+    }
+    m_pending_mesh_spawns.clear();
+}
+
 void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
 {
     ImGui::PushID(entity.id);
@@ -132,26 +146,35 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
         {
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
             {
-                int dragged_id = *(const int *)payload->Data;
-                if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                if (payload->Data && payload->DataSize >= (int)sizeof(int))
                 {
-                    if (m_history)
-                        m_history->BeginEntityEdit(dragged_id, "Re-parent");
-                    m_scene->SetParent(dragged_id, entity.id);
-                    if (m_history)
-                        m_history->EndEntityEdit();
-                    m_status = "Parented '" + dragged->tag.tag + "' to '" +
-                               entity.tag.tag + "'";
+                    int dragged_id = *(const int *)payload->Data;
+                    if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                    {
+                        if (m_history)
+                            m_history->BeginEntityEdit(dragged_id, "Re-parent");
+                        m_scene->SetParent(dragged_id, entity.id);
+                        if (m_history)
+                            m_history->EndEntityEdit();
+                        m_status = "Parented '" + dragged->tag.tag + "' to '" +
+                                   entity.tag.tag + "'";
+                    }
                 }
             }
 
-            // Mesh asset: spawn a child carrying the dropped .obj.
+            // Mesh asset: spawn a child carrying the dropped .obj. Deferred:
+            // CreateEntity can reallocate Scene's entity vector, which would
+            // invalidate the live tree iteration (see FlushPendingSpawns).
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
             {
-                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
-                while (!path.empty() && path.back() == '\0')
-                    path.pop_back();
-                InstantiateMeshAsset(path, &entity);
+                if (payload->Data && payload->DataSize > 0)
+                {
+                    std::string path(static_cast<const char *>(payload->Data),
+                                     payload->DataSize);
+                    while (!path.empty() && path.back() == '\0')
+                        path.pop_back();
+                    m_pending_mesh_spawns.push_back({ path, entity.id });
+                }
             }
 
             // Material / texture asset: assign to this entity.
@@ -421,42 +444,55 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
         {
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("PREFAB"))
             {
-                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
-                while (!path.empty() && path.back() == '\0')
-                    path.pop_back();
+                if (payload->Data && payload->DataSize > 0)
+                {
+                    std::string path(static_cast<const char *>(payload->Data),
+                                     payload->DataSize);
+                    while (!path.empty() && path.back() == '\0')
+                        path.pop_back();
 
-                std::string error;
-                if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
-                {
-                    if (m_history)
-                        m_history->PushSpawn(*spawned, ("Spawn prefab '" + path + "'").c_str());
-                    m_status = "Spawned prefab: " + path;
-                }
-                else
-                {
-                    m_status = "Prefab spawn failed: " + error;
+                    std::string error;
+                    if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, path, nullptr, &error))
+                    {
+                        if (m_history)
+                            m_history->PushSpawn(*spawned, ("Spawn prefab '" + path + "'").c_str());
+                        m_status = "Spawned prefab: " + path;
+                    }
+                    else
+                    {
+                        m_status = "Prefab spawn failed: " + error;
+                    }
                 }
             }
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
             {
-                std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
-                while (!path.empty() && path.back() == '\0')
-                    path.pop_back();
-                InstantiateMeshAsset(path, nullptr);
+                if (payload->Data && payload->DataSize > 0)
+                {
+                    std::string path(static_cast<const char *>(payload->Data),
+                                     payload->DataSize);
+                    while (!path.empty() && path.back() == '\0')
+                        path.pop_back();
+                    // Safe to spawn immediately: this drop target is evaluated
+                    // before the tree iteration starts.
+                    InstantiateMeshAsset(path, nullptr);
+                }
             }
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
             {
-                int dragged_id = *(const int *)payload->Data;
-                if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                if (payload->Data && payload->DataSize >= (int)sizeof(int))
                 {
-                    if (dragged->parent)
+                    int dragged_id = *(const int *)payload->Data;
+                    if (Entity *dragged = m_scene->GetEntityById(dragged_id))
                     {
-                        if (m_history)
-                            m_history->BeginEntityEdit(dragged_id, "Detach to root");
-                        m_scene->SetParent(dragged_id, -1);
-                        if (m_history)
-                            m_history->EndEntityEdit();
-                        m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                        if (dragged->parent)
+                        {
+                            if (m_history)
+                                m_history->BeginEntityEdit(dragged_id, "Detach to root");
+                            m_scene->SetParent(dragged_id, -1);
+                            if (m_history)
+                                m_history->EndEntityEdit();
+                            m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                        }
                     }
                 }
             }
@@ -478,6 +514,10 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
                 DeleteEntity(*to_delete);
         }
 
+        // Entity-creating drops queued on tree rows are safe to flush now that
+        // the iteration over Scene::GetEntities() is complete.
+        FlushPendingSpawns();
+
         // The remaining tree area doubles as a detach drop zone: dragging an
         // entity onto empty space unparents it to the scene root.
         ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -488,26 +528,35 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
             {
                 if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("ENTITY"))
                 {
-                    int dragged_id = *(const int *)payload->Data;
-                    if (Entity *dragged = m_scene->GetEntityById(dragged_id))
+                    if (payload->Data && payload->DataSize >= (int)sizeof(int))
                     {
-                        if (dragged->parent)
+                        int dragged_id = *(const int *)payload->Data;
+                        if (Entity *dragged = m_scene->GetEntityById(dragged_id))
                         {
-                            if (m_history)
-                                m_history->BeginEntityEdit(dragged_id, "Detach to root");
-                            m_scene->SetParent(dragged_id, -1);
-                            if (m_history)
-                                m_history->EndEntityEdit();
-                            m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                            if (dragged->parent)
+                            {
+                                if (m_history)
+                                    m_history->BeginEntityEdit(dragged_id, "Detach to root");
+                                m_scene->SetParent(dragged_id, -1);
+                                if (m_history)
+                                    m_history->EndEntityEdit();
+                                m_status = "Detached '" + dragged->tag.tag + "' to scene root";
+                            }
                         }
                     }
                 }
                 if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("MESH"))
                 {
-                    std::string path(static_cast<const char *>(payload->Data), payload->DataSize);
-                    while (!path.empty() && path.back() == '\0')
-                        path.pop_back();
-                    InstantiateMeshAsset(path, nullptr);
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        std::string path(static_cast<const char *>(payload->Data),
+                                         payload->DataSize);
+                        while (!path.empty() && path.back() == '\0')
+                            path.pop_back();
+                        // Safe to spawn immediately: this drop zone is evaluated
+                        // after the tree iteration has finished.
+                        InstantiateMeshAsset(path, nullptr);
+                    }
                 }
                 ImGui::EndDragDropTarget();
             }

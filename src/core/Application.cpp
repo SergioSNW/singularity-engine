@@ -1118,6 +1118,8 @@ void Application::ProcessExternalDrops()
     std::string last_error;
     for (const std::string &path : m_pending_drops)
     {
+        if (path.empty())
+            continue;  // defensive: ignore malformed drop entries
         AssetImporter::Result r = dir.empty()
             ? AssetImporter::Import(path) : AssetImporter::Import(path, dir);
         if (r.ok)
@@ -1450,12 +1452,17 @@ bool Application::Init(int width, int height, const char *title)
     // spawns an instance at the cursor's ground point; a material/texture is
     // assigned to the current selection. Editor-only.
     m_viewport->on_drop = [this](const char *type, const char *payload) {
-        if (!payload || !*payload || m_state != EngineState::Editor || !m_scene)
+        // Robust drop dispatch: every payload (including hostile/empty drags)
+        // must be rejected before any scene mutation. `type` is one of the
+        // ViewportPanel constants, but never index past its end.
+        if (!payload || !*payload || m_state != EngineState::Editor || !m_scene ||
+            !m_selection || !type || !*type)
             return;
 
-        const bool is_mesh = (type[0] == 'M') && type[1] == 'E';
-        const bool is_prefab = (type[0] == 'P');
-        const bool is_material = (type[0] == 'M') && type[1] == 'A';
+        const size_t tlen = std::strlen(type);
+        const bool is_mesh = tlen >= 2 && type[0] == 'M' && type[1] == 'E';
+        const bool is_prefab = type[0] == 'P';
+        const bool is_material = tlen >= 2 && type[0] == 'M' && type[1] == 'A';
 
         if (is_mesh || is_prefab)
         {

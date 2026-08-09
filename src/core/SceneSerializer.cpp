@@ -158,15 +158,23 @@ json::Value EntityTreeToJson(const Entity &e)
     return ent;
 }
 
+// Cap on how deep an entity tree may nest. Keeps hostile / hand-edited prefab
+// or scene JSON from overflowing the stack in the recursive deserializer; the
+// engine's own scenes stay well under this.
+static const int kMaxTreeDepth = 256;
+
 // Spawn an entity (and its descendant subtree) into `scene` under `parent`.
-Entity &EntityTreeFromJson(Scene &scene, const json::Value &ent, Entity *parent)
+Entity &EntityTreeFromJson(Scene &scene, const json::Value &ent, Entity *parent,
+                           int depth)
 {
     Entity &e = scene.CreateEntity(ent.String("name", "Entity"), parent);
     ReadEntityFields(ent, e);
+    if (depth >= kMaxTreeDepth)
+        return e;  // stop descending: protect the call stack on deep trees
     if (const json::Value *children = ent.Find("children"); children && children->IsArray())
         for (const json::Value &child : children->array)
             if (child.IsObject())
-                EntityTreeFromJson(scene, child, &e);
+                EntityTreeFromJson(scene, child, &e, depth + 1);
     return e;
 }
 
@@ -342,7 +350,7 @@ Entity *SceneSerializer::LoadPrefab(Scene &scene, const std::string &path,
         return nullptr;
     }
 
-    return &EntityTreeFromJson(scene, *root_ent, parent);
+    return &EntityTreeFromJson(scene, *root_ent, parent, 0);
 }
 
 Entity *SceneSerializer::DuplicateEntity(Scene &scene, const Entity &entity,
@@ -352,7 +360,7 @@ Entity *SceneSerializer::DuplicateEntity(Scene &scene, const Entity &entity,
     // JSON value in memory, then re-materialize it. EntityTreeFromJson assigns
     // fresh ids/uuid per node, so the clone is an independent entity graph that
     // shares no storage with the original.
-    return &EntityTreeFromJson(scene, EntityTreeToJson(entity), parent);
+    return &EntityTreeFromJson(scene, EntityTreeToJson(entity), parent, 0);
 }
 
 json::Value SceneSerializer::SerializeEntityTree(const Entity &entity)
@@ -369,7 +377,7 @@ Entity *SceneSerializer::SpawnEntityTree(Scene &scene, const json::Value &tree,
 {
     if (!tree.IsObject())
         return nullptr;
-    Entity &e = EntityTreeFromJson(scene, tree, parent);
+    Entity &e = EntityTreeFromJson(scene, tree, parent, 0);
     const std::string uuid = tree.String("uuid", "");
     if (!uuid.empty())
         e.uuid = uuid;
