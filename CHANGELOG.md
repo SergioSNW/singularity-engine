@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.25.0-alpha] — 2026-08-10
+
+### Added
+
+- **Free-Fly Editor Camera**: the editor now renders the viewport through a dedicated `EditorCamera` (position/pitch/yaw/fov in `src/core/EditorCamera.h`) that is independent from the scene's gameplay camera entities. Fly Mode activates by holding right-click while hovering the viewport — the OS cursor is captured and ImGui ignores the mouse for the session — then WASD (or arrows) strafes horizontally, Q/E rise and lower vertically, and mouse movement looks around (yaw/pitch, pitch clamped to ±89°). Scroll-wheel zoom adjusts the editor camera's FOV (10°–120°). Fly mode is editor-only: the isolated game view never captures the cursor, so the Stop button stays clickable during play.
+- **Editor Settings sliders**: the Editor Settings panel gained a "Viewport Navigation" section with **Fly Speed** (1–40 world-units/sec) and **Rotation Sensitivity** (0.05–1.0 deg/pixel) sliders backing `EditorCameraSettings`, consumed by `UpdateCameraControls` (session-only, like the grid-snap steps).
+- **Smooth Play/Stop camera transition**: toggling Play Mode now blends the view between the editor camera and the active gameplay camera entity over `kCameraTransitionDuration` (0.6 s). The blend is driven by the pure `CameraBlend` function — smoothstep easing, position/pitch/yaw/fov interpolation, yaw traveling the shortest arc and wrapping back into (-180, 180]. Entering play eases from the editor camera to the gameplay camera; stopping restores the scene snapshot and eases back to the editor camera. A toggle mid-blend starts from whatever the viewport currently shows, so the motion stays continuous.
+- **Play-mode camera separation**: during play the viewport follows the gameplay camera entity (`camera.primary`), so scripts that move a camera drive the game view; the free-fly pose is untouched and preserved for the return trip.
+
+### Fixed
+
+- The viewport could previously be dragged into Fly Mode during play (the isolated view is hovered and the cursor is free), hijacking the view mid-session; Fly Mode is now gated to the editor state.
+- Editor scroll-zoom previously wrote into the scene's camera entity (persisted into saved maps); it now tunes the editor camera only, leaving gameplay camera FOV untouched.
+
+### Verified
+
+- New `phase25_camera_test` harness: `CameraBlend` endpoints, midpoint, smoothstep easing (t=0.25 → 15.625%, t=0.75 → 84.375%), out-of-range clamping, yaw shortest-arc both directions, output yaw wrapping, identical-pose stability, and settings defaults within slider ranges — 42/42 checks pass. Clean rebuild succeeds; editor smoke run stays alive with the fly camera + transition wiring active.
+
 ## [0.24.0-alpha] — 2026-08-09
 
 ### Added

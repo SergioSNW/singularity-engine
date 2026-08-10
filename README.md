@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.24.0-alpha — Directional Lighting, Shadows & Environment Controls
+v0.25.0-alpha — Free-Fly Editor Camera & Viewport Navigation
 
 ## Dependencies
 

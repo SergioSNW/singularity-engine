@@ -736,25 +736,22 @@ bool Application::BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov,
     if (!m_scene || !m_viewport || m_viewport_target_w <= 0 || m_viewport_target_h <= 0)
         return false;
 
-    Entity *camera_entity = FindActiveCamera();
+    // The pose to render from: the editor camera in editor mode, the active
+    // gameplay camera in play mode, or a smooth blend while transitioning.
+    EditorCamera pose;
+    if (!GetActiveCameraPose(pose))
+        return false;
+    cam_pos = pose.position;
+    fov     = pose.fov;
+    pitch   = pose.pitch;
+    yaw     = pose.yaw;
 
-    cam_pos = { 0.0f, 0.0f, 0.0f };
-    fov   = 60.0f;
-    pitch = 0.0f;
-    yaw   = 0.0f;
     near_p = 0.1f;
     far_p  = 100.0f;
-
-    if (camera_entity)
+    // Near/far clipping stay properties of the gameplay camera entity (the
+    // editor camera has no clip planes of its own).
+    if (Entity *camera_entity = FindActiveCamera())
     {
-        Mat4 cam_world = m_scene->ComputeWorldMatrix(*camera_entity);
-        cam_pos.x = cam_world.m[12];
-        cam_pos.y = cam_world.m[13];
-        cam_pos.z = cam_world.m[14];
-        if (camera_entity->camera.fov > 1.0f)
-            fov = camera_entity->camera.fov;
-        pitch = camera_entity->camera.pitch;
-        yaw   = camera_entity->camera.yaw;
         near_p = camera_entity->camera.near_plane;
         far_p  = camera_entity->camera.far_plane;
     }
@@ -772,6 +769,77 @@ bool Application::BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov,
     Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
     view_proj = Mat4Mul(proj, view);
     return true;
+}
+
+// Read the active gameplay camera entity's pose (position from its world
+// matrix, orientation/fov from its CameraComponent). Falls back to a sensible
+// default pose when the scene has no camera entity; returns whether a camera
+// entity was actually found.
+bool Application::CaptureGameplayCamera(EditorCamera &out)
+{
+    out.position = { 0.0f, 2.0f, 8.0f };
+    out.pitch = -14.0f;
+    out.yaw = 0.0f;
+    out.fov = 60.0f;
+
+    Entity *camera_entity = FindActiveCamera();
+    if (!camera_entity)
+        return false;
+
+    Mat4 cam_world = m_scene->ComputeWorldMatrix(*camera_entity);
+    out.position.x = cam_world.m[12];
+    out.position.y = cam_world.m[13];
+    out.position.z = cam_world.m[14];
+    out.pitch = camera_entity->camera.pitch;
+    out.yaw   = camera_entity->camera.yaw;
+    if (camera_entity->camera.fov > 1.0f)
+        out.fov = camera_entity->camera.fov;
+    return true;
+}
+
+// The pose the viewport should render with this frame. During a Play/Stop
+// blend the view follows the eased transition; otherwise it is the editor
+// camera (editor mode) or the active gameplay camera (play mode).
+bool Application::GetActiveCameraPose(EditorCamera &out)
+{
+    if (m_camera_transition.phase != CameraTransitionPhase::None)
+    {
+        out = CameraBlend(m_camera_transition.from, m_camera_transition.to,
+                          m_camera_transition.t);
+        return true;
+    }
+
+    if (m_state == EngineState::Play)
+        return CaptureGameplayCamera(out);
+
+    out = m_editor_camera;
+    return true;
+}
+
+// Start a Play/Stop camera blend. The `from` pose is whatever the viewport is
+// currently showing (so a second toggle mid-blend stays continuous); `to` is
+// the target camera captured at blend time.
+void Application::BeginCameraTransition(CameraTransitionPhase phase)
+{
+    GetActiveCameraPose(m_camera_transition.from);
+    m_camera_transition.to = m_editor_camera;
+    if (phase == CameraTransitionPhase::ToGameplay)
+        CaptureGameplayCamera(m_camera_transition.to);
+    m_camera_transition.phase = phase;
+    m_camera_transition.t = 0.0f;
+}
+
+// Advance an in-flight blend by dt; the phase clears once it reaches the end.
+void Application::UpdateCameraTransition(float dt)
+{
+    if (m_camera_transition.phase == CameraTransitionPhase::None)
+        return;
+    m_camera_transition.t += dt / kCameraTransitionDuration;
+    if (m_camera_transition.t >= 1.0f)
+    {
+        m_camera_transition.t = 1.0f;
+        m_camera_transition.phase = CameraTransitionPhase::None;
+    }
 }
 
 const Mesh *Application::ResolveMesh(const Entity &entity, std::string &error)
@@ -985,6 +1053,10 @@ void Application::EnterPlayMode()
         ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
     }
 
+    // Smoothly blend the view from the free-fly editor camera to the active
+    // gameplay camera while play mode warms up (scripts bind below).
+    BeginCameraTransition(CameraTransitionPhase::ToGameplay);
+
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
 
@@ -1050,6 +1122,10 @@ void Application::ExitPlayMode()
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
     m_state = EngineState::Editor;
+
+    // Blend the view back from the (restored) gameplay camera to the free-fly
+    // editor camera, so leaving play glides back to where the user was editing.
+    BeginCameraTransition(CameraTransitionPhase::ToEditor);
 
     // Bring back the panels that were hidden for play, exactly as they were
     // before play started (hidden ones stay hidden, visible ones reappear).
@@ -1293,8 +1369,13 @@ void Application::UpdateCameraControls(float dt)
     if (!m_scene || !m_viewport)
         return;
 
-    Entity *cam = FindActiveCamera();
-    if (!cam)
+    // Advance any in-flight Play/Stop camera blend. The viewport keeps
+    // following it (GetActiveCameraPose) until the blend reaches its target.
+    UpdateCameraTransition(dt);
+
+    // Fly Mode is an editor feature: the isolated game viewport never captures
+    // the cursor, so the Stop button stays clickable during play.
+    if (m_state != EngineState::Editor)
         return;
 
     // Consume the accumulators every frame so no stale motion leaks into a
@@ -1309,8 +1390,10 @@ void Application::UpdateCameraControls(float dt)
 
     // Enter fly mode: RMB pressed while hovering the viewport. The OS cursor
     // is captured (relative mode) for unlimited rotation and ImGui is told to
-    // ignore the mouse so the hidden cursor never triggers a panel.
-    if (!m_flying && over_viewport && rmb_down)
+    // ignore the mouse so the hidden cursor never triggers a panel. Skipped
+    // while a camera blend is still in flight so the blend isn't hijacked.
+    if (!m_flying && over_viewport && rmb_down &&
+        m_camera_transition.phase == CameraTransitionPhase::None)
     {
         m_flying = true;
         SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -1328,19 +1411,18 @@ void Application::UpdateCameraControls(float dt)
 
     if (!m_flying)
     {
-        // Hover-only action: scroll wheel zoom.
+        // Hover-only action: scroll wheel zoom of the editor camera.
         if (over_viewport && scroll != 0.0f)
         {
-            cam->camera.fov *= std::pow(0.9f, scroll);
-            if (cam->camera.fov < 10.0f)  cam->camera.fov = 10.0f;
-            if (cam->camera.fov > 120.0f) cam->camera.fov = 120.0f;
+            m_editor_camera.fov *= std::pow(0.9f, scroll);
+            if (m_editor_camera.fov < 10.0f)  m_editor_camera.fov = 10.0f;
+            if (m_editor_camera.fov > 120.0f) m_editor_camera.fov = 120.0f;
         }
         return;
     }
 
-    const float pitch = cam->camera.pitch;
-    const float yaw   = cam->camera.yaw;
-    const float fov   = (cam->camera.fov > 1.0f) ? cam->camera.fov : 60.0f;
+    const float pitch = m_editor_camera.pitch;
+    const float yaw   = m_editor_camera.yaw;
 
     // --- Keyboard movement (WASD / arrows) ---
     // Horizontal forward/right from yaw only; pitch only tilts the view.
@@ -1356,7 +1438,7 @@ void Application::UpdateCameraControls(float dt)
     const float rz =  fx;
 
     const Uint8 *keys = SDL_GetKeyboardState(nullptr);
-    const float move_speed = fov * 0.1f; // world-units per second
+    const float move_speed = m_camera_settings.fly_speed; // world-units per second
     float mv_f = 0.0f, mv_r = 0.0f, mv_u = 0.0f;
     if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP])    mv_f += 1.0f;
     if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])  mv_f -= 1.0f;
@@ -1367,23 +1449,23 @@ void Application::UpdateCameraControls(float dt)
 
     if (mv_f != 0.0f || mv_r != 0.0f || mv_u != 0.0f)
     {
-        cam->transform.position[0] += (fx * mv_f + rx * mv_r) * move_speed * dt;
-        cam->transform.position[1] += mv_u * move_speed * dt;
-        cam->transform.position[2] += (fz * mv_f + rz * mv_r) * move_speed * dt;
+        m_editor_camera.position.x += (fx * mv_f + rx * mv_r) * move_speed * dt;
+        m_editor_camera.position.y += mv_u * move_speed * dt;
+        m_editor_camera.position.z += (fz * mv_f + rz * mv_r) * move_speed * dt;
     }
 
     // --- Mouse look (pitch/yaw), FPS-style ---
-    cam->camera.yaw   -= rel_x * 0.2f;
-    cam->camera.pitch -= rel_y * 0.2f;
-    if (cam->camera.pitch >  89.0f) cam->camera.pitch =  89.0f;
-    if (cam->camera.pitch < -89.0f) cam->camera.pitch = -89.0f;
+    m_editor_camera.yaw   -= rel_x * m_camera_settings.rotation_sensitivity;
+    m_editor_camera.pitch -= rel_y * m_camera_settings.rotation_sensitivity;
+    if (m_editor_camera.pitch >  89.0f) m_editor_camera.pitch =  89.0f;
+    if (m_editor_camera.pitch < -89.0f) m_editor_camera.pitch = -89.0f;
 
     // --- Scroll wheel zoom (fov = vertical field of view in degrees) ---
     if (scroll != 0.0f)
     {
-        cam->camera.fov *= std::pow(0.9f, scroll);
-        if (cam->camera.fov < 10.0f)  cam->camera.fov = 10.0f;
-        if (cam->camera.fov > 120.0f) cam->camera.fov = 120.0f;
+        m_editor_camera.fov *= std::pow(0.9f, scroll);
+        if (m_editor_camera.fov < 10.0f)  m_editor_camera.fov = 10.0f;
+        if (m_editor_camera.fov > 120.0f) m_editor_camera.fov = 120.0f;
     }
 }
 
@@ -1658,10 +1740,12 @@ bool Application::Init(int width, int height, const char *title)
     });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
-    // Live theme customizer + grid snapping config: owns no state itself — it
-    // edits Application's token set (and SnapSettings) and asks for a
-    // ConfigureStyle re-apply on every theme change.
-    m_settings_panel = new SettingsPanel(&m_theme_colors, &m_snap, [this]() {
+    // Live theme customizer + grid snapping config + viewport navigation
+    // tuning: owns no state itself — it edits Application's token set (and
+    // SnapSettings / EditorCameraSettings) and asks for a ConfigureStyle
+    // re-apply on every theme change.
+    m_settings_panel = new SettingsPanel(&m_theme_colors, &m_snap, &m_camera_settings,
+                                         [this]() {
         Theme::ConfigureStyle(m_ui_scale, m_theme_colors);
     });
     m_panels.push_back(std::shared_ptr<SettingsPanel>(m_settings_panel));

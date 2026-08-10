@@ -8,6 +8,7 @@
 #include "editor/Theme.h"
 #include "core/WorkspaceManager.h"
 #include "editor/GizmoController.h"
+#include "core/EditorCamera.h"
 
 struct SDL_Texture;
 struct Mat4;
@@ -71,6 +72,19 @@ private:
     Entity *FindActiveCamera();
     bool BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov, float &pitch,
                        float &yaw, float &near_p, float &far_p);
+
+    // Phase 25 free-fly editor camera: the pose the editor renders the
+    // viewport through, independent of the scene's gameplay camera entities.
+    //   CaptureGameplayCamera  - read the active gameplay camera entity's pose.
+    //   GetActiveCameraPose    - the pose to render with this frame: the editor
+    //                            camera in editor mode, the gameplay camera in
+    //                            play mode, or a smooth blend during transition.
+    //   BeginCameraTransition  - kick off the Play/Stop blend between the two.
+    //   UpdateCameraTransition - advance an in-flight blend by dt.
+    bool CaptureGameplayCamera(EditorCamera &out);
+    bool GetActiveCameraPose(EditorCamera &out);
+    void BeginCameraTransition(CameraTransitionPhase phase);
+    void UpdateCameraTransition(float dt);
     const Mesh *ResolveMesh(const Entity &entity, std::string &error);
     void SaveScene();
     void OpenScene();
@@ -164,6 +178,14 @@ private:
     // rotate/scale gizmos, plus the persistent snap toggle. Wire
     // GizmoFrame::snap_active = m_snap.enabled || Ctrl-held.
     SnapSettings m_snap;
+
+    // Phase 25 free-fly editor camera + navigation tuning. m_editor_camera is
+    // the viewport pose the editor renders through and Fly Mode drives;
+    // m_camera_transition is the in-flight Play/Stop blend toward/away from the
+    // active gameplay camera.
+    EditorCamera m_editor_camera;
+    EditorCameraSettings m_camera_settings;
+    CameraTransitionState m_camera_transition;
 
     // OS file-drop queue (Phase 23): SDL_DROPFILE events push their paths here
     // during the event pump; the editor processes the batch after the ImGui

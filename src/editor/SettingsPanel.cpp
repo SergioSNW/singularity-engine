@@ -26,9 +26,11 @@ static bool ColorRow(const char *label, float color[4],
 } // namespace
 
 SettingsPanel::SettingsPanel(Theme::Colors *colors, SnapSettings *snap,
+                             EditorCameraSettings *camera_settings,
                              std::function<void()> on_change)
     : m_colors(colors)
     , m_snap(snap)
+    , m_camera_settings(camera_settings)
     , m_on_change(std::move(on_change))
     , m_visible(false)
 {
@@ -100,6 +102,20 @@ void SettingsPanel::OnImGuiRender(float dt)
                      0.05f, 0.01f, 10.0f, "%.2f");
     ImGui::TextDisabled("Hold Ctrl during a gizmo drag to snap regardless of "
                         "the toggle. Steps are not persisted.");
+
+    // --- Viewport navigation (Phase 25) ---
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextUnformatted("Viewport Navigation");
+    ImGui::SliderFloat("Fly Speed", &m_camera_settings->fly_speed,
+                       1.0f, 40.0f, "%.1f");
+    ImGui::SliderFloat("Rotation Sensitivity", &m_camera_settings->rotation_sensitivity,
+                       0.05f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Right-click in the viewport to fly: WASD to move, "
+                        "QE to rise/lower, mouse to look. Settings are "
+                        "session-only.");
 
     ImGui::End();
 }
