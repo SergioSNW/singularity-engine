@@ -57,6 +57,7 @@ std::string ClassifyDir(const std::string &src_path)
     if (ext == ".mat")        return "materials";
     if (IsImageExt(ext))      return "textures";
     if (ext == ".lua")        return "scripts";
+    if (ext == ".wav" || ext == ".ogg")  return "audio";
     if (ext == ".json")
         return EndsWith(lower, ".prefab.json") ? "prefabs" : "scenes";
     return "";

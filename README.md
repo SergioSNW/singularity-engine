@@ -4,11 +4,12 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.25.0-alpha — Free-Fly Editor Camera & Viewport Navigation
+v0.26.0-alpha — Audio & Sound Effects
 
 ## Dependencies
 
 - [SDL2](https://github.com/libsdl-org/SDL) (2.30.x) — windowing, input, 2D rendering
+- [SDL_mixer](https://github.com/libsdl-org/SDL_mixer) (2.8.x) — audio playback (WAV + stb_vorbis OGG)
 - Auto-resolved via CMake FetchContent — no manual install required.
 
 ## Build

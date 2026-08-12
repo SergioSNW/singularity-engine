@@ -9,13 +9,14 @@ class Scene;
 class MaterialLibrary;
 class TextureLibrary;
 class CommandHistory;
+class AudioManager;
 
 class InspectorPanel : public EditorPanel
 {
 public:
     InspectorPanel(SelectionState *selection, Scene *scene,
                    MaterialLibrary *material_library, TextureLibrary *texture_library,
-                   CommandHistory *history);
+                   CommandHistory *history, AudioManager *audio);
     void OnImGuiRender(float dt) override;
 
     bool IsVisible() const { return m_visible; }
@@ -39,10 +40,12 @@ private:
     MaterialLibrary *m_material_library;
     TextureLibrary *m_texture_library;
     CommandHistory *m_history;
+    AudioManager *m_audio;
     int m_edit_entity = -1;
     char m_tag_buffer[256] = {};
     char m_mesh_buffer[256] = {};
     char m_script_buffer[256] = {};
+    char m_audio_buffer[256] = {};
     char m_new_material_buffer[256] = {};
     int m_last_selected_id = -1;
     bool m_visible = true;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.25.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.26.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,6 +44,39 @@ FetchContent_MakeAvailable(SDL2)
 FetchContent_MakeAvailable(imgui)
 FetchContent_MakeAvailable(lua)
 
+# SDL_mixer 2.8.2: the audio playback backend for the Phase 26 sound
+# subsystem. Built statically (BUILD_SHARED_LIBS OFF) into the engine
+# executable, like SDL2 itself. Only codecs with no external dependencies are
+# enabled: WAV (SDL's native decoder, SDL2MIXER_WAV) and OGG Vorbis via the
+# stb_vorbis source bundled inside SDL_mixer (SDL2MIXER_VORBIS=STB). Every
+# other codec is switched off, so no system audio libraries are needed to
+# build or run the engine.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_VENDORED OFF)
+set(SDL2MIXER_SAMPLES OFF)
+set(SDL2MIXER_INSTALL OFF)
+set(SDL2MIXER_CMD OFF)
+set(SDL2MIXER_DEPS_SHARED OFF)
+set(SDL2MIXER_WAV ON)
+set(SDL2MIXER_WAVE ON)
+set(SDL2MIXER_VORBIS "STB")
+set(SDL2MIXER_FLAC OFF)
+set(SDL2MIXER_MOD OFF)
+set(SDL2MIXER_MP3 OFF)
+set(SDL2MIXER_MIDI OFF)
+set(SDL2MIXER_OPUS OFF)
+set(SDL2MIXER_GME OFF)
+set(SDL2MIXER_WAVPACK OFF)
+
+FetchContent_Declare(
+  SDL_mixer
+  GIT_REPOSITORY https://github.com/libsdl-org/SDL_mixer.git
+  GIT_TAG release-2.8.2
+  GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(SDL_mixer)
+
 # Lua core library: every .c except the standalone interpreter (lua.c), the
 # bytecode compiler (luac.c), the one-lua amalgamation (onelua.c), and the test
 # scaffolding (ltests.c).
@@ -77,6 +110,7 @@ target_sources(singularity-engine PRIVATE
   src/core/Console.cpp
   src/core/CommandHistory.cpp
   src/core/AssetImporter.cpp
+  src/core/AudioManager.cpp
   src/script/ScriptEngine.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp
@@ -99,6 +133,7 @@ target_sources(singularity-engine PRIVATE
 target_link_libraries(singularity-engine PRIVATE
   SDL2::SDL2
   SDL2::SDL2main
+  SDL2_mixer::SDL2_mixer-static
 )
 
 target_include_directories(singularity-engine PRIVATE

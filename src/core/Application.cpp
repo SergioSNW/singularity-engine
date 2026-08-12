@@ -16,6 +16,7 @@
 #include "SceneManager.h"
 #include "SceneSerializer.h"
 #include "PhysicsManager.h"
+#include "AudioManager.h"
 #include "Mesh.h"
 #include "Material.h"
 #include "Texture.h"
@@ -64,6 +65,7 @@ Application::Application()
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
     , m_physics(nullptr)
+    , m_audio(nullptr)
     , m_script_editor(nullptr)
     , m_command_palette(nullptr)
     , m_settings_panel(nullptr)
@@ -1075,6 +1077,21 @@ void Application::EnterPlayMode()
         m_scene_status = "Play mode: scene snapshotted; Esc or Stop to exit";
     else
         m_scene_status = "Play mode: script errors -> " + script_errors;
+
+    // Audio components flagged auto_play start their sample when play begins
+    // (looping or one-shot, at the component's volume). Playback stops again on
+    // exit so no editor-queued sound bleeds into the next session.
+    if (m_audio)
+    {
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &entity = *entity_ptr;
+            if (entity.audio.auto_play && !entity.audio.path.empty())
+                m_audio->Play(entity.audio.path, entity.audio.volume,
+                              entity.audio.loop);
+        }
+    }
+
     m_state = EngineState::Play;
     ConsoleInfo(script_errors.empty()
                     ? "Entered play mode (scene snapshotted)"
@@ -1100,6 +1117,11 @@ void Application::ExitPlayMode()
     // script's Lua state holds pointers into the entities being torn down.
     if (m_script_engine)
         m_script_engine->StopSession();
+
+    // Stop every channel the play session started (auto-play loops would
+    // otherwise keep sounding in the editor after Stop).
+    if (m_audio)
+        m_audio->StopAll();
 
     if (m_scene_snapshot.IsObject())
     {
@@ -1477,7 +1499,7 @@ bool Application::Init(int width, int height, const char *title)
     // redirect is non-fatal (direct Write() calls still work).
     Console::Instance().StartRedirect();
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0)
         return false;
 
     m_window = new Window(width, height, title);
@@ -1528,6 +1550,13 @@ bool Application::Init(int width, int height, const char *title)
     m_gizmo = new GizmoController();
     m_script_engine = new ScriptEngine();
     m_physics = new PhysicsManager();
+
+    // Phase 26 audio bridge: the mixer opens the device up front (reporting a
+    // console error instead of crashing on machines without audio hardware)
+    // and the script session routes its Audio.* bindings through it.
+    m_audio = new AudioManager();
+    m_audio->Init();
+    m_script_engine->SetAudioManager(m_audio);
 
     // The SceneManager owns the active Scene. The object is allocated once and
     // rebuilt in place on every load, so the Scene* kept by every panel stays
@@ -1631,6 +1660,11 @@ bool Application::Init(int width, int height, const char *title)
     bouncer.material.color[2] = 0.25f;
     bouncer.collider.enabled = true;
     bouncer.script.path = "assets/scripts/bouncer.lua";
+    // Phase 26 demo: the Bouncer beeps once on play start (component auto_play)
+    // and its script triggers another beep on collision via Audio.Play().
+    bouncer.audio.path = "assets/audio/beep.wav";
+    bouncer.audio.volume = 0.8f;
+    bouncer.audio.auto_play = true;
 
     Entity &trigger_zone = m_scene->CreateEntity("Trigger Zone");
     trigger_zone.transform.position[0] = 3.0f;
@@ -1721,7 +1755,7 @@ bool Application::Init(int width, int height, const char *title)
     );
     m_inspector_panel = new InspectorPanel(m_selection, m_scene,
                                            m_material_library, m_texture_library,
-                                           m_history);
+                                           m_history, m_audio);
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -2381,6 +2415,15 @@ void Application::Shutdown()
     // userdata pointing into entities), so release it before the scene.
     delete m_script_engine;
     m_script_engine = nullptr;
+
+    // The mixer must close before the window/SDL audio device goes away; its
+    // samples are pure memory, so no renderer dependency to respect here.
+    if (m_audio)
+    {
+        m_audio->Shutdown();
+        delete m_audio;
+        m_audio = nullptr;
+    }
 
     delete m_mesh_library;
     m_mesh_library = nullptr;

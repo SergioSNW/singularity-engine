@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0-alpha] — 2026-08-12
+
+### Added
+
+- **Audio & sound effects subsystem**: the engine now plays sound through SDL_mixer 2.8.2, fetched and built statically like SDL2 with only the dependency-free codecs enabled (WAV native + OGG Vorbis via SDL_mixer's bundled stb_vorbis). `AudioManager` (`src/core/AudioManager.h` / `.cpp`) opens a 44.1 kHz stereo device on a 16-channel pool, lazily loads and caches samples, and plays/stopped them via `Play(path, volume, loop)` / `Stop(path)` / `StopAll()` with a master-volume gain. It is optional at runtime: if the audio device can't open, it logs one error and every call degrades to a silent no-op.
+- **AudioComponent**: entities carry `path`, `loop`, `volume`, `auto_play` — `auto_play` fires the sample once when play mode starts, so ambient/looping sounds need no script. The Inspector gained an Audio section (path input, volume slider, loop / auto-play checkboxes, Preview Play / Preview Stop buttons) with every edit undoable like the other components.
+- **Lua `Audio` bridge**: gameplay scripts call `Audio.Play(path, volume?, loop?)` (returns the channel id or -1) and `Audio.Stop(path)`; the bindings degrade to a silent no-op when no manager is attached.
+- **Serialization / undo / import**: scenes persist an `"audio"` block per entity (legacy scenes load with defaults), CommandHistory snapshots the four audio fields (capture/apply/no-op-compare), and the drag-drop AssetImporter routes `.wav`/`.ogg` into `assets/audio/`.
+- **Demo audio asset**: `assets/audio/beep.wav` (generated 0.35 s fade-in/out sine), wired onto the Bouncer with `auto_play`, and `bouncer.lua`'s `OnCollisionEnter` triggers another beep via `Audio.Play(...)`.
+
+### Verified
+
+- New `phase26_audio_test` harness: component defaults, audio JSON round-trip alongside script/light, legacy-scene defaults, undo/redo of audio edits, no-op transaction detection, and `.wav`/`.ogg` import classification — 58/58 checks pass. Clean rebuild succeeds with SDL_mixer static + stb_vorbis; editor smoke run stays alive with the mixer open and demo audio wired.
+
 ## [0.25.0-alpha] — 2026-08-10
 
 ### Added

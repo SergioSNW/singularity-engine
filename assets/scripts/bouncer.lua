@@ -17,6 +17,7 @@ end
 
 function OnCollisionEnter(other)
     print("COLLISION ENTER  with '" .. other.name .. "' (id " .. other.id .. ")")
+    Audio.Play("assets/audio/beep.wav", 0.8)
 end
 
 function OnCollisionExit(other)

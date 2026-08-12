@@ -27,6 +27,7 @@ class TextureLibrary;
 class GizmoController;
 class ScriptEngine;
 class PhysicsManager;
+class AudioManager;
 class ScriptEditorPanel;
 class CommandPalette;
 class SettingsPanel;
@@ -138,6 +139,7 @@ private:
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
     PhysicsManager *m_physics;
+    AudioManager *m_audio;
     ScriptEditorPanel *m_script_editor;
     CommandPalette *m_command_palette;
     SettingsPanel *m_settings_panel;

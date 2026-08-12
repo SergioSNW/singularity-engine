@@ -6,6 +6,7 @@
 struct lua_State;
 class Scene;
 struct Entity;
+class AudioManager;
 
 // Embeds a Lua 5.4 runtime and binds the engine's core types (Vector3,
 // Transform, Entity) so per-entity gameplay scripts can manipulate transforms
@@ -51,6 +52,11 @@ public:
     // Tear the VM down and release all per-entity references.
     void StopSession();
 
+    // The AudioManager the Audio.* bindings route playback through. May be
+    // null (audio is optional at runtime); the bindings then degrade to a
+    // silent error-free no-op. The engine never owns it through this pointer.
+    void SetAudioManager(AudioManager *audio);
+
     const std::string &LastError() const { return m_error; }
 
 private:
@@ -72,4 +78,5 @@ private:
     std::vector<ScriptedEntity> m_scripted;
     std::string m_error;
     std::string m_last_error_logged;  // dedupe persistent runtime errors
+    AudioManager *m_audio;
 };

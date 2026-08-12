@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "Entity.h"
+#include "AudioManager.h"
 #include "core/Console.h"
 
 extern "C" {
@@ -49,6 +50,10 @@ const char *kVec3MT      = "Singe.Vector3";
 const char *kTransformMT = "Singe.Transform";
 const char *kEntityMT    = "Singe.Entity";
 const char *kApiRegistry = "Singe.EngineApi";
+
+// The AudioManager the Audio.* bindings route through. Held as a plain pointer
+// (the engine owns the manager; this is only an observer for the Lua bridge).
+AudioManager *g_audio_manager = nullptr;
 
 // --- Vector3 ---
 
@@ -420,6 +425,36 @@ int LuaPrint(lua_State *L)
     return 0;
 }
 
+// --- Audio ---
+//
+// Gameplay sound bridge: scripts call Audio.Play(path, volume?, loop?) to fire
+// a one-shot / looping sample and Audio.Stop(path) to halt every channel
+// playing it. Paths are the same asset references the AudioComponent uses
+// (e.g. "assets/audio/beep.wav"). When no AudioManager is attached (headless /
+// audio disabled) both calls degrade to a silent no-op.
+
+int LuaAudioPlay(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    const float volume = (float)luaL_optnumber(L, 2, 1.0);
+    const bool loop = lua_toboolean(L, 3);
+    if (!g_audio_manager)
+    {
+        lua_pushinteger(L, -1);
+        return 1;
+    }
+    lua_pushinteger(L, g_audio_manager->Play(path, volume, loop));
+    return 1;
+}
+
+int LuaAudioStop(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    if (g_audio_manager)
+        g_audio_manager->Stop(path);
+    return 0;
+}
+
 void RegisterEntity(lua_State *L)
 {
     luaL_newmetatable(L, kEntityMT);        // [mt]
@@ -439,6 +474,11 @@ void RegisterEngineApi(lua_State *L)
     lua_newtable(L);                        // [api]
     lua_pushcfunction(L, LuaVector3New); lua_setfield(L, -2, "Vector3");
     lua_pushcfunction(L, LuaVector3New); lua_setfield(L, -2, "Vec3");
+
+    lua_newtable(L);                        // [api, audio]
+    lua_pushcfunction(L, LuaAudioPlay); lua_setfield(L, -2, "Play");
+    lua_pushcfunction(L, LuaAudioStop); lua_setfield(L, -2, "Stop");
+    lua_setfield(L, -2, "Audio");           // api.Audio = audio -> [api]
 
     lua_newtable(L);                        // [api, api_mt]
     lua_getglobal(L, "_G");
@@ -474,12 +514,19 @@ void NewScriptEnv(lua_State *L, Entity *entity)
 
 ScriptEngine::ScriptEngine()
     : m_lua(nullptr)
+    , m_audio(nullptr)
 {
 }
 
 ScriptEngine::~ScriptEngine()
 {
     StopSession();
+}
+
+void ScriptEngine::SetAudioManager(AudioManager *audio)
+{
+    m_audio = audio;
+    g_audio_manager = audio;
 }
 
 bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)

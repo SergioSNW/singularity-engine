@@ -5,6 +5,7 @@
 #include "EngineMath.h"
 #include "Material.h"
 #include "Texture.h"
+#include "AudioManager.h"
 #include "core/CommandHistory.h"
 
 #include <imgui.h>
@@ -107,12 +108,13 @@ bool ComponentHeader(const char *title, const char *action_label = nullptr,
 InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
                                MaterialLibrary *material_library,
                                TextureLibrary *texture_library,
-                               CommandHistory *history)
+                               CommandHistory *history, AudioManager *audio)
     : m_selection(selection)
     , m_scene(scene)
     , m_material_library(material_library)
     , m_texture_library(texture_library)
     , m_history(history)
+    , m_audio(audio)
 {
 }
 
@@ -197,6 +199,8 @@ void InspectorPanel::OnImGuiRender(float dt)
         m_mesh_buffer[sizeof(m_mesh_buffer) - 1] = '\0';
         std::strncpy(m_script_buffer, entity->script.path.c_str(), sizeof(m_script_buffer) - 1);
         m_script_buffer[sizeof(m_script_buffer) - 1] = '\0';
+        std::strncpy(m_audio_buffer, entity->audio.path.c_str(), sizeof(m_audio_buffer) - 1);
+        m_audio_buffer[sizeof(m_audio_buffer) - 1] = '\0';
     }
 
     // --- Identity header: rename the tag, show the stable id ---
@@ -559,6 +563,57 @@ void InspectorPanel::OnImGuiRender(float dt)
                 m_script_buffer[0] = '\0';
             });
         ImGui::TextDisabled("Lua file under assets/scripts/; empty = no script");
+    }
+
+    // --- Audio ---
+    if (ComponentHeader("Audio", "Clear", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Clear Audio");
+        entity->audio = AudioComponent();
+        m_audio_buffer[0] = '\0';
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
+    }))
+    {
+        // Path text input (like the script/mesh fields); Apply commits it, and
+        // empty means no audio. The path is a WAV/OGG asset under
+        // assets/audio/, played on demand by the AudioManager.
+        BeginEditSession("Change Audio");
+        ImGui::InputText("Path", m_audio_buffer, sizeof(m_audio_buffer));
+        EndEditSessionIfReleased();
+        if (ImGui::Button("Apply Audio"))
+            CommitEdit("Change Audio", [this, entity]() {
+                if (m_audio_buffer[0] == '\0')
+                    entity->audio.path.clear();
+                else
+                    entity->audio.path = m_audio_buffer;
+            });
+        ImGui::SameLine();
+        if (ImGui::Button("Clear"))
+            CommitEdit("Change Audio", [this, entity]() {
+                entity->audio = AudioComponent();
+                m_audio_buffer[0] = '\0';
+            });
+
+        ImGui::SliderFloat("Volume", &entity->audio.volume, 0.0f, 1.0f);
+        EndEditSessionIfReleased();
+        ImGui::Checkbox("Loop", &entity->audio.loop);
+        EndEditSessionIfReleased();
+        ImGui::Checkbox("Auto Play", &entity->audio.auto_play);
+        EndEditSessionIfReleased();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("WAV/OGG under assets/audio/; empty = no audio");
+        if (ImGui::Button("Preview Play") && !entity->audio.path.empty() && m_audio)
+            m_audio->Play(entity->audio.path, entity->audio.volume,
+                          entity->audio.loop);
+        ImGui::SameLine();
+        if (ImGui::Button("Preview Stop") && m_audio)
+            m_audio->Stop(entity->audio.path);
     }
 
     // --- Camera ---

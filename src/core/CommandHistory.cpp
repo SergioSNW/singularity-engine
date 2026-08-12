@@ -45,6 +45,11 @@ struct EntitySnapshot
 
     std::string script_path;
 
+    std::string audio_path;
+    bool  audio_loop = false;
+    float audio_volume = 1.0f;
+    bool  audio_auto_play = false;
+
     bool  light_active = false;
     float light_color[3] = { 1.0f, 1.0f, 1.0f };
     float light_intensity = 1.0f;
@@ -79,6 +84,10 @@ static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
     std::memcpy(out.collider_center, &e.collider.center.x, sizeof(out.collider_center));
     std::memcpy(out.collider_extents, &e.collider.extents.x, sizeof(out.collider_extents));
     out.script_path = e.script.path;
+    out.audio_path = e.audio.path;
+    out.audio_loop = e.audio.loop;
+    out.audio_volume = e.audio.volume;
+    out.audio_auto_play = e.audio.auto_play;
     out.light_active = e.light.active;
     std::memcpy(out.light_color, e.light.color, sizeof(out.light_color));
     out.light_intensity = e.light.intensity;
@@ -115,6 +124,10 @@ static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
     std::memcpy(&e->collider.center.x, snap.collider_center, sizeof(snap.collider_center));
     std::memcpy(&e->collider.extents.x, snap.collider_extents, sizeof(snap.collider_extents));
     e->script.path = snap.script_path;
+    e->audio.path = snap.audio_path;
+    e->audio.loop = snap.audio_loop;
+    e->audio.volume = snap.audio_volume;
+    e->audio.auto_play = snap.audio_auto_play;
     e->light.active = snap.light_active;
     std::memcpy(e->light.color, snap.light_color, sizeof(snap.light_color));
     e->light.intensity = snap.light_intensity;
@@ -355,6 +368,10 @@ void CommandHistory::EndEntityEdit()
                         std::memcmp(m_edit_before->collider_extents, after.collider_extents,
                                     sizeof(after.collider_extents)) == 0 &&
                         m_edit_before->script_path == after.script_path &&
+                        m_edit_before->audio_path == after.audio_path &&
+                        m_edit_before->audio_loop == after.audio_loop &&
+                        m_edit_before->audio_volume == after.audio_volume &&
+                        m_edit_before->audio_auto_play == after.audio_auto_play &&
                         m_edit_before->light_active == after.light_active &&
                         std::memcmp(m_edit_before->light_color, after.light_color,
                                     sizeof(after.light_color)) == 0 &&

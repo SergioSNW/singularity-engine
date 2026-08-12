@@ -17,6 +17,7 @@ struct Entity
     BoundsComponent bounds;  // local-space AABB of the mesh geometry, auto-refreshed
     ColliderComponent collider;  // physics volume (Solid blocks, Trigger passes through)
     ScriptComponent script;  // Lua gameplay script bound on play start
+    AudioComponent audio;  // sound effect reference (WAV/OGG) for the audio bridge
     DirectionalLightComponent light;  // directional light feeding the shading pipeline
 
     // Scene graph links. Entities are stored in the Scene by stable address

@@ -75,6 +75,21 @@ struct ScriptComponent
     std::string path;
 };
 
+// Sound effect reference for the audio bridge. An empty `path` means no audio;
+// any other value names an audio asset (e.g. "assets/audio/beep.wav" or
+// ".ogg") loaded on demand by the AudioManager when the entity plays. `volume`
+// (0..1) scales the playback, `loop` repeats the clip until stopped, and
+// `auto_play` fires it once when the scene enters play mode so ambient/looping
+// sounds can start without a script. Scripts drive it at runtime through the
+// Audio.Play(path, volume, loop) / Audio.Stop(path) Lua bindings.
+struct AudioComponent
+{
+    std::string path;
+    bool loop = false;
+    float volume = 1.0f;
+    bool auto_play = false;
+};
+
 struct CameraComponent
 {
     float fov = 60.0f;

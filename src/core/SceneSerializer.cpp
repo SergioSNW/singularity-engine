@@ -95,6 +95,13 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     script.object.emplace_back("path", json::Value::MakeString(e.script.path));
     ent.object.emplace_back("script", std::move(script));
 
+    json::Value audio = json::Value::MakeObject();
+    audio.object.emplace_back("path", json::Value::MakeString(e.audio.path));
+    audio.object.emplace_back("loop", json::Value::MakeBool(e.audio.loop));
+    audio.object.emplace_back("volume", json::Value::MakeNumber(e.audio.volume));
+    audio.object.emplace_back("auto_play", json::Value::MakeBool(e.audio.auto_play));
+    ent.object.emplace_back("audio", std::move(audio));
+
     json::Value light = json::Value::MakeObject();
     light.object.emplace_back("active", json::Value::MakeBool(e.light.active));
     light.object.emplace_back("color", Vec3ToJson(e.light.color));
@@ -152,6 +159,14 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
 
     if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())
         e.script.path = scr->String("path", "");
+
+    if (const json::Value *aud = ent.Find("audio"); aud && aud->IsObject())
+    {
+        e.audio.path = aud->String("path", "");
+        e.audio.loop = aud->Bool("loop", e.audio.loop);
+        e.audio.volume = (float)aud->Number("volume", e.audio.volume);
+        e.audio.auto_play = aud->Bool("auto_play", e.audio.auto_play);
+    }
 
     if (const json::Value *lgt = ent.Find("light"); lgt && lgt->IsObject())
     {
