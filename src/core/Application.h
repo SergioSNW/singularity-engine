@@ -15,6 +15,8 @@ struct Mat4;
 struct Vec3;
 struct Vec2;
 struct Mesh;
+struct CameraEntry;
+class CameraManager;
 class Window;
 class EditorPanel;
 struct SelectionState;
@@ -35,6 +37,7 @@ class ContentBrowserPanel;
 class ConsolePanel;
 class InspectorPanel;
 class MaterialPanel;
+class ViewportLayoutPanel;
 class CommandHistory;
 class HistoryPanel;
 struct Entity;
@@ -70,9 +73,41 @@ private:
     void RecreateViewportTarget(int width, int height);
     void RenderViewportTarget();
     void UpdateCameraControls(float dt);
-    Entity *FindActiveCamera();
+    Entity *FindActiveCamera() const;
     bool BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov, float &pitch,
                        float &yaw, float &near_p, float &far_p);
+
+    // Phase 27 camera manager plumbing.
+    //   RenderScenePass       - the shared scene render (grid, solid fills,
+    //                            wireframe) for one viewport region. Used by
+    //                            the multi-pass viewport render and the
+    //                            Inspector camera preview.
+    //   CaptureSceneCamera    - read any camera entity's pose (generalizes
+    //                            CaptureGameplayCamera).
+    //   ResolveCameraPose     - the pose a CameraEntry renders with: the
+    //                            editor/blended camera for Editor sources, the
+    //                            referenced entity for SceneEntity sources.
+    //   BuildViewProjFromPose - build view_proj from an explicit pose + clip
+    //                            planes + aspect (no scene dependence).
+    //   GetPrimarySkipEntity  - the entity hidden in the primary viewport pass
+    //                            (its own camera), used for picking.
+    //   GetPrimaryViewportRect- pixel rect of the primary entry in the render
+    //                            target, for mouse->world mapping.
+    void RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
+                         float near_p, int w, int h, Entity *skip_entity);
+    void RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
+                             const EditorCamera &pose, float near_p, int w, int h);
+    bool CaptureSceneCamera(Entity &camera_entity, EditorCamera &out);
+    bool ResolveCameraPose(const CameraEntry &entry, EditorCamera &out);
+    bool BuildViewProjFromPose(const EditorCamera &pose, float near_p,
+                               float far_p, float aspect, Mat4 &view_proj);
+    Entity *GetPrimarySkipEntity() const;
+    bool GetPrimaryViewportRect(int &px, int &py, int &pw, int &ph) const;
+
+    // Phase 27 camera preview: render the selected camera entity into a small
+    // off-screen target each editor frame; the Inspector draws it live.
+    void RecreateCameraPreview(int width, int height);
+    void RenderCameraPreview();
 
     // Phase 25 free-fly editor camera: the pose the editor renders the
     // viewport through, independent of the scene's gameplay camera entities.
@@ -140,18 +175,23 @@ private:
     ScriptEngine *m_script_engine;
     PhysicsManager *m_physics;
     AudioManager *m_audio;
+    CameraManager *m_cameras;
     ScriptEditorPanel *m_script_editor;
     CommandPalette *m_command_palette;
     SettingsPanel *m_settings_panel;
     ContentBrowserPanel *m_content_browser;
     ConsolePanel *m_console_panel;
     InspectorPanel *m_inspector_panel;
+    ViewportLayoutPanel *m_viewport_layout_panel;
     MaterialPanel *m_material_panel;
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
+    SDL_Texture *m_camera_preview;   // Inspector live camera preview target
+    int m_camera_preview_w;
+    int m_camera_preview_h;
     float m_camera_scroll;
     float m_ui_scale;
     float m_applied_ui_scale;

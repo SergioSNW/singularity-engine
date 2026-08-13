@@ -16,7 +16,8 @@ class InspectorPanel : public EditorPanel
 public:
     InspectorPanel(SelectionState *selection, Scene *scene,
                    MaterialLibrary *material_library, TextureLibrary *texture_library,
-                   CommandHistory *history, AudioManager *audio);
+                   CommandHistory *history, AudioManager *audio,
+                   const std::function<void *(int, int)> &camera_preview_provider);
     void OnImGuiRender(float dt) override;
 
     bool IsVisible() const { return m_visible; }
@@ -41,6 +42,9 @@ private:
     TextureLibrary *m_texture_library;
     CommandHistory *m_history;
     AudioManager *m_audio;
+    // Recreates the Application-owned camera-preview texture at the requested
+    // size and returns its ImTextureID (nullptr when no preview is available).
+    std::function<void *(int, int)> m_camera_preview_provider;
     int m_edit_entity = -1;
     char m_tag_buffer[256] = {};
     char m_mesh_buffer[256] = {};

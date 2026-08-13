@@ -108,13 +108,15 @@ bool ComponentHeader(const char *title, const char *action_label = nullptr,
 InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
                                MaterialLibrary *material_library,
                                TextureLibrary *texture_library,
-                               CommandHistory *history, AudioManager *audio)
+                               CommandHistory *history, AudioManager *audio,
+                               const std::function<void *(int, int)> &camera_preview_provider)
     : m_selection(selection)
     , m_scene(scene)
     , m_material_library(material_library)
     , m_texture_library(texture_library)
     , m_history(history)
     , m_audio(audio)
+    , m_camera_preview_provider(camera_preview_provider)
 {
 }
 
@@ -646,6 +648,31 @@ void InspectorPanel::OnImGuiRender(float dt)
         EndEditSessionIfReleased();
         ImGui::Checkbox("Primary", &entity->camera.primary);
         EndEditSessionIfReleased();
+    }
+
+    // --- Camera Preview (Phase 27) ---
+    // Live feed of the selected entity's CameraComponent, rendered into a
+    // small off-screen target by the Application and shown here as an image.
+    if (entity->camera.fov > 0.0f && m_camera_preview_provider)
+    {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Camera Preview");
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float scale = 16.0f / 9.0f;
+        int pw = (int)(avail > 16.0f ? avail : 16.0f);
+        int ph = (int)(pw / scale);
+        void *texture = m_camera_preview_provider(pw, ph);
+        if (texture)
+        {
+            ImGui::Image(texture, ImVec2((float)pw, (float)ph));
+            ImGui::TextDisabled("Primary: %s",
+                                entity->camera.primary ? "true" : "false");
+        }
+        else
+        {
+            ImGui::TextDisabled("Preview unavailable");
+        }
     }
 
     // --- Directional Light ---

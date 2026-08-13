@@ -17,6 +17,7 @@
 #include "SceneSerializer.h"
 #include "PhysicsManager.h"
 #include "AudioManager.h"
+#include "CameraManager.h"
 #include "Mesh.h"
 #include "Material.h"
 #include "Texture.h"
@@ -27,6 +28,7 @@
 #include "editor/InspectorPanel.h"
 #include "editor/MaterialPanel.h"
 #include "editor/HistoryPanel.h"
+#include "editor/ViewportLayoutPanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -66,6 +68,7 @@ Application::Application()
     , m_script_engine(nullptr)
     , m_physics(nullptr)
     , m_audio(nullptr)
+    , m_cameras(nullptr)
     , m_script_editor(nullptr)
     , m_command_palette(nullptr)
     , m_settings_panel(nullptr)
@@ -77,6 +80,9 @@ Application::Application()
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
+    , m_camera_preview(nullptr)
+    , m_camera_preview_w(0)
+    , m_camera_preview_h(0)
     , m_camera_scroll(0.0f)
     , m_ui_scale(1.0f)
     , m_applied_ui_scale(1.0f)
@@ -488,234 +494,298 @@ void Application::RenderViewportTarget()
 
     if (m_scene)
     {
-        Vec3 cam_pos{ 0.0f, 0.0f, 0.0f };
-        float fov = 60.0f, pitch = 0.0f, yaw = 0.0f;
-        float near_p = 0.1f, far_p = 100.0f;
-        Mat4 view_proj;
-        if (BuildViewProj(view_proj, cam_pos, fov, pitch, yaw, near_p, far_p))
+        // Refresh every entity's local AABB from its resolved mesh geometry
+        // (Mesh::bounds_min/max). The mesh can change through the editor or
+        // a scene load, so the component is recomputed each frame to stay a
+        // true mirror of the geometry used for picking and collision.
+        for (auto &entity_ptr : m_scene->GetEntities())
         {
-            // Ground-plane grid first so entities draw on top of it.
-            RenderGroundGrid(renderer, view_proj, near_p, w, h);
-
-            Entity *camera_entity = FindActiveCamera();
-
-            // Refresh every entity's local AABB from its resolved mesh geometry
-            // (Mesh::bounds_min/max). The mesh can change through the editor or
-            // a scene load, so the component is recomputed each frame to stay a
-            // true mirror of the geometry used for picking and collision.
-            for (auto &entity_ptr : m_scene->GetEntities())
+            Entity &entity = *entity_ptr;
+            std::string mesh_error;
+            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            if (mesh)
             {
-                Entity &entity = *entity_ptr;
-                std::string mesh_error;
-                const Mesh *mesh = ResolveMesh(entity, mesh_error);
-                if (mesh)
+                entity.bounds.local_min = mesh->bounds_min;
+                entity.bounds.local_max = mesh->bounds_max;
+            }
+        }
+
+        // Multi-viewport pass (Phase 27): walk the camera stack bottom-up by
+        // z-order and render each enabled entry into its own region of the
+        // shared target, so higher-z entries overlay lower ones. Each pass
+        // resolves the entry's camera pose and renders the scene from it; the
+        // primary entry additionally draws the editor overlays (selection,
+        // bounds boxes, gizmo) so picking stays unambiguous. A disabled
+        // primary falls back to the topmost enabled entry (PrimaryIndex).
+        const int primary_idx = m_cameras->PrimaryIndex();
+        for (size_t idx : m_cameras->DrawOrder())
+        {
+            const CameraEntry *entry = m_cameras->Get(idx);
+            if (!entry || !entry->enabled)
+                continue;
+
+            int rx, ry, rw, rh;
+            if (!CameraManager::RectToPixels(*entry, w, h, rx, ry, rw, rh))
+                continue;
+
+            EditorCamera pose;
+            if (!ResolveCameraPose(*entry, pose))
+                continue;
+
+            // Near/far clipping come from the source camera entity when the
+            // entry is scene-sourced; the editor camera has no clip planes of
+            // its own, so the active camera entity's planes are used instead.
+            float near_p = 0.1f, far_p = 100.0f;
+            if (entry->type == CameraSourceType::SceneEntity)
+            {
+                if (Entity *e = m_scene->GetEntityById(entry->entity_id))
                 {
-                    entity.bounds.local_min = mesh->bounds_min;
-                    entity.bounds.local_max = mesh->bounds_max;
+                    near_p = e->camera.near_plane;
+                    far_p  = e->camera.far_plane;
                 }
             }
-
-            // Gather the scene's active directional lights. With none active
-            // the surfaces render at flat albedo (the shading loop falls back).
-            std::vector<RenderLight> lights;
-            for (auto &entity_ptr : m_scene->GetEntities())
+            else if (Entity *cam = FindActiveCamera())
             {
-                const Entity &e = *entity_ptr;
-                if (!e.light.active)
-                    continue;
-                RenderLight l;
-                Vec3 dir = Vec3Normalize({ e.light.direction[0],
-                                           e.light.direction[1],
-                                           e.light.direction[2] });
-                if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-                    dir = { 0.0f, -1.0f, 0.0f };
-                l.dir = dir;
-                l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
-                l.intensity = e.light.intensity;
-                l.ambient = e.light.ambient;
-                l.shadow_strength = e.light.shadow_strength;
-                l.shadow_bias = e.light.shadow_bias;
-                l.shadow_distance = e.light.shadow_distance;
-                lights.push_back(l);
+                near_p = cam->camera.near_plane;
+                far_p  = cam->camera.far_plane;
             }
 
-            // World AABBs of the visible mesh-bearing entities, used as
-            // directional-shadow blockers for the ray cast in EmitEntityTris.
-            std::vector<WorldAABB> occluders;
-            for (auto &entity_ptr : m_scene->GetEntities())
-            {
-                Entity &e = *entity_ptr;
-                if (&e == camera_entity || !e.material.active)
-                    continue;
-                std::string mesh_error;
-                const Mesh *mesh = ResolveMesh(e, mesh_error);
-                if (!mesh)
-                    continue;
-                Mat4 world = m_scene->ComputeWorldMatrix(e);
-                WorldAABB box;
-                TransformAABB(e.bounds.local_min, e.bounds.local_max, world, box.min, box.max);
-                box.entity = &e;
-                occluders.push_back(box);
-            }
+            float aspect = (float)rw / (float)rh;
+            Mat4 view_proj;
+            if (!BuildViewProjFromPose(pose, near_p, far_p, aspect, view_proj))
+                continue;
 
-            // --- Pass 1: solid fills, one global painter's pass ---
-            std::vector<FillTri> tris;
-            for (auto &entity_ptr : m_scene->GetEntities())
-            {
-                Entity &entity = *entity_ptr;
-                if (&entity == camera_entity || !entity.material.active)
-                    continue;
+            const bool is_primary = ((int)idx == primary_idx);
+            Entity *skip = is_primary ? GetPrimarySkipEntity() : nullptr;
+            RenderScenePass(renderer, view_proj, near_p, rw, rh, skip);
 
-                std::string mesh_error;
-                const Mesh *mesh = ResolveMesh(entity, mesh_error);
-                if (!mesh_error.empty() && mesh_error != m_mesh_error)
-                {
-                    m_mesh_error = mesh_error;
-                    m_scene_status = "Mesh load failed: " + mesh_error;
-                }
-                if (!mesh)
-                    continue;
-
-                Mat4 world = m_scene->ComputeWorldMatrix(entity);
-                const float *tint = nullptr;
-                const std::vector<Vec2> *uvs = nullptr;
-                SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
-                EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
-                               tint, texture, uvs, lights, occluders, &entity);
-            }
-            DrawTriangles(renderer, tris, w, h);
-
-            // --- Pass 2: wireframe overlay for every visible entity ---
-            for (auto &entity_ptr : m_scene->GetEntities())
-            {
-                Entity &entity = *entity_ptr;
-                if (&entity == camera_entity || !entity.material.active)
-                    continue;
-
-                std::string mesh_error;
-                const Mesh *mesh = ResolveMesh(entity, mesh_error);
-                if (!mesh)
-                    continue;
-
-                Mat4 world = m_scene->ComputeWorldMatrix(entity);
-                RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
-                                    *mesh, entity.material.color, true);
-            }
-
-            // --- Pass 3: selection outline, AABB bounds boxes, gizmo overlay
-            // (editor only). Runs even with no selection so the hovered
-            // entity's bounds box still draws. ---
-            if (m_state == EngineState::Editor && m_selection && m_gizmo)
-            {
-                Entity *selected = (m_selection->entity_id >= 0)
-                    ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
-
-                // Selected entity: amber wireframe outline + white bounds box.
-                if (selected && selected != camera_entity)
-                {
-                    std::string mesh_error;
-                    const Mesh *mesh = ResolveMesh(*selected, mesh_error);
-                    static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
-                    if (mesh)
-                    {
-                        Mat4 world = m_scene->ComputeWorldMatrix(*selected);
-                        RenderMeshWireframe(renderer, view_proj, near_p, w, h,
-                                            world, *mesh, OUTLINE, false);
-                    }
-                    // Draw the bounds box in world space: the AABB component
-                    // stores LOCAL bounds, so transform them into the entity's
-                    // world frame before drawing.
-                    Mat4 sel_world = m_scene->ComputeWorldMatrix(*selected);
-                    Vec3 sel_wmin, sel_wmax;
-                    TransformAABB(selected->bounds.local_min,
-                                  selected->bounds.local_max, sel_world,
-                                  sel_wmin, sel_wmax);
-                    DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                                  sel_wmin, sel_wmax, 255, 255, 255);
-                }
-
-                // Hovered entity (ray/AABB hit under the cursor): light-blue
-                // bounds box, distinct from the amber selection.
-                int hover_id = m_gizmo->GetHoverEntity();
-                if (hover_id >= 0 && hover_id != (selected ? selected->id : -1) &&
-                    hover_id != (camera_entity ? camera_entity->id : -1))
-                {
-                    if (Entity *hover = m_scene->GetEntityById(hover_id))
-                    {
-                        Mat4 hover_world = m_scene->ComputeWorldMatrix(*hover);
-                        Vec3 hover_wmin, hover_wmax;
-                        TransformAABB(hover->bounds.local_min,
-                                      hover->bounds.local_max, hover_world,
-                                      hover_wmin, hover_wmax);
-                        DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                                      hover_wmin, hover_wmax, 110, 180, 255);
-                    }
-                }
-
-                // Physics collider volumes (editor aid): solid = green,
-                // trigger = cyan. Drawn from the collider's own local box
-                // (center +/- extents) transformed into the world frame.
-                for (auto &entity_ptr : m_scene->GetEntities())
-                {
-                    Entity &collider_entity = *entity_ptr;
-                    if (!collider_entity.collider.enabled)
-                        continue;
-                    if (&collider_entity == camera_entity)
-                        continue;
-                    const Vec3 clmin{
-                        collider_entity.collider.center.x - collider_entity.collider.extents.x,
-                        collider_entity.collider.center.y - collider_entity.collider.extents.y,
-                        collider_entity.collider.center.z - collider_entity.collider.extents.z,
-                    };
-                    const Vec3 clmax{
-                        collider_entity.collider.center.x + collider_entity.collider.extents.x,
-                        collider_entity.collider.center.y + collider_entity.collider.extents.y,
-                        collider_entity.collider.center.z + collider_entity.collider.extents.z,
-                    };
-                    Mat4 collider_world = m_scene->ComputeWorldMatrix(collider_entity);
-                    Vec3 cwmin, cwmax;
-                    TransformAABB(clmin, clmax, collider_world, cwmin, cwmax);
-                    const bool is_trigger =
-                        (collider_entity.collider.type == ColliderComponent::Type::Trigger);
-                    DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                                  cwmin, cwmax,
-                                  is_trigger ? 90 : 80,
-                                  is_trigger ? 200 : 230,
-                                  is_trigger ? 210 : 110);
-                }
-
-                GizmoFrame gf;
-                gf.scene = m_scene;
-                gf.selection = m_selection;
-                gf.meshes = m_mesh_library;
-                gf.active_camera_id = camera_entity ? camera_entity->id : -1;
-                gf.vp_width = (float)w;
-                gf.vp_height = (float)h;
-                ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
-                const float dpi = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
-                    ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
-                gf.dpi_scale = dpi * kViewportSupersample;
-                gf.hovered = m_viewport->IsHovered();
-                gf.cam_pos = cam_pos;
-                gf.cam_pitch = pitch;
-                gf.cam_yaw = yaw;
-                gf.cam_fov = fov;
-                gf.near_p = near_p;
-                gf.view_proj = view_proj;
-                gf.dt = 0.0f;
-                gf.snap_translation = m_snap.translation;
-                gf.snap_rotation = m_snap.rotation;
-                gf.snap_scale = m_snap.scale;
-                gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
-                m_gizmo->Draw(renderer, gf);
-            }
+            if (is_primary && m_state == EngineState::Editor && m_gizmo)
+                RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh);
         }
     }
 
     SDL_SetRenderTarget(renderer, nullptr);
 }
 
-Entity *Application::FindActiveCamera()
+// Render the shared scene (ground grid, solid fills, wireframe) into the
+// current render target region. `skip_entity` (the primary pass's own camera)
+// is hidden from both fills and occluders so the player's camera never sees
+// itself. This is the per-entry body of the multi-viewport render and the
+// Inspector camera preview.
+void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
+                                  float near_p, int w, int h, Entity *skip_entity)
+{
+    if (!m_scene)
+        return;
+
+    // Ground-plane grid first so entities draw on top of it.
+    RenderGroundGrid(renderer, view_proj, near_p, w, h);
+
+    // Gather the scene's active directional lights. With none active
+    // the surfaces render at flat albedo (the shading loop falls back).
+    std::vector<RenderLight> lights;
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        const Entity &e = *entity_ptr;
+        if (!e.light.active)
+            continue;
+        RenderLight l;
+        Vec3 dir = Vec3Normalize({ e.light.direction[0],
+                                   e.light.direction[1],
+                                   e.light.direction[2] });
+        if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+            dir = { 0.0f, -1.0f, 0.0f };
+        l.dir = dir;
+        l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
+        l.intensity = e.light.intensity;
+        l.ambient = e.light.ambient;
+        l.shadow_strength = e.light.shadow_strength;
+        l.shadow_bias = e.light.shadow_bias;
+        l.shadow_distance = e.light.shadow_distance;
+        lights.push_back(l);
+    }
+
+    // World AABBs of the visible mesh-bearing entities, used as
+    // directional-shadow blockers for the ray cast in EmitEntityTris.
+    std::vector<WorldAABB> occluders;
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        Entity &e = *entity_ptr;
+        if (&e == skip_entity || !e.material.active)
+            continue;
+        std::string mesh_error;
+        const Mesh *mesh = ResolveMesh(e, mesh_error);
+        if (!mesh)
+            continue;
+        Mat4 world = m_scene->ComputeWorldMatrix(e);
+        WorldAABB box;
+        TransformAABB(e.bounds.local_min, e.bounds.local_max, world, box.min, box.max);
+        box.entity = &e;
+        occluders.push_back(box);
+    }
+
+    // --- Pass 1: solid fills, one global painter's pass ---
+    std::vector<FillTri> tris;
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        Entity &entity = *entity_ptr;
+        if (&entity == skip_entity || !entity.material.active)
+            continue;
+
+        std::string mesh_error;
+        const Mesh *mesh = ResolveMesh(entity, mesh_error);
+        if (!mesh_error.empty() && mesh_error != m_mesh_error)
+        {
+            m_mesh_error = mesh_error;
+            m_scene_status = "Mesh load failed: " + mesh_error;
+        }
+        if (!mesh)
+            continue;
+
+        Mat4 world = m_scene->ComputeWorldMatrix(entity);
+        const float *tint = nullptr;
+        const std::vector<Vec2> *uvs = nullptr;
+        SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
+        EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
+                       tint, texture, uvs, lights, occluders, &entity);
+    }
+    DrawTriangles(renderer, tris, w, h);
+
+    // --- Pass 2: wireframe overlay for every visible entity ---
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        Entity &entity = *entity_ptr;
+        if (&entity == skip_entity || !entity.material.active)
+            continue;
+
+        std::string mesh_error;
+        const Mesh *mesh = ResolveMesh(entity, mesh_error);
+        if (!mesh)
+            continue;
+
+        Mat4 world = m_scene->ComputeWorldMatrix(entity);
+        RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
+                            *mesh, entity.material.color, true);
+    }
+}
+
+// Editor-only overlays drawn into the primary viewport region: the amber
+// selection outline + bounds box, the hovered entity's light-blue bounds box,
+// collider volumes, and the gizmo handles. Runs with no selection so the
+// hovered entity's bounds box still draws.
+void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
+                                      const EditorCamera &pose, float near_p,
+                                      int w, int h)
+{
+    if (!m_scene || !m_selection || !m_gizmo)
+        return;
+
+    Entity *camera_entity = GetPrimarySkipEntity();
+
+    Entity *selected = (m_selection->entity_id >= 0)
+        ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
+
+    // Selected entity: amber wireframe outline + white bounds box.
+    if (selected && selected != camera_entity)
+    {
+        std::string mesh_error;
+        const Mesh *mesh = ResolveMesh(*selected, mesh_error);
+        static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
+        if (mesh)
+        {
+            Mat4 world = m_scene->ComputeWorldMatrix(*selected);
+            RenderMeshWireframe(renderer, view_proj, near_p, w, h,
+                                world, *mesh, OUTLINE, false);
+        }
+        // Draw the bounds box in world space: the AABB component
+        // stores LOCAL bounds, so transform them into the entity's
+        // world frame before drawing.
+        Mat4 sel_world = m_scene->ComputeWorldMatrix(*selected);
+        Vec3 sel_wmin, sel_wmax;
+        TransformAABB(selected->bounds.local_min,
+                      selected->bounds.local_max, sel_world,
+                      sel_wmin, sel_wmax);
+        DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                      sel_wmin, sel_wmax, 255, 255, 255);
+    }
+
+    // Hovered entity (ray/AABB hit under the cursor): light-blue
+    // bounds box, distinct from the amber selection.
+    int hover_id = m_gizmo->GetHoverEntity();
+    if (hover_id >= 0 && hover_id != (selected ? selected->id : -1) &&
+        hover_id != (camera_entity ? camera_entity->id : -1))
+    {
+        if (Entity *hover = m_scene->GetEntityById(hover_id))
+        {
+            Mat4 hover_world = m_scene->ComputeWorldMatrix(*hover);
+            Vec3 hover_wmin, hover_wmax;
+            TransformAABB(hover->bounds.local_min,
+                          hover->bounds.local_max, hover_world,
+                          hover_wmin, hover_wmax);
+            DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                          hover_wmin, hover_wmax, 110, 180, 255);
+        }
+    }
+
+    // Physics collider volumes (editor aid): solid = green,
+    // trigger = cyan. Drawn from the collider's own local box
+    // (center +/- extents) transformed into the world frame.
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        Entity &collider_entity = *entity_ptr;
+        if (!collider_entity.collider.enabled)
+            continue;
+        if (&collider_entity == camera_entity)
+            continue;
+        const Vec3 clmin{
+            collider_entity.collider.center.x - collider_entity.collider.extents.x,
+            collider_entity.collider.center.y - collider_entity.collider.extents.y,
+            collider_entity.collider.center.z - collider_entity.collider.extents.z,
+        };
+        const Vec3 clmax{
+            collider_entity.collider.center.x + collider_entity.collider.extents.x,
+            collider_entity.collider.center.y + collider_entity.collider.extents.y,
+            collider_entity.collider.center.z + collider_entity.collider.extents.z,
+        };
+        Mat4 collider_world = m_scene->ComputeWorldMatrix(collider_entity);
+        Vec3 cwmin, cwmax;
+        TransformAABB(clmin, clmax, collider_world, cwmin, cwmax);
+        const bool is_trigger =
+            (collider_entity.collider.type == ColliderComponent::Type::Trigger);
+        DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                      cwmin, cwmax,
+                      is_trigger ? 90 : 80,
+                      is_trigger ? 200 : 230,
+                      is_trigger ? 210 : 110);
+    }
+
+    GizmoFrame gf;
+    gf.scene = m_scene;
+    gf.selection = m_selection;
+    gf.meshes = m_mesh_library;
+    gf.active_camera_id = camera_entity ? camera_entity->id : -1;
+    gf.vp_width = (float)w;
+    gf.vp_height = (float)h;
+    ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+    const float dpi = (fb_scale.x > 0.0f && fb_scale.y > 0.0f)
+        ? std::max(fb_scale.x, fb_scale.y) : 1.0f;
+    gf.dpi_scale = dpi * kViewportSupersample;
+    gf.hovered = m_viewport->IsHovered();
+    gf.cam_pos = pose.position;
+    gf.cam_pitch = pose.pitch;
+    gf.cam_yaw = pose.yaw;
+    gf.cam_fov = pose.fov;
+    gf.near_p = near_p;
+    gf.view_proj = view_proj;
+    gf.dt = 0.0f;
+    gf.snap_translation = m_snap.translation;
+    gf.snap_rotation = m_snap.rotation;
+    gf.snap_scale = m_snap.scale;
+    gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
+    m_gizmo->Draw(renderer, gf);
+}
+
+Entity *Application::FindActiveCamera() const
 {
     if (!m_scene)
         return nullptr;
@@ -738,10 +808,15 @@ bool Application::BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov,
     if (!m_scene || !m_viewport || m_viewport_target_w <= 0 || m_viewport_target_h <= 0)
         return false;
 
-    // The pose to render from: the editor camera in editor mode, the active
-    // gameplay camera in play mode, or a smooth blend while transitioning.
+    // The pose to render from: the primary viewport entry. In the default
+    // layout that is the editor camera in editor mode, the active gameplay
+    // camera in play mode, or a smooth blend while transitioning.
+    const CameraEntry *entry = m_cameras->Get(m_cameras->PrimaryIndex());
+    if (!entry)
+        return false;
+
     EditorCamera pose;
-    if (!GetActiveCameraPose(pose))
+    if (!ResolveCameraPose(*entry, pose))
         return false;
     cam_pos = pose.position;
     fov     = pose.fov;
@@ -758,19 +833,153 @@ bool Application::BuildViewProj(Mat4 &view_proj, Vec3 &cam_pos, float &fov,
         far_p  = camera_entity->camera.far_plane;
     }
 
-    // View = RotX(-pitch) * RotY(-yaw) * Translate(-cam_pos): the inverse
-    // of the camera's world orientation. Yaw first about world up, then
-    // pitch about the camera's local right axis, so roll stays locked to
-    // zero for any yaw/pitch combination.
+    float aspect = (float)m_viewport_target_w / (float)m_viewport_target_h;
+    return BuildViewProjFromPose(pose, near_p, far_p, aspect, view_proj);
+}
+
+// View = RotX(-pitch) * RotY(-yaw) * Translate(-cam_pos): the inverse
+// of the camera's world orientation. Yaw first about world up, then
+// pitch about the camera's local right axis, so roll stays locked to
+// zero for any yaw/pitch combination.
+bool Application::BuildViewProjFromPose(const EditorCamera &pose, float near_p,
+                                        float far_p, float aspect,
+                                        Mat4 &view_proj)
+{
+    if (aspect <= 0.0f || near_p <= 0.0f || far_p <= near_p)
+        return false;
+
     Mat4 view = Mat4Mul(
-        Mat4RotateX(-pitch),
-        Mat4Mul(Mat4RotateY(-yaw), Mat4Translate(-cam_pos.x, -cam_pos.y, -cam_pos.z))
+        Mat4RotateX(-pose.pitch),
+        Mat4Mul(Mat4RotateY(-pose.yaw), Mat4Translate(-pose.position.x, -pose.position.y, -pose.position.z))
     );
 
-    float aspect = (float)m_viewport_target_w / (float)m_viewport_target_h;
-    Mat4 proj = Mat4Perspective(fov, aspect, near_p, far_p);
+    Mat4 proj = Mat4Perspective(pose.fov, aspect, near_p, far_p);
     view_proj = Mat4Mul(proj, view);
     return true;
+}
+
+// Resolve the pose an entry renders with. Editor entries use the active
+// camera pose (editor camera, or the play-mode gameplay camera with any
+// Play/Stop blend applied); SceneEntity entries read the referenced camera
+// entity. Returns false when the source cannot be resolved.
+bool Application::ResolveCameraPose(const CameraEntry &entry, EditorCamera &out)
+{
+    if (entry.type == CameraSourceType::SceneEntity)
+    {
+        if (!m_scene)
+            return false;
+        Entity *e = m_scene->GetEntityById(entry.entity_id);
+        if (!e)
+            return false;
+        return CaptureSceneCamera(*e, out);
+    }
+    return GetActiveCameraPose(out);
+}
+
+// Read any camera entity's pose (position from its world matrix,
+// orientation/fov from its CameraComponent). Falls back to a sensible default
+// pose; returns whether the entity actually has a usable camera component.
+bool Application::CaptureSceneCamera(Entity &camera_entity, EditorCamera &out)
+{
+    out.position = { 0.0f, 2.0f, 8.0f };
+    out.pitch = -14.0f;
+    out.yaw = 0.0f;
+    out.fov = 60.0f;
+    if (!m_scene || camera_entity.camera.fov <= 0.0f)
+        return false;
+
+    Mat4 cam_world = m_scene->ComputeWorldMatrix(camera_entity);
+    out.position.x = cam_world.m[12];
+    out.position.y = cam_world.m[13];
+    out.position.z = cam_world.m[14];
+    out.pitch = camera_entity.camera.pitch;
+    out.yaw   = camera_entity.camera.yaw;
+    if (camera_entity.camera.fov > 1.0f)
+        out.fov = camera_entity.camera.fov;
+    return true;
+}
+
+// The entity hidden from the primary viewport pass: the camera entity the
+// primary entry renders from, so the player's camera never sees itself.
+Entity *Application::GetPrimarySkipEntity() const
+{
+    const CameraEntry *entry = m_cameras->Get(m_cameras->PrimaryIndex());
+    if (entry && entry->type == CameraSourceType::SceneEntity && m_scene)
+        return m_scene->GetEntityById(entry->entity_id);
+    return FindActiveCamera();
+}
+
+// Pixel rect of the primary viewport entry inside the render target, used to
+// map mouse position to world space. Falls back to the whole target.
+bool Application::GetPrimaryViewportRect(int &px, int &py, int &pw, int &ph) const
+{
+    const CameraEntry *entry = m_cameras->Get(m_cameras->PrimaryIndex());
+    if (entry &&
+        CameraManager::RectToPixels(*entry, m_viewport_target_w, m_viewport_target_h,
+                                    px, py, pw, ph))
+        return true;
+    px = 0; py = 0; pw = m_viewport_target_w; ph = m_viewport_target_h;
+    return pw > 0 && ph > 0;
+}
+
+// (Re)create the Inspector camera-preview target. The preview is rendered
+// lazily at whatever size the Inspector asks for and recreated on demand.
+void Application::RecreateCameraPreview(int width, int height)
+{
+    if (!m_window || width <= 0 || height <= 0)
+        return;
+    if (m_camera_preview && m_camera_preview_w == width && m_camera_preview_h == height)
+        return;
+    if (m_camera_preview)
+    {
+        SDL_DestroyTexture(m_camera_preview);
+        m_camera_preview = nullptr;
+    }
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+    m_camera_preview = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET, width, height);
+    m_camera_preview_w = width;
+    m_camera_preview_h = height;
+}
+
+// Render the selected camera entity into the preview target each editor frame
+// so the Inspector can show its live feed. The preview deliberately reuses the
+// scene pass (grid, lights, fills, wireframe) but never the editor overlays.
+void Application::RenderCameraPreview()
+{
+    if (!m_camera_preview || !m_scene || m_state != EngineState::Editor)
+        return;
+
+    Entity *preview_cam = nullptr;
+    if (m_selection && m_selection->entity_id >= 0)
+        preview_cam = m_scene->GetEntityById(m_selection->entity_id);
+    if (!preview_cam || preview_cam->camera.fov <= 0.0f)
+        return;
+
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+    if (SDL_SetRenderTarget(renderer, m_camera_preview) != 0)
+        return;
+
+    SDL_SetRenderDrawColor(renderer, 18, 18, 24, 255);
+    SDL_RenderClear(renderer);
+
+    EditorCamera pose;
+    if (CaptureSceneCamera(*preview_cam, pose))
+    {
+        int w = m_camera_preview_w;
+        int h = m_camera_preview_h;
+        float aspect = (float)w / (float)h;
+        Mat4 view_proj;
+        if (BuildViewProjFromPose(pose, preview_cam->camera.near_plane,
+                                  preview_cam->camera.far_plane, aspect, view_proj))
+        {
+            // The previewed camera is skipped so it never sees itself.
+            RenderScenePass(renderer, view_proj, preview_cam->camera.near_plane,
+                            w, h, preview_cam);
+        }
+    }
+
+    SDL_SetRenderTarget(renderer, nullptr);
 }
 
 // Read the active gameplay camera entity's pose (position from its world
@@ -1305,10 +1514,14 @@ bool Application::ComputeDropWorldPosFromMouse(Vec3 &out)
     if (img_size.x <= 1.0f || img_size.y <= 1.0f)
         return false;
     ImVec2 mouse = ImGui::GetMousePos();
-    const float sx = (mouse.x - img_min.x) * ((float)m_viewport_target_w / img_size.x);
-    const float sy = (mouse.y - img_min.y) * ((float)m_viewport_target_h / img_size.y);
-    return ComputeDropWorldPos(sx, sy, (float)m_viewport_target_w,
-                               (float)m_viewport_target_h, out);
+
+    // The drop target is the primary viewport region, not the whole texture:
+    // multi-viewport layouts map drops through whichever region owns the mouse.
+    int px, py, pw, ph;
+    GetPrimaryViewportRect(px, py, pw, ph);
+    const float sx = (mouse.x - img_min.x) * ((float)m_viewport_target_w / img_size.x) - (float)px;
+    const float sy = (mouse.y - img_min.y) * ((float)m_viewport_target_h / img_size.y) - (float)py;
+    return ComputeDropWorldPos(sx, sy, (float)pw, (float)ph, out);
 }
 
 void Application::ProcessExternalDrops()
@@ -1359,23 +1572,34 @@ void Application::ProcessExternalDrops()
     }
 
     // Mesh files dropped over the 3D viewport also spawn as entities at the
-    // cursor's ground point (editor only; undoable via PushSpawn).
+    // cursor's ground point (editor only; undoable via PushSpawn). The
+    // primary viewport region owns drops in multi-viewport layouts.
     if (m_state == EngineState::Editor && !mesh_dests.empty() && m_viewport)
     {
         ImVec2 img_min = m_viewport->GetImageMin();
         ImVec2 img_size = m_viewport->GetImageSize();
-        const bool inside = img_size.x > 1.0f && img_size.y > 1.0f &&
-            logical.x >= img_min.x && logical.x <= img_min.x + img_size.x &&
-            logical.y >= img_min.y && logical.y <= img_min.y + img_size.y;
-        if (inside)
+        int px, py, pw, ph;
+        const bool has_primary = GetPrimaryViewportRect(px, py, pw, ph);
+        if (has_primary)
         {
-            const float sx = (logical.x - img_min.x) * ((float)m_viewport_target_w / img_size.x);
-            const float sy = (logical.y - img_min.y) * ((float)m_viewport_target_h / img_size.y);
-            Vec3 pos;
-            if (ComputeDropWorldPos(sx, sy, (float)m_viewport_target_w,
-                                    (float)m_viewport_target_h, pos))
-                for (const std::string &dest : mesh_dests)
-                    SpawnMeshEntity(dest, pos);
+            // Primary region's on-screen rect (logical pixels).
+            const float r_scale_x = (img_size.x > 1.0f && m_viewport_target_w > 0)
+                ? img_size.x / (float)m_viewport_target_w : 1.0f;
+            const float r_scale_y = (img_size.y > 1.0f && m_viewport_target_h > 0)
+                ? img_size.y / (float)m_viewport_target_h : 1.0f;
+            const ImVec2 r_min{ img_min.x + px * r_scale_x, img_min.y + py * r_scale_y };
+            const ImVec2 r_max{ r_min.x + pw * r_scale_x, r_min.y + ph * r_scale_y };
+            const bool inside = logical.x >= r_min.x && logical.x <= r_max.x &&
+                                logical.y >= r_min.y && logical.y <= r_max.y;
+            if (inside)
+            {
+                const float sx = (logical.x - img_min.x) * ((float)m_viewport_target_w / img_size.x) - (float)px;
+                const float sy = (logical.y - img_min.y) * ((float)m_viewport_target_h / img_size.y) - (float)py;
+                Vec3 pos;
+                if (ComputeDropWorldPos(sx, sy, (float)pw, (float)ph, pos))
+                    for (const std::string &dest : mesh_dests)
+                        SpawnMeshEntity(dest, pos);
+            }
         }
     }
 
@@ -1557,6 +1781,12 @@ bool Application::Init(int width, int height, const char *title)
     m_audio = new AudioManager();
     m_audio->Init();
     m_script_engine->SetAudioManager(m_audio);
+
+    // Phase 27 camera stack: a pure, headless-testable list of camera entries
+    // (source + normalized viewport rect + z-order). It ships with the classic
+    // single full-screen viewport; the Viewport Layout panel edits it live.
+    m_cameras = new CameraManager();
+    m_cameras->ResetToSingleViewport();
 
     // The SceneManager owns the active Scene. The object is allocated once and
     // rebuilt in place on every load, so the Scene* kept by every panel stays
@@ -1755,9 +1985,19 @@ bool Application::Init(int width, int height, const char *title)
     );
     m_inspector_panel = new InspectorPanel(m_selection, m_scene,
                                            m_material_library, m_texture_library,
-                                           m_history, m_audio);
+                                           m_history, m_audio,
+                                           [this](int w, int h) -> void * {
+        RecreateCameraPreview(w, h);
+        return (void *)m_camera_preview;
+    });
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
+
+    // Phase 27 viewport layout editor: edits the CameraManager camera stack
+    // (sources, normalized rects, z-order, primary). Restoring a layout is
+    // undoable; direct structural edits apply immediately.
+    m_viewport_layout_panel = new ViewportLayoutPanel(m_cameras);
+    m_panels.push_back(std::shared_ptr<ViewportLayoutPanel>(m_viewport_layout_panel));
 
     // Script editor: sidebar over assets/scripts/ + dedicated floating code
     // window. Its reload callback hot-swaps the running play session after a
@@ -1871,6 +2111,14 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Toggle History Panel", "View", "", [this]() {
         if (m_history_panel)
             m_history_panel->ToggleVisible();
+    } });
+    cp.Register({ "Toggle Viewport Layout", "View", "", [this]() {
+        if (m_viewport_layout_panel)
+            m_viewport_layout_panel->ToggleVisible();
+    } });
+    cp.Register({ "Reset Viewport Layout", "View", "", [this]() {
+        if (m_cameras)
+            m_cameras->ResetToSingleViewport();
     } });
     cp.Register({ "Undo", "Edit", "Ctrl+Z", [this]() {
         if (m_history) m_history->Undo();
@@ -2211,6 +2459,13 @@ void Application::Run()
                             m_history_panel->ToggleVisible();
                     }
 
+                    if (m_viewport_layout_panel)
+                    {
+                        if (ImGui::MenuItem("Viewport Layout", nullptr,
+                                            m_viewport_layout_panel->IsVisible()))
+                            m_viewport_layout_panel->ToggleVisible();
+                    }
+
                     if (m_command_palette)
                     {
                         if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P"))
@@ -2338,17 +2593,33 @@ void Application::Run()
                 gf.selection = m_selection;
                 gf.meshes = m_mesh_library;
                 gf.active_camera_id = FindActiveCamera() ? FindActiveCamera()->id : -1;
-                gf.vp_width = (float)m_viewport_target_w;
-                gf.vp_height = (float)m_viewport_target_h;
+
+                // Interaction is scoped to the primary viewport region: gizmo
+                // ray hits and drop targets resolve against the primary entry's
+                // rect instead of the whole target, so multi-viewport layouts
+                // pick consistently in whichever region owns the mouse.
+                int vp_px, vp_py, vp_pw, vp_ph;
+                GetPrimaryViewportRect(vp_px, vp_py, vp_pw, vp_ph);
+                gf.vp_width = (float)vp_pw;
+                gf.vp_height = (float)vp_ph;
                 gf.dpi_scale = dpi * kViewportSupersample;
                 gf.hovered = m_viewport->IsHovered();
                 ImVec2 img_min = m_viewport->GetImageMin();
                 ImVec2 img_size = m_viewport->GetImageSize();
                 ImVec2 mouse = ImGui::GetMousePos();
-                gf.mouse_x = (img_size.x > 1.0f)
-                    ? (mouse.x - img_min.x) * (gf.vp_width / img_size.x) : 0.0f;
-                gf.mouse_y = (img_size.y > 1.0f)
-                    ? (mouse.y - img_min.y) * (gf.vp_height / img_size.y) : 0.0f;
+                if (img_size.x > 1.0f && img_size.y > 1.0f &&
+                    m_viewport_target_w > 0 && m_viewport_target_h > 0)
+                {
+                    float tx = (mouse.x - img_min.x) * ((float)m_viewport_target_w / img_size.x);
+                    float ty = (mouse.y - img_min.y) * ((float)m_viewport_target_h / img_size.y);
+                    gf.mouse_x = tx - (float)vp_px;
+                    gf.mouse_y = ty - (float)vp_py;
+                }
+                else
+                {
+                    gf.mouse_x = 0.0f;
+                    gf.mouse_y = 0.0f;
+                }
                 gf.cam_pos = cam_pos;
                 gf.cam_pitch = pitch;
                 gf.cam_yaw = yaw;
@@ -2369,6 +2640,11 @@ void Application::Run()
         // queued a target recreation for the frame we come back.
         if (!minimized)
             RenderViewportTarget();
+
+        // Inspector camera preview: render the selected camera entity into the
+        // preview target after the main pass so its scene pass reuses fresh
+        // AABB bounds. Drawn by the Inspector's Camera section.
+        RenderCameraPreview();
 
         SDL_Renderer *renderer = m_window->GetNativeRenderer();
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -2397,6 +2673,7 @@ void Application::Shutdown()
     m_content_browser = nullptr;
     m_console_panel = nullptr;
     m_inspector_panel = nullptr;
+    m_viewport_layout_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further
     // stdout traffic can target a closed pipe.
@@ -2408,8 +2685,17 @@ void Application::Shutdown()
         m_viewport_target = nullptr;
     }
 
+    if (m_camera_preview)
+    {
+        SDL_DestroyTexture(m_camera_preview);
+        m_camera_preview = nullptr;
+    }
+
     delete m_gizmo;
     m_gizmo = nullptr;
+
+    delete m_cameras;
+    m_cameras = nullptr;
 
     // ScriptEngine's destructor tears down the Lua VM (and with it any
     // userdata pointing into entities), so release it before the scene.

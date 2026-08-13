@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.27.0-alpha] — 2026-08-13
+
+### Added
+
+- **CameraManager / multi-viewport rendering**: the engine's single-camera assumption is replaced by `CameraManager` (`src/core/CameraManager.h` / `.cpp`) — a pure, headless-testable stack of camera entries. Each entry couples a camera *source* (the free-fly editor camera or a scene entity's `CameraComponent`) with a *viewport layout definition*: a normalized rect (x/y/w/h), a z-order (higher renders on top, stable for ties), an enabled flag, and a primary flag. The viewport renderer is now a multi-pass renderer: it walks the stack bottom-up by z-order and draws each enabled entry into its own region of the shared supersampled target, so split-screen / multi-camera scenes render in a single pass pipeline. Rendering, lights gathering, and wireframe were factored into a shared `RenderScenePass`; the editor overlays (selection, bounds boxes, colliders, gizmo) render only in the primary entry.
+- **Primary entry / input ownership**: exactly one entry is primary (falling back to the topmost *enabled* entry when the primary is disabled or removed). It owns editor input: gizmo picking and mesh-drop targets resolve against its pixel rect instead of the whole texture, and its source camera's entity is hidden from its own pass so the camera never sees itself.
+- **Viewport Layout panel** (`src/editor/ViewportLayoutPanel.h` / `.cpp`): docks into the development zone of every workspace (Material Editor → Console → History → Viewport Layout → Content Browser) and is reachable via the View menu and the command palette ("Toggle Viewport Layout"). It edits the camera stack live — label, source combo (Editor Camera / Scene Entity + entity id), X/Y/Width/Height normalized rect, Z order, Enabled, Primary radio, per-entry Remove, Add Entry (defaults to a right-half split), and Reset to Single Viewport.
+- **Camera Preview in the Inspector**: the selected entity's `CameraComponent` is rendered into a small off-screen target each editor frame and shown live in the Camera section (with a primary readout). It reuses the shared scene pass (grid, lights, fills, wireframe) without any editor overlay.
+
+### Verified
+
+- New `phase27_camera_manager_test` harness: single-viewport defaults, normalized-rect → pixel conversion (rounding, off-screen/degenerate rejection, target clamping), stable z-ordered draw order, primary invariants (SetPrimary demotes all others; removing the primary promotes the topmost enabled entry; disabled primary falls back), empty/all-disabled handling — 46/46 checks pass. Clean rebuild succeeds; editor smoke run stays alive on the default single-viewport layout with an empty log.
+
 ## [0.26.0-alpha] — 2026-08-12
 
 ### Added

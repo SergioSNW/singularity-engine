@@ -26,6 +26,7 @@ static const char *kStatsWindow = "Singularity Engine Stats";
 static const char *kScriptEditorWindow = "Script Editor";
 static const char *kMaterialEditorWindow = "Material Editor";
 static const char *kHistoryWindow = "History";
+static const char *kViewportLayoutWindow = "Viewport Layout";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -81,6 +82,7 @@ void WorkspaceManager::RebuildLayout()
         ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
         ImGui::DockBuilderDockWindow(kConsoleWindow, node);
         ImGui::DockBuilderDockWindow(kHistoryWindow, node);
+        ImGui::DockBuilderDockWindow(kViewportLayoutWindow, node);
         ImGui::DockBuilderDockWindow(kContentBrowserWindow, node);
     };
 

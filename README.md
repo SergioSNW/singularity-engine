@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.26.0-alpha — Audio & Sound Effects
+v0.27.0-alpha — Camera & Multi-Viewport Management
 
 ## Dependencies
 
@@ -24,16 +24,18 @@ cmake --build build
 
 ```
 src/
-├── core/          Game loop and ECS logic
-│   ├── main.cpp
-│   ├── Application.h/.cpp
-│   ├── Window.h/.cpp
-├── render/        SDL2 rendering wrappers (future)
-└── editor/        Dear ImGui editor panels
-    ├── EditorPanel.h            (base interface)
-    ├── StatsPanel.h/.cpp        (diagnostics)
-    ├── SceneHierarchyPanel.h/.cpp (scene tree)
-    └── InspectorPanel.h/.cpp    (property editor)
+    ├── core/          Game loop and ECS logic
+    │   ├── main.cpp
+    │   ├── Application.h/.cpp
+    │   ├── CameraManager.h/.cpp (multi-viewport camera stack)
+    │   ├── Window.h/.cpp
+    ├── render/        SDL2 rendering wrappers (future)
+    └── editor/        Dear ImGui editor panels
+        ├── EditorPanel.h            (base interface)
+        ├── StatsPanel.h/.cpp        (diagnostics)
+        ├── SceneHierarchyPanel.h/.cpp (scene tree)
+        ├── InspectorPanel.h/.cpp    (property editor)
+        └── ViewportLayoutPanel.h/.cpp (camera layout editor)
 ```
 
 ## License
