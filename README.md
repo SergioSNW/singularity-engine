@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.27.0-alpha — Camera & Multi-Viewport Management
+v0.28.0-alpha — Final UI & Workspace Consolidation
 
 ## Dependencies
 
@@ -28,6 +28,7 @@ src/
     │   ├── main.cpp
     │   ├── Application.h/.cpp
     │   ├── CameraManager.h/.cpp (multi-viewport camera stack)
+    │   ├── ToastManager.h/.cpp  (editor toast notifications)
     │   ├── Window.h/.cpp
     ├── render/        SDL2 rendering wrappers (future)
     └── editor/        Dear ImGui editor panels

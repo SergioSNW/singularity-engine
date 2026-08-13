@@ -83,6 +83,11 @@ public:
     Workspace GetWorkspace() const { return m_workspace; }
     bool HasSavedLayout() const { return !m_saved_layout.empty(); }
 
+    // Reserve vertical space at the bottom of the dock host for the status
+    // bar. Set once at startup (0 = status bar disabled / headless).
+    void SetBottomBarHeight(float height) { m_bottom_bar_height = height; }
+    float BottomBarHeight() const { return m_bottom_bar_height; }
+
 private:
     void RebuildLayout();
 
@@ -95,4 +100,5 @@ private:
     unsigned int m_code_window_node;  // dock node for the script code window
     std::string m_saved_layout;       // captured custom .ini ("")
     std::string m_pending_save;       // serialized at FinalizeSave()
+    float m_bottom_bar_height;        // px reserved for the status bar
 };

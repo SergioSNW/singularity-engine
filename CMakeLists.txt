@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.27.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.28.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -112,6 +112,7 @@ target_sources(singularity-engine PRIVATE
   src/core/AssetImporter.cpp
   src/core/AudioManager.cpp
   src/core/CameraManager.cpp
+  src/core/ToastManager.cpp
   src/script/ScriptEngine.cpp
   src/editor/StatsPanel.cpp
   src/editor/SceneHierarchyPanel.cpp

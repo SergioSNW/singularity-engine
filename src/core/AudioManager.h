@@ -43,6 +43,10 @@ public:
     // Halt every playing channel (used when leaving play mode / previews).
     void StopAll();
 
+    // Number of channels currently playing a sample (the status bar's "active
+    // audio channels" metric). 0 when the mixer is not ready.
+    int ActiveChannelCount() const;
+
     // Master gain (0..1) applied to every channel. New Play calls scale the
     // sample by it; already-running channels are re-gained immediately.
     void SetMasterVolume(float volume);

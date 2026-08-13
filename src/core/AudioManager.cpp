@@ -183,6 +183,13 @@ void AudioManager::StopAll()
     m_impl->channel_path.clear();
 }
 
+int AudioManager::ActiveChannelCount() const
+{
+    if (!m_impl || !m_impl->ready)
+        return 0;
+    return (int)m_impl->channel_path.size();
+}
+
 void AudioManager::SetMasterVolume(float volume)
 {
     if (!m_impl)

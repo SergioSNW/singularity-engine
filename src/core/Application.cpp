@@ -46,6 +46,11 @@
 
 static const double TARGET_FRAME_TIME = 1.0 / 60.0;
 
+// Bottom status bar height (logical pixels). The WorkspaceManager reserves
+// this strip from the dock host window so the bar and the dockspace never
+// overlap; DrawStatusBar pins its own window to the same strip.
+static const float kStatusBarHeight = 24.0f;
+
 // Viewport anti-aliasing factor. The off-screen 3D pass is rasterized by the
 // SDL2 renderer, which offers no multisampling for render-target textures, so
 // edges are anti-aliased by supersampling: the target is created at this
@@ -1112,11 +1117,13 @@ void Application::SaveScene()
     {
         m_scene_path = path;
         m_scene_status = "Scene saved to " + std::filesystem::absolute(path).string();
+        PushToast("Scene saved");
         ConsoleInfo("Scene saved: " + m_scene_path);
     }
     else
     {
         m_scene_status = "Save failed: " + error;
+        PushToast("Save failed: " + error);
         ConsoleError("Scene save failed: " + error);
     }
 }
@@ -1145,12 +1152,14 @@ void Application::LoadSceneFile(const std::string &filepath)
         m_selection->entity_id = -1;
         m_selection->entity_name.clear();
         m_scene_status = "Scene loaded from " + std::filesystem::absolute(filepath).string();
+        PushToast("Scene loaded");
         ConsoleInfo("Scene loaded: " + filepath + " (" +
                     std::to_string(m_scene->GetEntities().size()) + " entities)");
     }
     else
     {
         m_scene_status = "Open failed: " + error;
+        PushToast("Open failed: " + error);
         ConsoleError("Scene load failed: " + filepath + " -> " + error);
     }
 }
@@ -1172,11 +1181,13 @@ void Application::NewScene()
         m_selection->entity_id = -1;
         m_selection->entity_name.clear();
         m_scene_status = "New scene: " + m_scene_manager->ActiveName();
+        PushToast("New scene: " + m_scene_manager->ActiveName());
         ConsoleInfo("New scene created: " + m_scene_manager->ActiveName());
     }
     else
     {
         m_scene_status = "New scene failed: " + error;
+        PushToast("New scene failed: " + error);
         ConsoleError("New scene failed: " + error);
     }
 }
@@ -1302,6 +1313,7 @@ void Application::EnterPlayMode()
     }
 
     m_state = EngineState::Play;
+    PushToast("Play mode");
     ConsoleInfo(script_errors.empty()
                     ? "Entered play mode (scene snapshotted)"
                     : "Entered play mode with script errors: " + script_errors);
@@ -1353,6 +1365,7 @@ void Application::ExitPlayMode()
     m_selection->entity_id = -1;
     m_selection->entity_name.clear();
     m_state = EngineState::Editor;
+    PushToast("Stopped play mode");
 
     // Blend the view back from the (restored) gameplay camera to the free-fly
     // editor camera, so leaving play glides back to where the user was editing.
@@ -1440,7 +1453,55 @@ void Application::DuplicateSelection()
         m_selection->entity_id = clone->id;
         m_selection->entity_name = clone->tag.tag;
         m_scene_status = "Duplicated '" + clone->tag.tag + "'";
+        PushToast("Duplicated '" + clone->tag.tag + "'");
     }
+}
+
+Entity *Application::SpawnPrimitive(const char *label, const char *mesh_path,
+                                    const char *material_path)
+{
+    if (!m_scene || !label)
+        return nullptr;
+
+    Entity &created = m_scene->CreateEntity(label);
+    if (mesh_path)
+        created.mesh.path = mesh_path;
+    if (material_path)
+        created.material.material_path = material_path;
+
+    // Offset the new object in front of the editor camera so it is visible
+    // even when the origin is occluded.
+    const float yaw = m_editor_camera.yaw * 3.1415926535f / 180.0f;
+    created.transform.position[0] = m_editor_camera.position.x - std::sin(yaw) * 3.0f;
+    created.transform.position[1] = m_editor_camera.position.y + 0.5f;
+    created.transform.position[2] = m_editor_camera.position.z - std::cos(yaw) * 3.0f;
+
+    if (m_history)
+        m_history->PushSpawn(created, ("Create '" + std::string(label) + "'").c_str());
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_scene_status = "Spawned '" + std::string(label) + "'";
+    PushToast("Spawned '" + std::string(label) + "'");
+    return &created;
+}
+
+void Application::DeleteSelection()
+{
+    if (m_state != EngineState::Editor)
+        return;
+    if (!m_selection || m_selection->entity_id < 0)
+        return;
+
+    Entity *entity = m_scene->GetEntityById(m_selection->entity_id);
+    if (!entity)
+        return;
+    const std::string name = entity->tag.tag;
+    if (m_history)
+        m_history->ExecuteDelete(*entity, ("Delete '" + name + "'").c_str());
+    m_selection->entity_id = -1;
+    m_selection->entity_name.clear();
+    m_scene_status = "Deleted '" + name + "'";
+    PushToast("Deleted '" + name + "'");
 }
 
 void Application::SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position)
@@ -1606,8 +1667,227 @@ void Application::ProcessExternalDrops()
     m_scene_status = imported > 0
         ? "Imported " + std::to_string(imported) + " file(s) into assets/"
         : "Import failed: " + last_error;
+    if (imported > 0)
+        PushToast("Imported " + std::to_string(imported) + " file(s)");
+    else if (!last_error.empty())
+        PushToast("Import failed: " + last_error);
 
     m_pending_drops.clear();
+}
+
+void Application::PushToast(const std::string &text)
+{
+    m_toasts.Push(text, (uint64_t)SDL_GetTicks());
+}
+
+void Application::DrawStatusBar(float dt)
+{
+    (void)dt;
+    if (!m_status_bar_visible)
+        return;
+
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    const float bar_h = kStatusBarHeight;
+    ImVec2 work_pos = viewport->WorkPos;
+    ImVec2 work_size = viewport->WorkSize;
+
+    ImGui::SetNextWindowPos(ImVec2(work_pos.x, work_pos.y + work_size.y - bar_h));
+    ImGui::SetNextWindowSize(ImVec2(work_size.x, bar_h));
+    ImGui::SetNextWindowViewport(viewport->ID);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(14.0f, 0.0f));
+
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+    ImGui::Begin("##StatusBar", nullptr, flags);
+
+    ImGui::TextColored(ImVec4(m_theme_colors.accent[0], m_theme_colors.accent[1],
+                              m_theme_colors.accent[2], m_theme_colors.accent[3]),
+                       "%s", WorkspaceManager::WorkspaceName(m_workspace_manager.GetWorkspace()));
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", m_scene_status.empty() ? "Ready" : m_scene_status.c_str());
+
+    // Right-aligned live metrics.
+    const size_t entity_count = m_scene ? m_scene->GetEntities().size() : 0;
+    const int audio_channels = m_audio ? m_audio->ActiveChannelCount() : 0;
+    const size_t active_viewports = m_cameras ? m_cameras->EnabledCount() : 0;
+    const std::string right_text =
+        std::to_string((int)std::lround(m_fps)) + " FPS   |   " +
+        std::to_string(active_viewports) + " viewport" +
+        (active_viewports == 1 ? "" : "s") + "   |   " +
+        std::to_string(audio_channels) + " audio ch   |   " +
+        std::to_string(entity_count) + " entities";
+    const float right_w = ImGui::CalcTextSize(right_text.c_str()).x;
+    ImGui::SameLine(ImGui::GetWindowWidth() - right_w - 8.0f);
+    ImGui::TextUnformatted(right_text.c_str());
+
+    ImGui::End();
+    ImGui::PopStyleVar(4);
+}
+
+void Application::DrawToasts()
+{
+    const uint64_t now = (uint64_t)SDL_GetTicks();
+    m_toasts.Update(now);
+    if (m_toasts.empty())
+        return;
+
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+
+    float y = ImGui::GetFrameHeight() + 10.0f;  // below the main menu bar
+    for (size_t i = 0; i < m_toasts.Count(); ++i)
+    {
+        const ToastManager::Toast *toast = m_toasts.Get(i);
+        const float alpha = (i + 1 == m_toasts.Count())
+            ? m_toasts.NewestFade(now) : 1.0f;
+        const ImVec2 text_size = ImGui::CalcTextSize(toast->text.c_str());
+        const float pad = 10.0f;
+        const float w = text_size.x + pad * 2.0f;
+        const float h = text_size.y + pad;
+
+        const ImVec2 p0(display.x - w - 14.0f, y);
+        const ImVec2 p1(p0.x + w, p0.y + h);
+        const ImU32 bg = ImGui::GetColorU32(ImVec4(0.08f, 0.08f, 0.10f, 0.92f * alpha));
+        const ImU32 border = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.16f * alpha));
+        dl->AddRectFilled(p0, p1, bg, 6.0f);
+        dl->AddRect(p0, p1, border, 6.0f);
+        dl->AddText(ImVec2(p0.x + pad, p0.y + pad * 0.5f),
+                    ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)),
+                    toast->text.c_str());
+        y += h + 8.0f;
+    }
+}
+
+void Application::DrawViewportContextMenu()
+{
+    if (ImGui::BeginPopup("Viewport Context"))
+    {
+        bool has_sel = m_selection && m_selection->entity_id >= 0;
+        Entity *selected = has_sel ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
+        if (selected)
+        {
+            if (ImGui::MenuItem("Rename..."))
+            {
+                m_viewport_rename_entity = selected->id;
+                std::strncpy(m_viewport_rename_buffer, selected->tag.tag.c_str(),
+                             sizeof(m_viewport_rename_buffer) - 1);
+                m_viewport_rename_buffer[sizeof(m_viewport_rename_buffer) - 1] = '\0';
+                m_viewport_rename_open = true;
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+                DuplicateSelection();
+            if (ImGui::MenuItem("Delete"))
+                DeleteSelection();
+            ImGui::Separator();
+        }
+        if (ImGui::MenuItem("Create Empty Entity"))
+            SpawnPrimitive("New Entity", nullptr, nullptr);
+        if (ImGui::MenuItem("Create Cube"))
+            SpawnPrimitive("Cube", nullptr, "Checker.mat");
+        if (ImGui::MenuItem("Create Octahedron"))
+            SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
+        if (ImGui::MenuItem("Create Directional Light"))
+        {
+            Entity &light = CreateDirectionalLightEntity(*m_scene, "Directional Light");
+            if (m_history)
+                m_history->PushSpawn(light, "Create 'Directional Light'");
+            m_selection->entity_id = light.id;
+            m_selection->entity_name = light.tag.tag;
+            m_scene_status = "Created 'Directional Light'";
+            PushToast("Created 'Directional Light'");
+        }
+        if (ImGui::MenuItem("Create Camera"))
+        {
+            Entity &cam = m_scene->CreateEntity("Camera");
+            cam.transform.position[0] = m_editor_camera.position.x;
+            cam.transform.position[1] = m_editor_camera.position.y;
+            cam.transform.position[2] = m_editor_camera.position.z;
+            cam.camera.pitch = m_editor_camera.pitch;
+            cam.camera.yaw = m_editor_camera.yaw;
+            if (m_history)
+                m_history->PushSpawn(cam, "Create 'Camera'");
+            m_selection->entity_id = cam.id;
+            m_selection->entity_name = cam.tag.tag;
+            m_scene_status = "Created 'Camera'";
+            PushToast("Created 'Camera'");
+        }
+        ImGui::EndPopup();
+    }
+
+    // "Rename..." over the viewport opens a small modal (the Hierarchy uses an
+    // inline row; the viewport has no inline surface, so a modal is the
+    // harmonized equivalent).
+    if (m_viewport_rename_open)
+    {
+        ImGui::OpenPopup("Rename Entity");
+        m_viewport_rename_open = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Rename Entity", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        Entity *target = m_scene->GetEntityById(m_viewport_rename_entity);
+        if (!target)
+        {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
+        ImGui::TextUnformatted("Rename entity:");
+        ImGui::SetNextItemWidth(300.0f);
+        const bool committed = ImGui::InputText(
+            "##name", m_viewport_rename_buffer, sizeof(m_viewport_rename_buffer),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape);
+        if (committed && !cancelled && m_viewport_rename_buffer[0] != '\0')
+        {
+            const std::string new_name = m_viewport_rename_buffer;
+            if (m_history)
+                m_history->BeginEntityEdit(target->id, "Rename");
+            target->tag.tag = new_name;
+            if (m_history)
+                m_history->EndEntityEdit();
+            if (m_selection->entity_id == target->id)
+                m_selection->entity_name = new_name;
+            m_scene_status = "Renamed to '" + new_name + "'";
+            PushToast("Renamed to '" + new_name + "'");
+            ImGui::CloseCurrentPopup();
+        }
+        else if (committed || cancelled)
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        if (!committed)
+        {
+            if (ImGui::Button("OK"))
+            {
+                if (m_viewport_rename_buffer[0] != '\0')
+                {
+                    if (m_history)
+                        m_history->BeginEntityEdit(target->id, "Rename");
+                    target->tag.tag = m_viewport_rename_buffer;
+                    if (m_history)
+                        m_history->EndEntityEdit();
+                    if (m_selection->entity_id == target->id)
+                        m_selection->entity_name = m_viewport_rename_buffer;
+                    m_scene_status = "Renamed to '" + std::string(m_viewport_rename_buffer) + "'";
+                    PushToast("Renamed to '" + std::string(m_viewport_rename_buffer) + "'");
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+                ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void Application::UpdateCameraControls(float dt)
@@ -1633,18 +1913,49 @@ void Application::UpdateCameraControls(float dt)
 
     const bool over_viewport = m_viewport->IsHovered();
     const bool rmb_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    const bool rmb_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const float kFlyThresholdPx = 3.0f;
 
-    // Enter fly mode: RMB pressed while hovering the viewport. The OS cursor
-    // is captured (relative mode) for unlimited rotation and ImGui is told to
-    // ignore the mouse so the hidden cursor never triggers a panel. Skipped
-    // while a camera blend is still in flight so the blend isn't hijacked.
-    if (!m_flying && over_viewport && rmb_down &&
+    // Right-click over the viewport is a two-way gesture: a quick click opens
+    // the viewport context menu; press-and-move (past the threshold) captures
+    // the cursor and enters Fly Mode. Skipped while a camera blend is still in
+    // flight so the blend isn't hijacked.
+    if (rmb_clicked && over_viewport &&
         m_camera_transition.phase == CameraTransitionPhase::None)
     {
-        m_flying = true;
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse;
-        SDL_GetRelativeMouseState(nullptr, nullptr); // drain pre-capture motion
+        m_viewport_rmb_pending = true;
+        const ImVec2 mouse = ImGui::GetMousePos();
+        m_viewport_rmb_down_x = mouse.x;
+        m_viewport_rmb_down_y = mouse.y;
+    }
+
+    if (m_viewport_rmb_pending && !rmb_down)
+    {
+        // Released without a fly-drag: treat it as a context-menu click.
+        m_viewport_rmb_pending = false;
+        if (over_viewport)
+            ImGui::OpenPopup("Viewport Context");
+    }
+
+    if (m_viewport_rmb_pending && rmb_down)
+    {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const float dx = mouse.x - m_viewport_rmb_down_x;
+        const float dy = mouse.y - m_viewport_rmb_down_y;
+        if (dx * dx + dy * dy > kFlyThresholdPx * kFlyThresholdPx)
+        {
+            m_viewport_rmb_pending = false;
+            if (m_camera_transition.phase == CameraTransitionPhase::None)
+            {
+                // The OS cursor is captured (relative mode) for unlimited
+                // rotation and ImGui is told to ignore the mouse so the hidden
+                // cursor never triggers a panel.
+                m_flying = true;
+                SDL_SetRelativeMouseMode(SDL_TRUE);
+                ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse;
+                SDL_GetRelativeMouseState(nullptr, nullptr); // drain pre-capture motion
+            }
+        }
     }
 
     // Exit fly mode as soon as RMB is released; the normal cursor returns.
@@ -1763,6 +2074,10 @@ bool Application::Init(int width, int height, const char *title)
     // Restore the workspace before the first frame so a saved custom layout
     // (or the remembered preset) is active immediately.
     m_workspace_manager.LoadFromFile();
+
+    // Reserve the bottom strip of the dock host for the status bar so docked
+    // panels never draw underneath it.
+    m_workspace_manager.SetBottomBarHeight(kStatusBarHeight);
 
     m_selection = new SelectionState();
     m_mesh_library = new MeshLibrary();
@@ -2039,7 +2354,7 @@ bool Application::Init(int width, int height, const char *title)
         if (m_settings_panel)
             m_settings_panel->ToggleVisible();
     } });
-    cp.Register({ "Command Palette", "View", "Ctrl+Shift+P", [this]() {
+    cp.Register({ "Command Palette", "View", "Ctrl+P", [this]() {
         if (m_command_palette)
             m_command_palette->ToggleOpen();
     } });
@@ -2061,6 +2376,7 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Reset View to Default Workspace", "Workspace", "", [this]() {
         m_workspace_manager.ResetToDefault();
         m_script_editor->RequestDockCodeWindow(0);
+        PushToast("Reset to default layout");
     } });
     cp.Register({ "Save Current Layout as Default", "Workspace", "", [this]() {
         m_workspace_manager.RequestSaveCurrent();
@@ -2070,6 +2386,43 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "New Scene", "File", "", [this]() { NewScene(); } });
     cp.Register({ "Save Scene As...", "File", "", [this]() { OpenSaveAsModal(); } });
     cp.Register({ "Enter Play Mode", "Transport", "", [this]() { EnterPlayMode(); } });
+    cp.Register({ "Stop Play Mode", "Transport", "", [this]() { ExitPlayMode(); } });
+
+    // Entity operations (palette + viewport context menu share these paths).
+    cp.Register({ "Duplicate Selected", "Edit", "Ctrl+D", [this]() { DuplicateSelection(); } });
+    cp.Register({ "Delete Selected", "Edit", "", [this]() { DeleteSelection(); } });
+    cp.Register({ "Create Empty Entity", "Create", "", [this]() {
+        SpawnPrimitive("New Entity", nullptr, nullptr);
+    } });
+    cp.Register({ "Create Cube", "Create", "", [this]() {
+        SpawnPrimitive("Cube", nullptr, "Checker.mat");
+    } });
+    cp.Register({ "Create Octahedron", "Create", "", [this]() {
+        SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
+    } });
+    cp.Register({ "Create Directional Light", "Create", "", [this]() {
+        Entity &light = CreateDirectionalLightEntity(*m_scene, "Directional Light");
+        if (m_history)
+            m_history->PushSpawn(light, "Create 'Directional Light'");
+        m_selection->entity_id = light.id;
+        m_selection->entity_name = light.tag.tag;
+        m_scene_status = "Created 'Directional Light'";
+        PushToast("Created 'Directional Light'");
+    } });
+    cp.Register({ "Create Camera", "Create", "", [this]() {
+        Entity &cam = m_scene->CreateEntity("Camera");
+        cam.transform.position[0] = m_editor_camera.position.x;
+        cam.transform.position[1] = m_editor_camera.position.y;
+        cam.transform.position[2] = m_editor_camera.position.z;
+        cam.camera.pitch = m_editor_camera.pitch;
+        cam.camera.yaw = m_editor_camera.yaw;
+        if (m_history)
+            m_history->PushSpawn(cam, "Create 'Camera'");
+        m_selection->entity_id = cam.id;
+        m_selection->entity_name = cam.tag.tag;
+        m_scene_status = "Created 'Camera'";
+        PushToast("Created 'Camera'");
+    } });
 
     // Content Browser: dockable asset manager over assets/ (scene/prefab
     // load & spawn, script open, folder/file ops). Its window is docked by
@@ -2152,6 +2505,14 @@ void Application::Run()
         double dt = (double)(curr_counter - prev_counter) / (double)freq;
         prev_counter = curr_counter;
 
+        // Smoothed FPS for the status bar: exponential moving average so the
+        // instant frame-to-frame jitter averages out.
+        if (dt > 0.0)
+        {
+            const float inst_fps = (float)(1.0 / dt);
+            m_fps = (m_fps <= 0.0f) ? inst_fps : m_fps * 0.92f + inst_fps * 0.08f;
+        }
+
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
@@ -2221,11 +2582,14 @@ void Application::Run()
         // but doing it here keeps piped output flowing even while it is hidden.
         Console::Instance().DrainPipes();
 
-        // Global command palette: Ctrl+Shift+P toggles it in editor mode.
+        // Global command palette: Ctrl+P (or F1, the editor convention) toggles
+        // it in editor mode; Ctrl+Shift+P is kept as a secondary chord.
         // IsKeyChordPressed reports the chord once per frame; the palette's
         // own OnImGuiRender draws the modal and handles navigation.
         if (m_state == EngineState::Editor && m_command_palette &&
-            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P))
+            (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P) ||
+             ImGui::IsKeyPressed(ImGuiKey_F1) ||
+             ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P)))
         {
             m_command_palette->ToggleOpen();
         }
@@ -2468,9 +2832,28 @@ void Application::Run()
 
                     if (m_command_palette)
                     {
-                        if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P"))
+                        if (ImGui::MenuItem("Command Palette", "Ctrl+P"))
                             m_command_palette->ToggleOpen();
                     }
+
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Status Bar", nullptr, m_status_bar_visible))
+                    {
+                        m_status_bar_visible = !m_status_bar_visible;
+                        // The dock host shrinks/grows to the reserved strip next
+                        // frame; docked nodes follow the host automatically, so
+                        // the user's arrangement (canonical or captured) is kept.
+                        m_workspace_manager.SetBottomBarHeight(
+                            m_status_bar_visible ? kStatusBarHeight : 0.0f);
+                    }
+                    if (ImGui::MenuItem("Reset to Default Layout"))
+                    {
+                        m_workspace_manager.ResetToDefault();
+                        m_script_editor->RequestDockCodeWindow(0);
+                        PushToast("Reset to default layout");
+                    }
+                    if (ImGui::MenuItem("Save Current Layout as Default"))
+                        m_workspace_manager.RequestSaveCurrent();
                     ImGui::EndMenu();
                 }
             }
@@ -2519,6 +2902,9 @@ void Application::Run()
                 panel->OnImGuiRender((float)dt);
 
             DrawSaveAsModal();
+            DrawViewportContextMenu();
+            DrawStatusBar((float)dt);
+            DrawToasts();
         }
 
         // Route OS file drops into the assets tree now that every panel drew

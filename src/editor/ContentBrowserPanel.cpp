@@ -473,11 +473,54 @@ void ContentBrowserPanel::ContextMenu(const std::string &path, FileKind kind)
         std::strncpy(m_rename_buffer, Leaf(path).c_str(), sizeof(m_rename_buffer) - 1);
         m_rename_buffer[sizeof(m_rename_buffer) - 1] = '\0';
     }
+    if (ImGui::MenuItem("Duplicate"))
+        DuplicateAsset(path);
     if (ImGui::MenuItem("Delete"))
     {
         m_pending_delete = path;
         m_confirm_delete = true;
     }
+}
+
+void ContentBrowserPanel::DuplicateAsset(const std::string &path)
+{
+    if (path == m_root || !UnderRoot(path))
+    {
+        m_status = "Duplicate failed: outside assets/";
+        return;
+    }
+
+    // "<stem>_copy[.ext]", then "_copy_2" on collisions.
+    const size_t slash = path.find_last_of('/');
+    const std::string leaf = (slash == std::string::npos)
+        ? path : path.substr(slash + 1);
+    const size_t dot = leaf.rfind('.');
+    const std::string stem = (dot == std::string::npos) ? leaf : leaf.substr(0, dot);
+    const std::string ext = (dot == std::string::npos) ? "" : leaf.substr(dot);
+    const std::string parent = (slash == std::string::npos) ? "" : path.substr(0, slash + 1);
+
+    std::string candidate = parent + stem + "_copy" + ext;
+    int suffix = 2;
+    while (fs::exists(candidate))
+        candidate = parent + stem + "_copy_" + std::to_string(suffix++) + ext;
+
+    std::error_code ec;
+    if (fs::is_directory(path))
+        fs::copy(path, candidate, fs::copy_options::recursive, ec);
+    else
+        fs::copy_file(path, candidate, fs::copy_options::overwrite_existing, ec);
+
+    if (!ec)
+    {
+        m_status = "Duplicated to " + candidate;
+        m_selected = candidate;
+    }
+    else
+    {
+        m_status = "Duplicate failed: " + ec.message();
+    }
+    RefreshTree();
+    RefreshFiles();
 }
 
 void ContentBrowserPanel::DrawConfirmDeleteModal()

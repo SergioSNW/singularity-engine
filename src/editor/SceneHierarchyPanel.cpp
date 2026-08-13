@@ -66,6 +66,62 @@ void SceneHierarchyPanel::DuplicateNode(Entity &entity)
     }
 }
 
+void SceneHierarchyPanel::DrawRenameRow()
+{
+    if (m_rename_entity_id < 0)
+        return;
+
+    Entity *entity = m_scene->GetEntityById(m_rename_entity_id);
+    if (!entity)
+    {
+        m_rename_entity_id = -1;
+        return;
+    }
+
+    ImGui::Text("Rename '%s':", entity->tag.tag.c_str());
+    ImGui::SameLine();
+
+    // Grab keyboard focus on the first frame the row opens.
+    if (m_rename_entity_id != m_rename_focus_id)
+    {
+        ImGui::SetKeyboardFocusHere();
+        m_rename_focus_id = m_rename_entity_id;
+    }
+
+    bool committed = false;
+    bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape);
+
+    ImGui::PushID(m_rename_entity_id);
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::InputText("##name", m_rename_buffer, sizeof(m_rename_buffer),
+                         ImGuiInputTextFlags_EnterReturnsTrue))
+        committed = true;
+    if (!committed && !ImGui::IsItemActive() && ImGui::IsItemDeactivated())
+        committed = true;  // blur commits, matching the Content Browser row
+    ImGui::PopID();
+
+    if (committed)
+    {
+        if (!cancelled)
+        {
+            std::string new_name = m_rename_buffer;
+            if (!new_name.empty() && new_name != entity->tag.tag)
+            {
+                if (m_history)
+                    m_history->BeginEntityEdit(entity->id, "Rename");
+                entity->tag.tag = new_name;
+                if (m_history)
+                    m_history->EndEntityEdit();
+                if (m_selection->entity_id == entity->id)
+                    m_selection->entity_name = new_name;
+                m_status = "Renamed to '" + new_name + "'";
+            }
+        }
+        m_rename_entity_id = -1;
+    }
+    ImGui::Separator();
+}
+
 void SceneHierarchyPanel::InstantiateMeshAsset(const std::string &mesh_path, Entity *parent)
 {
     // Display name = file stem, e.g. "assets/meshes/gear.obj" -> "gear".
@@ -220,6 +276,13 @@ void SceneHierarchyPanel::DrawEntityNode(Entity &entity, int &to_delete_id)
         }
         if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
             DuplicateNode(entity);
+        if (ImGui::MenuItem("Rename..."))
+        {
+            m_rename_entity_id = entity.id;
+            m_rename_focus_id = -1;  // force keyboard focus on the first frame
+            std::strncpy(m_rename_buffer, entity.tag.tag.c_str(), sizeof(m_rename_buffer) - 1);
+            m_rename_buffer[sizeof(m_rename_buffer) - 1] = '\0';
+        }
         if (ImGui::MenuItem("Save as Prefab..."))
         {
             m_prefab_entity_id = entity.id;
@@ -366,6 +429,8 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 
     ImGui::Begin("Hierarchy", nullptr,
         ImGuiWindowFlags_NoCollapse);
+
+    DrawRenameRow();
 
     if (ImGui::Button("Add Entity"))
     {

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.28.0-alpha] — 2026-08-13
+
+### Added
+
+- **Status bar**: the bottom of every workspace is reserved with a 24 px strip (`WorkspaceManager::SetBottomBarHeight` shrinks the dock host/nodes; no persistence change — the strip rides along with the existing layout save). It shows frame time and an EMA-smoothed FPS, entity count, audio channels in use (`AudioManager::ActiveChannelCount`), enabled viewports (`CameraManager::EnabledCount`), and the current workspace name (`WorkspaceManager::WorkspaceName`). Toggleable from the View menu ("Status Bar").
+- **Toast notifications** (`src/core/ToastManager.h` / `.cpp`): a new pure, headless-testable overlay manager. `Push(text, now_ms, lifetime_ms = 3500)` appends timed entries; repeating the *newest* message refreshes it in place; the visible list caps at 5 with oldest eviction; `Update(now_ms)` prunes expired toasts; `NewestFade` drives a 400 ms linear fade-out on the newest entry. The editor pushes toasts on save/load/new/play/stop/duplicate/delete and import batches, drawn top-right (`Application::DrawToasts`).
+- **Viewport RMB context menu**: a quick right-click on the viewport (under the fly-mode drag threshold) opens a "Viewport Context" popup — Rename (inline undoable modal via `BeginEntityEdit`/`EndEntityEdit`), Duplicate, Delete, and Create (Empty Entity, Cube `Checker.mat`, Octahedron `octahedron.obj`, Directional Light, Camera, spawned at the editor camera). Dragging past the threshold still enters fly navigation.
+- **Command palette refinements**: the palette toggle is now `Ctrl+P` (F1 and `Ctrl+Shift+P` remain), and it gained Save Scene, Open Scene, New Scene, Save Scene As…, Enter/Stop Play Mode, Duplicate/Delete Selected, and the Create Entity commands.
+- **Hierarchy inline rename**: `SceneHierarchyPanel::DrawRenameRow` gives the selected entity an editable rename row — Enter or focus loss commits (undoable), Esc cancels, one-shot keyboard focus — plus a "Rename…" context-menu item.
+- **Content Browser Duplicate**: context-menu "Duplicate" copies a file or folder as `<stem>_copy` (numeric suffixes `_copy_2`… on collision), recursive for folders, then refreshes the tree and selects the copy.
+- **Workspace menu consolidation**: "Reset to Default Layout" and "Save Current Layout as Default" round out the workspace layer.
+
+### Verified
+
+- New `phase28_ui_consolidation_test` harness: toast empty/reject, stacking order and lifetimes, newest-repeat refresh in place vs. older-repeat stacking, MaxToasts cap with oldest eviction, `Update` pruning at exact expiry, `NewestFade` 1.0/linear/0 behavior, `CameraManager::EnabledCount` counting/flip/clear, and `WorkspaceManager::WorkspaceName` mapping (including unknown → "Level Design") — 40/40 checks pass. Clean rebuild succeeds; editor smoke run stays alive with the status bar, toasts, and context menu wired and an empty log.
+
 ## [0.27.0-alpha] — 2026-08-13
 
 ### Added

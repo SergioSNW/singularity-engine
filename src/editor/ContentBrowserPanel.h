@@ -82,6 +82,9 @@ private:
     void DrawItem(const std::string &path, FileKind kind, int col, int cols, float cell_w);
     void OpenItem(const std::string &path, FileKind kind);
     void ContextMenu(const std::string &path, FileKind kind);
+    // Copy `path` (file or folder) beside it as "<stem>_copy[.ext]" /
+    // "<stem>_copy_2", etc., skipping any name that already exists.
+    void DuplicateAsset(const std::string &path);
     static FileKind Classify(const std::string &path);
     bool UnderRoot(const std::string &path) const;
 

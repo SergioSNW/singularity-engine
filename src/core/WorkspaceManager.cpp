@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -47,6 +48,7 @@ WorkspaceManager::WorkspaceManager()
     , m_save_requested(false)
     , m_dockspace_id(0)
     , m_code_window_node(0)
+    , m_bottom_bar_height(0.0f)
 {
 }
 
@@ -63,7 +65,10 @@ void WorkspaceManager::RebuildLayout()
 
     ImGui::DockBuilderRemoveNode(m_dockspace_id);
     ImGui::DockBuilderAddNode(m_dockspace_id, kDockspaceFlags);
-    ImGui::DockBuilderSetNodeSize(m_dockspace_id, ImGui::GetMainViewport()->WorkSize);
+    const ImVec2 dock_size = ImGui::GetMainViewport()->WorkSize;
+    ImGui::DockBuilderSetNodeSize(
+        m_dockspace_id,
+        ImVec2(dock_size.x, dock_size.y - m_bottom_bar_height));
 
     ImGuiID top, bottom;
     ImGuiID left, center, right;
@@ -196,8 +201,12 @@ void WorkspaceManager::DrawDockspace()
     }
 
     ImGuiViewport *viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImVec2 work_pos = viewport->WorkPos;
+    ImVec2 work_size = viewport->WorkSize;
+    if (m_bottom_bar_height > 0.0f)
+        work_size.y = std::max(1.0f, work_size.y - m_bottom_bar_height);
+    ImGui::SetNextWindowPos(work_pos);
+    ImGui::SetNextWindowSize(work_size);
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);

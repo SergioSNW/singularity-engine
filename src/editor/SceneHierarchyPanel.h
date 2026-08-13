@@ -19,6 +19,7 @@ public:
 
 private:
     void DrawEntityNode(Entity &entity, int &to_delete_id);
+    void DrawRenameRow();
     void DrawPrefabSaveModal();
     void DrawSpawnPrefabModal();
     void DuplicateNode(Entity &entity);
@@ -59,4 +60,11 @@ private:
     std::vector<std::string> m_prefab_files;
 
     std::string m_status;  // last-action feedback line
+
+    // Inline rename state (Phase 28, harmonized with the Content Browser):
+    // right-clicking an entity -> "Rename..." opens a single-row InputText;
+    // Enter or blur commits (undoable), Esc cancels.
+    int m_rename_entity_id = -1;
+    int m_rename_focus_id = -1;  // tracks the row that already grabbed focus
+    char m_rename_buffer[128] = {};
 };

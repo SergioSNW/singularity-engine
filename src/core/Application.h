@@ -1,8 +1,14 @@
 #pragma once
 
+#include "core/ToastManager.h"
+
 #include <memory>
 #include <string>
 #include <vector>
+
+struct SDL_Window;
+struct SDL_Renderer;
+struct SDL_Texture;
 
 #include "Json.h"
 #include "editor/Theme.h"
@@ -161,6 +167,24 @@ private:
     void SavePlayModePanelState();
     void RestorePlayModePanelState();
 
+    // Phase 28 editor chrome:
+    //   DrawStatusBar   - bottom full-width strip with workspace, scene status,
+    //                     and live metrics (FPS, audio channels, viewports,
+    //                     entity count). Drawn in editor mode each frame.
+    //   DrawToasts      - top-right notification overlay fed by PushToast().
+    //   DrawViewportContextMenu - right-click popup over the 3D view (rename /
+    //                     duplicate / delete / primitives).
+    //   SpawnPrimitive  - create + select an undoable editor primitive (empty
+    //                     entity, or a mesh/material-bearing spawn).
+    //   DeleteSelection  - undoable delete of the current selection.
+    void DrawStatusBar(float dt);
+    void DrawToasts();
+    void DrawViewportContextMenu();
+    void PushToast(const std::string &text);
+    Entity *SpawnPrimitive(const char *label, const char *mesh_path,
+                           const char *material_path);
+    void DeleteSelection();
+
     Window *m_window;
     bool m_running;
     bool m_flying;
@@ -233,4 +257,22 @@ private:
     // during the event pump; the editor processes the batch after the ImGui
     // frame has drawn (routing into the assets tree, spawning viewport meshes).
     std::vector<std::string> m_pending_drops;
+
+    // Phase 28: smoothed FPS + toast overlay + status bar + viewport context
+    // menu state.
+    float m_fps = 0.0f;              // exponentially-smoothed editor FPS
+    ToastManager m_toasts;           // push via PushToast(), drawn by DrawToasts()
+    bool m_status_bar_visible = true;// View menu toggle (rebuilds the dock on change)
+
+    // RMB over the viewport is a two-way gesture: a quick click opens the
+    // context menu; press-and-move (past kViewportRmbFlyThreshold px) captures
+    // the cursor and enters Fly Mode.
+    bool m_viewport_rmb_pending = false;
+    float m_viewport_rmb_down_x = 0.0f;
+    float m_viewport_rmb_down_y = 0.0f;
+
+    // Viewport "Rename..." modal state (harmonized with the Hierarchy row).
+    bool m_viewport_rename_open = false;
+    int m_viewport_rename_entity = -1;
+    char m_viewport_rename_buffer[128] = {};
 };

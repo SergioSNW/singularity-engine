@@ -57,6 +57,18 @@ public:
     void Clear();
 
     size_t Count() const { return m_entries.size(); }
+
+    // Number of entries with enabled == true (the status bar's "active
+    // viewports" metric). PrimaryIndex() can still fall back to an enabled
+    // entry even when the primary flag is on a disabled one.
+    size_t EnabledCount() const
+    {
+        size_t n = 0;
+        for (const CameraEntry &e : m_entries)
+            if (e.enabled)
+                ++n;
+        return n;
+    }
     const CameraEntry *Get(size_t index) const
     {
         return index < m_entries.size() ? &m_entries[index] : nullptr;
