@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.29.0-alpha] — 2026-08-13
+
+### Added
+
+- **Viewport header toolbar** (`Application::DrawViewportToolbar`, wired into the Viewport window through new `ViewportPanel::on_toolbar` / `on_overlay` callbacks): a docked header bar inside the 3D viewport — it belongs to the window, so it rides along with the Viewport across every workspace preset and custom layout. Row 1 holds segmented **Lit / Wireframe / Unlit** render-mode buttons and visibility checkboxes for the ground grid, physics colliders, light gizmos, bounding boxes, and the transform gizmo; row 2 holds the grid-snap quick toggle plus compact Translation/Rotation/Scale snap-increment inputs. The mode + overlay state lives in one pure struct, `ViewportOverlaySettings` (`src/core/ViewportOverlaySettings.h`), edited by the toolbar, the View menu, and the command palette and read by the render passes.
+- **Render modes**: `RenderScenePass` (shared by the multi-viewport render and the Inspector camera preview) now branches on the mode — **Lit** is the classic lit fills + wireframe pass; **Wireframe** skips solid fills and draws only the mesh `edge_lines` pass; **Unlit** skips the light-gather loop so surfaces fall back to flat albedo and drops the wireframe pass. The ground grid stays independent and honors its own toggle.
+- **Overlay toggles**: `RenderEditorOverlay` gates selection/hover bounds boxes, collider volumes, and the transform gizmo behind the matching toggles, and gains a **light gizmo** — for every active light a "sun" cross at the entity's world position plus an arrow along its direction, so the mesh-less default light entity is findable in the scene.
+- **Viewport stats HUD** (`Application::DrawViewportHud`, drawn on top of the 3D image): a translucent corner readout of the active render mode, smoothed FPS, and the editor camera position. Editor-only — the overlay callback never fires in the isolated play view.
+- **Menu & palette integration**: the View menu gains a "Render Mode" submenu plus the six overlay toggles; the command palette gains `Set Render Mode: Lit/Wireframe/Unlit` and `Toggle Grid / Colliders / Light Gizmos / Bounding Boxes / Transform Gizmo / Viewport HUD`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 29 chapter ("Viewport Overlays & Gizmo Toggle Toolbar") covering the shared settings struct, render-mode gating, the light gizmo, the HUD, and the harness.
+
+### Verified
+
+- New `phase29_viewport_overlay_test` harness: settings defaults (Lit + all toggles on, HUD off), render-mode label mapping, the `Lit → Wireframe → Unlit → Lit` cycle, independent overlay flag flips, and `SnapSettings` step defaults/edits the toolbar writes — 29/29 checks pass. Clean rebuild succeeds; editor smoke run stays alive with the toolbar + HUD wired and an empty log.
+
 ## [0.28.0-alpha] — 2026-08-13
 
 ### Added

@@ -6,6 +6,7 @@
 2. [The SDL2 Core Loop and Thermal-Aware Frame Pacing](#2-the-sdl2-core-loop-and-thermal-aware-frame-pacing)
 3. [Dear ImGui Integration and Lifecycle Binding](#3-dear-imgui-integration-and-lifecycle-binding)
 4. [Modular Class Architecture — Structural Reasoning](#4-modular-class-architecture--structural-reasoning)
+5. [Phase 29 — Viewport Overlays & Gizmo Toggle Toolbar](#5-phase-29--viewport-overlays--gizmo-toggle-toolbar)
 
 ---
 
@@ -325,4 +326,77 @@ The architecture is not final — it is a foundation that can be reshaped as the
 
 ---
 
-*End of textbook section covering versions v0.1.0-alpha through the architecture refactor.*
+## 5. Phase 29 — Viewport Overlays & Gizmo Toggle Toolbar
+
+The editor ships with a **docked header toolbar inside the 3D Viewport window**, the
+one place every rendering/viewing decision already happens. It belongs to the window,
+not the dockspace, so it rides along with the Viewport across every workspace preset
+and user layout — no `WorkspaceManager` changes were needed.
+
+### 5.1 One Struct, Three Consumers
+
+A single pure struct owns all of it:
+
+```cpp
+struct ViewportOverlaySettings {
+    ViewportRenderMode render_mode;   // Lit | Wireframe | Unlit
+    bool grid, colliders, light_gizmos, bounds, gizmo, hud;
+};
+```
+
+Three editor surfaces edit one instance (`Application::m_overlay`), and the render
+passes read the same instance every frame:
+
+1. **The header toolbar** (`Application::DrawViewportToolbar`, wired into
+   `ViewportPanel::on_toolbar`) — segmented Lit/Wireframe/Unlit buttons, checkbox
+   toggles for Grid / Colliders / Light Gizmos / Bounds / Gizmo / HUD, and a second
+   row with the grid-snap toggle plus compact Translation/Rotation/Scale increment
+   inputs (writing straight into `SnapSettings m_snap`, the exact values the gizmo
+   math snaps against — no duplicated state).
+2. **The View menu** — a "Render Mode" submenu plus the same six toggle items.
+3. **The command palette** — `Set Render Mode: Lit/Wireframe/Unlit` and
+   `Toggle Grid / Colliders / Light Gizmos / Bounding Boxes / Transform Gizmo / Viewport HUD`.
+
+### 5.2 Render Modes Gate the Shared Pass
+
+`RenderScenePass` — the single per-entry body shared by the multi-viewport render
+and the Inspector camera preview — now branches on the mode:
+
+| Mode | Solid fills | Lighting | Wireframe pass |
+|------|-------------|----------|----------------|
+| Lit | yes | scene lights | yes |
+| Wireframe | **no** | — | yes |
+| Unlit | yes | **flat albedo** | **no** |
+
+Unlit simply skips the light-gather loop (`use_lighting`), so `EmitEntityTris` falls
+back to its flat-albedo path with no shading code change; Wireframe skips Pass 1
+fills entirely and keeps only the mesh `edge_lines` pass. The ground grid stays
+independent and honors its own `grid` toggle.
+
+### 5.3 Overlay Toggles and the New Light Gizmo
+
+`RenderEditorOverlay` (selection/hover bounds, colliders, gizmo) gates its sections
+behind `bounds`, `colliders`, and `gizmo`. It also gained a **light gizmo**: the
+default directional-light entity is mesh-less, so without a marker it is invisible
+in the scene. For every active light it draws a small "sun" cross at the entity's
+world position plus an arrow along the light's direction, so lights stay findable
+without turning the viewport into a debug wireframe.
+
+### 5.4 The Stats HUD
+
+`Application::DrawViewportHud` (wired as `ViewportPanel::on_overlay`, drawn after
+the 3D image so it overlays the top-left corner) shows the active render mode, the
+smoothed FPS, and the editor camera position. It is editor-only: the overlay
+callback never fires in the isolated play view, keeping the game view clean.
+
+### 5.5 Testability
+
+`ViewportOverlaySettings` lives in `src/core/ViewportOverlaySettings.h` — no SDL/ImGui
+dependency — and `SnapSettings` (`GizmoController.h`) only needs `EngineMath.h`, so
+the `phase29_viewport_overlay_test` harness links standalone and verifies defaults,
+label mapping, the `Lit → Wireframe → Unlit → Lit` cycle, independent flag flips, and
+the snap-step defaults the toolbar edits (29/29 checks).
+
+---
+
+*End of textbook section covering versions v0.1.0-alpha through the architecture refactor and the v0.29.0-alpha viewport overlay toolbar.*

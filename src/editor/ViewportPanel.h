@@ -36,6 +36,16 @@ public:
     // position; left null for headless use.
     std::function<void(const char *type, const char *payload)> on_drop;
 
+    // Phase 29 viewport chrome callbacks, wired by the Application (which owns
+    // the toolbar/HUD state). Fired only in docked editor mode (never in the
+    // isolated play view):
+    //   on_toolbar - drawn right after ImGui::Begin, above the 3D image. It
+    //                shrinks the content region, so the image rect captured
+    //                after it stays correct for picking/dropping.
+    //   on_overlay - drawn right before ImGui::End, on top of the 3D image.
+    std::function<void()> on_toolbar;
+    std::function<void()> on_overlay;
+
 private:
     int m_viewport_width;
     int m_viewport_height;

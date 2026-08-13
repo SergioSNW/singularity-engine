@@ -39,6 +39,12 @@ void ViewportPanel::OnImGuiRender(float dt)
 
     m_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
+    // Phase 29 header toolbar (render modes, overlay toggles, snapping). It
+    // draws inside the window above the 3D image; the content region below
+    // shrinks accordingly, so the image rect captured afterwards stays correct.
+    if (on_toolbar && !m_isolated)
+        on_toolbar();
+
     ImVec2 size = ImGui::GetContentRegionAvail();
     m_viewport_width  = (int)size.x;
     m_viewport_height = (int)size.y;
@@ -85,6 +91,10 @@ void ViewportPanel::OnImGuiRender(float dt)
         }
         ImGui::EndDragDropTarget();
     }
+
+    // Phase 29 on-viewport overlay (stats HUD), drawn on top of the 3D image.
+    if (on_overlay && !m_isolated)
+        on_overlay();
 
     ImGui::End();
 }

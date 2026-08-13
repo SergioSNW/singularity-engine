@@ -584,30 +584,41 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
         return;
 
     // Ground-plane grid first so entities draw on top of it.
-    RenderGroundGrid(renderer, view_proj, near_p, w, h);
+    if (m_overlay.grid)
+        RenderGroundGrid(renderer, view_proj, near_p, w, h);
+
+    // Phase 29 render modes: Lit shades from the scene lights, Wireframe
+    // skips solid fills entirely, and Unlit skips the light loop so surfaces
+    // fall back to flat albedo (and drops the wireframe pass).
+    const bool draw_fills = (m_overlay.render_mode != ViewportRenderMode::Wireframe);
+    const bool use_lighting = (m_overlay.render_mode != ViewportRenderMode::Unlit);
+    const bool draw_wire = (m_overlay.render_mode != ViewportRenderMode::Unlit);
 
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
     std::vector<RenderLight> lights;
-    for (auto &entity_ptr : m_scene->GetEntities())
+    if (use_lighting)
     {
-        const Entity &e = *entity_ptr;
-        if (!e.light.active)
-            continue;
-        RenderLight l;
-        Vec3 dir = Vec3Normalize({ e.light.direction[0],
-                                   e.light.direction[1],
-                                   e.light.direction[2] });
-        if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-            dir = { 0.0f, -1.0f, 0.0f };
-        l.dir = dir;
-        l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
-        l.intensity = e.light.intensity;
-        l.ambient = e.light.ambient;
-        l.shadow_strength = e.light.shadow_strength;
-        l.shadow_bias = e.light.shadow_bias;
-        l.shadow_distance = e.light.shadow_distance;
-        lights.push_back(l);
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            const Entity &e = *entity_ptr;
+            if (!e.light.active)
+                continue;
+            RenderLight l;
+            Vec3 dir = Vec3Normalize({ e.light.direction[0],
+                                       e.light.direction[1],
+                                       e.light.direction[2] });
+            if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+                dir = { 0.0f, -1.0f, 0.0f };
+            l.dir = dir;
+            l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
+            l.intensity = e.light.intensity;
+            l.ambient = e.light.ambient;
+            l.shadow_strength = e.light.shadow_strength;
+            l.shadow_bias = e.light.shadow_bias;
+            l.shadow_distance = e.light.shadow_distance;
+            lights.push_back(l);
+        }
     }
 
     // World AABBs of the visible mesh-bearing entities, used as
@@ -630,47 +641,53 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     }
 
     // --- Pass 1: solid fills, one global painter's pass ---
-    std::vector<FillTri> tris;
-    for (auto &entity_ptr : m_scene->GetEntities())
+    if (draw_fills)
     {
-        Entity &entity = *entity_ptr;
-        if (&entity == skip_entity || !entity.material.active)
-            continue;
-
-        std::string mesh_error;
-        const Mesh *mesh = ResolveMesh(entity, mesh_error);
-        if (!mesh_error.empty() && mesh_error != m_mesh_error)
+        std::vector<FillTri> tris;
+        for (auto &entity_ptr : m_scene->GetEntities())
         {
-            m_mesh_error = mesh_error;
-            m_scene_status = "Mesh load failed: " + mesh_error;
-        }
-        if (!mesh)
-            continue;
+            Entity &entity = *entity_ptr;
+            if (&entity == skip_entity || !entity.material.active)
+                continue;
 
-        Mat4 world = m_scene->ComputeWorldMatrix(entity);
-        const float *tint = nullptr;
-        const std::vector<Vec2> *uvs = nullptr;
-        SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
-        EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
-                       tint, texture, uvs, lights, occluders, &entity);
+            std::string mesh_error;
+            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            if (!mesh_error.empty() && mesh_error != m_mesh_error)
+            {
+                m_mesh_error = mesh_error;
+                m_scene_status = "Mesh load failed: " + mesh_error;
+            }
+            if (!mesh)
+                continue;
+
+            Mat4 world = m_scene->ComputeWorldMatrix(entity);
+            const float *tint = nullptr;
+            const std::vector<Vec2> *uvs = nullptr;
+            SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
+            EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
+                           tint, texture, uvs, lights, occluders, &entity);
+        }
+        DrawTriangles(renderer, tris, w, h);
     }
-    DrawTriangles(renderer, tris, w, h);
 
     // --- Pass 2: wireframe overlay for every visible entity ---
-    for (auto &entity_ptr : m_scene->GetEntities())
+    if (draw_wire)
     {
-        Entity &entity = *entity_ptr;
-        if (&entity == skip_entity || !entity.material.active)
-            continue;
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &entity = *entity_ptr;
+            if (&entity == skip_entity || !entity.material.active)
+                continue;
 
-        std::string mesh_error;
-        const Mesh *mesh = ResolveMesh(entity, mesh_error);
-        if (!mesh)
-            continue;
+            std::string mesh_error;
+            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            if (!mesh)
+                continue;
 
-        Mat4 world = m_scene->ComputeWorldMatrix(entity);
-        RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
-                            *mesh, entity.material.color, true);
+            Mat4 world = m_scene->ComputeWorldMatrix(entity);
+            RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
+                                *mesh, entity.material.color, true);
+        }
     }
 }
 
@@ -691,7 +708,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
         ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
 
     // Selected entity: amber wireframe outline + white bounds box.
-    if (selected && selected != camera_entity)
+    if (m_overlay.bounds && selected && selected != camera_entity)
     {
         std::string mesh_error;
         const Mesh *mesh = ResolveMesh(*selected, mesh_error);
@@ -716,52 +733,104 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
 
     // Hovered entity (ray/AABB hit under the cursor): light-blue
     // bounds box, distinct from the amber selection.
-    int hover_id = m_gizmo->GetHoverEntity();
-    if (hover_id >= 0 && hover_id != (selected ? selected->id : -1) &&
-        hover_id != (camera_entity ? camera_entity->id : -1))
+    if (m_overlay.bounds)
     {
-        if (Entity *hover = m_scene->GetEntityById(hover_id))
+        int hover_id = m_gizmo->GetHoverEntity();
+        if (hover_id >= 0 && hover_id != (selected ? selected->id : -1) &&
+            hover_id != (camera_entity ? camera_entity->id : -1))
         {
-            Mat4 hover_world = m_scene->ComputeWorldMatrix(*hover);
-            Vec3 hover_wmin, hover_wmax;
-            TransformAABB(hover->bounds.local_min,
-                          hover->bounds.local_max, hover_world,
-                          hover_wmin, hover_wmax);
-            DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                          hover_wmin, hover_wmax, 110, 180, 255);
+            if (Entity *hover = m_scene->GetEntityById(hover_id))
+            {
+                Mat4 hover_world = m_scene->ComputeWorldMatrix(*hover);
+                Vec3 hover_wmin, hover_wmax;
+                TransformAABB(hover->bounds.local_min,
+                              hover->bounds.local_max, hover_world,
+                              hover_wmin, hover_wmax);
+                DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                              hover_wmin, hover_wmax, 110, 180, 255);
+            }
         }
     }
 
     // Physics collider volumes (editor aid): solid = green,
     // trigger = cyan. Drawn from the collider's own local box
     // (center +/- extents) transformed into the world frame.
-    for (auto &entity_ptr : m_scene->GetEntities())
+    if (m_overlay.colliders)
     {
-        Entity &collider_entity = *entity_ptr;
-        if (!collider_entity.collider.enabled)
-            continue;
-        if (&collider_entity == camera_entity)
-            continue;
-        const Vec3 clmin{
-            collider_entity.collider.center.x - collider_entity.collider.extents.x,
-            collider_entity.collider.center.y - collider_entity.collider.extents.y,
-            collider_entity.collider.center.z - collider_entity.collider.extents.z,
-        };
-        const Vec3 clmax{
-            collider_entity.collider.center.x + collider_entity.collider.extents.x,
-            collider_entity.collider.center.y + collider_entity.collider.extents.y,
-            collider_entity.collider.center.z + collider_entity.collider.extents.z,
-        };
-        Mat4 collider_world = m_scene->ComputeWorldMatrix(collider_entity);
-        Vec3 cwmin, cwmax;
-        TransformAABB(clmin, clmax, collider_world, cwmin, cwmax);
-        const bool is_trigger =
-            (collider_entity.collider.type == ColliderComponent::Type::Trigger);
-        DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                      cwmin, cwmax,
-                      is_trigger ? 90 : 80,
-                      is_trigger ? 200 : 230,
-                      is_trigger ? 210 : 110);
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &collider_entity = *entity_ptr;
+            if (!collider_entity.collider.enabled)
+                continue;
+            if (&collider_entity == camera_entity)
+                continue;
+            const Vec3 clmin{
+                collider_entity.collider.center.x - collider_entity.collider.extents.x,
+                collider_entity.collider.center.y - collider_entity.collider.extents.y,
+                collider_entity.collider.center.z - collider_entity.collider.extents.z,
+            };
+            const Vec3 clmax{
+                collider_entity.collider.center.x + collider_entity.collider.extents.x,
+                collider_entity.collider.center.y + collider_entity.collider.extents.y,
+                collider_entity.collider.center.z + collider_entity.collider.extents.z,
+            };
+            Mat4 collider_world = m_scene->ComputeWorldMatrix(collider_entity);
+            Vec3 cwmin, cwmax;
+            TransformAABB(clmin, clmax, collider_world, cwmin, cwmax);
+            const bool is_trigger =
+                (collider_entity.collider.type == ColliderComponent::Type::Trigger);
+            DrawWorldAABB(renderer, view_proj, near_p, w, h,
+                          cwmin, cwmax,
+                          is_trigger ? 90 : 80,
+                          is_trigger ? 200 : 230,
+                          is_trigger ? 210 : 110);
+        }
+    }
+
+    // Directional-light gizmos (editor aid): the default light entity is
+    // mesh-less, so without this it would be invisible in the scene. Draw a
+    // small sun cross at the light's world position plus an arrow along its
+    // direction; active lights are amber, inactive ones dim grey.
+    if (m_overlay.light_gizmos)
+    {
+        const float arm = 0.4f;   // cross arm length (world units)
+        const float reach = 2.0f; // direction arrow length
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &light_entity = *entity_ptr;
+            if (!light_entity.light.active)
+                continue;
+            if (&light_entity == camera_entity)
+                continue;
+
+            Mat4 lw = m_scene->ComputeWorldMatrix(light_entity);
+            const Vec3 pos{ lw.m[12], lw.m[13], lw.m[14] };
+            Vec3 dir = Vec3Normalize({ light_entity.light.direction[0],
+                                       light_entity.light.direction[1],
+                                       light_entity.light.direction[2] });
+            if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+                dir = { 0.0f, -1.0f, 0.0f };
+
+            SDL_SetRenderDrawColor(renderer, 255, 205, 90, 255);
+            // Sun cross (world X/Z ticks around the light position).
+            DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                              { pos.x - arm, pos.y, pos.z }, { pos.x + arm, pos.y, pos.z });
+            DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                              { pos.x, pos.y, pos.z - arm }, { pos.x, pos.y, pos.z + arm });
+            // Direction arrow + head tick.
+            const Vec3 tip{ pos.x + dir.x * reach, pos.y + dir.y * reach, pos.z + dir.z * reach };
+            DrawProjectedLine(renderer, view_proj, near_p, w, h, pos, tip);
+            const Vec3 side = Vec3Normalize(Vec3Cross(dir, { 0.0f, 1.0f, 0.0f }));
+            if (side.x != 0.0f || side.y != 0.0f || side.z != 0.0f)
+            {
+                const float head = 0.35f;
+                const Vec3 perp{ side.x * head, side.y * head, side.z * head };
+                DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                                  tip, { tip.x + perp.x, tip.y + perp.y, tip.z + perp.z });
+                DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                                  tip, { tip.x - perp.x, tip.y - perp.y, tip.z - perp.z });
+            }
+        }
     }
 
     GizmoFrame gf;
@@ -787,7 +856,8 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     gf.snap_rotation = m_snap.rotation;
     gf.snap_scale = m_snap.scale;
     gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
-    m_gizmo->Draw(renderer, gf);
+    if (m_overlay.gizmo)
+        m_gizmo->Draw(renderer, gf);
 }
 
 Entity *Application::FindActiveCamera() const
@@ -1731,6 +1801,124 @@ void Application::DrawStatusBar(float dt)
     ImGui::PopStyleVar(4);
 }
 
+void Application::DrawViewportToolbar()
+{
+    // The docked header bar inside the Viewport window (Phase 29). It owns no
+    // state: it edits m_overlay (render modes + overlay toggles) and m_snap
+    // (grid snapping), the same values the render passes and gizmo math read.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+
+    // Row 1: render modes (Lit / Wireframe / Unlit), then overlay toggles.
+    ImGui::TextDisabled("Render:");
+    ImGui::SameLine();
+    for (int i = 0; i <= (int)ViewportRenderMode::Unlit; ++i)
+    {
+        const ViewportRenderMode mode = (ViewportRenderMode)i;
+        const bool active = (m_overlay.render_mode == mode);
+        if (active)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
+        }
+        if (ImGui::Button(ViewportOverlaySettings::RenderModeLabel(mode)))
+            m_overlay.SetRenderMode(mode);
+        if (active)
+            ImGui::PopStyleColor(2);
+        if (i < (int)ViewportRenderMode::Unlit)
+            ImGui::SameLine();
+    }
+
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    ImGui::SameLine();
+
+    ImGui::Checkbox("Grid", &m_overlay.grid);
+    ImGui::SameLine();
+    ImGui::Checkbox("Colliders", &m_overlay.colliders);
+    ImGui::SameLine();
+    ImGui::Checkbox("Light Gizmos", &m_overlay.light_gizmos);
+    ImGui::SameLine();
+    ImGui::Checkbox("Bounds", &m_overlay.bounds);
+    ImGui::SameLine();
+    ImGui::Checkbox("Gizmo", &m_overlay.gizmo);
+    ImGui::SameLine();
+    ImGui::Checkbox("HUD", &m_overlay.hud);
+
+    // Row 2: grid-snapping quick controls. The increments drive the same
+    // SnapSettings the gizmo math snaps against; full sliders stay in Editor
+    // Settings.
+    const bool snap_on = m_snap.enabled;
+    if (snap_on)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
+    }
+    if (ImGui::Button(snap_on ? "Snap: ON" : "Snap: OFF"))
+        m_snap.enabled = !m_snap.enabled;
+    if (snap_on)
+        ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Toggle grid snapping. Hold Ctrl during a gizmo drag to snap temporarily.");
+    ImGui::SameLine();
+    ImGui::TextDisabled("T");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(56.0f);
+    ImGui::DragFloat("##vp_snap_t", &m_snap.translation, 0.05f, 0.01f, 100.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("R");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(56.0f);
+    ImGui::DragFloat("##vp_snap_r", &m_snap.rotation, 1.0f, 1.0f, 360.0f, "%.0f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("S");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(56.0f);
+    ImGui::DragFloat("##vp_snap_s", &m_snap.scale, 0.05f, 0.01f, 10.0f, "%.2f");
+
+    ImGui::PopStyleVar(3);
+}
+
+void Application::DrawViewportHud()
+{
+    // On-viewport stats overlay (Phase 29): FPS, the editor camera position,
+    // and the active render mode, drawn over the top-left corner of the 3D
+    // image. Editor-only (the overlay callback never fires in play mode).
+    if (!m_overlay.hud || !m_viewport)
+        return;
+
+    const ImVec2 img_min = m_viewport->GetImageMin();
+    const ImVec2 img_size = m_viewport->GetImageSize();
+    if (img_size.x < 8.0f || img_size.y < 8.0f)
+        return;
+
+    char line1[96], line2[96];
+    snprintf(line1, sizeof(line1), "%s | %d FPS",
+             ViewportOverlaySettings::RenderModeLabel(m_overlay.render_mode),
+             (int)std::lround(m_fps));
+    snprintf(line2, sizeof(line2), "Cam (%.2f, %.2f, %.2f)",
+             m_editor_camera.position.x,
+             m_editor_camera.position.y,
+             m_editor_camera.position.z);
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 pad(8.0f, 6.0f);
+    const ImVec2 ts1 = ImGui::CalcTextSize(line1);
+    const ImVec2 ts2 = ImGui::CalcTextSize(line2);
+    const float box_w = std::max(ts1.x, ts2.x) + pad.x * 2.0f;
+    const float box_h = ts1.y + ts2.y + pad.y * 2.0f + 2.0f;
+
+    const ImVec2 p0(img_min.x + 8.0f, img_min.y + 8.0f);
+    const ImVec2 p1(p0.x + box_w, p0.y + box_h);
+    dl->AddRectFilled(p0, p1, IM_COL32(18, 18, 24, 190));
+    dl->AddRect(p0, p1, IM_COL32(90, 90, 110, 255), 0.0f);
+    dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y),
+                IM_COL32(230, 230, 240, 255), line1);
+    dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y + ts1.y + 2.0f),
+                IM_COL32(180, 190, 210, 255), line2);
+}
+
 void Application::DrawToasts()
 {
     const uint64_t now = (uint64_t)SDL_GetTicks();
@@ -2227,6 +2415,13 @@ bool Application::Init(int width, int height, const char *title)
 
     m_viewport = new ViewportPanel();
 
+    // Phase 29 viewport chrome: the header toolbar and stats HUD are drawn by
+    // the Application inside the Viewport window through these callbacks (the
+    // same on_drop wiring pattern). The toolbar edits m_overlay/m_snap, so it
+    // stays the single source of truth for the render passes and gizmo math.
+    m_viewport->on_toolbar = [this]() { DrawViewportToolbar(); };
+    m_viewport->on_overlay = [this]() { DrawViewportHud(); };
+
     // Viewport drag-drop (Phase 23): a prefab/mesh dropped onto the 3D view
     // spawns an instance at the cursor's ground point; a material/texture is
     // assigned to the current selection. Editor-only.
@@ -2472,6 +2667,36 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Reset Viewport Layout", "View", "", [this]() {
         if (m_cameras)
             m_cameras->ResetToSingleViewport();
+    } });
+
+    // Phase 29 viewport overlays & render modes (mirrors the header toolbar
+    // and the View menu; all edit the shared ViewportOverlaySettings).
+    cp.Register({ "Set Render Mode: Lit", "View", "", [this]() {
+        m_overlay.SetRenderMode(ViewportRenderMode::Lit);
+    } });
+    cp.Register({ "Set Render Mode: Wireframe", "View", "", [this]() {
+        m_overlay.SetRenderMode(ViewportRenderMode::Wireframe);
+    } });
+    cp.Register({ "Set Render Mode: Unlit", "View", "", [this]() {
+        m_overlay.SetRenderMode(ViewportRenderMode::Unlit);
+    } });
+    cp.Register({ "Toggle Grid", "View", "", [this]() {
+        m_overlay.grid = !m_overlay.grid;
+    } });
+    cp.Register({ "Toggle Colliders", "View", "", [this]() {
+        m_overlay.colliders = !m_overlay.colliders;
+    } });
+    cp.Register({ "Toggle Light Gizmos", "View", "", [this]() {
+        m_overlay.light_gizmos = !m_overlay.light_gizmos;
+    } });
+    cp.Register({ "Toggle Bounding Boxes", "View", "", [this]() {
+        m_overlay.bounds = !m_overlay.bounds;
+    } });
+    cp.Register({ "Toggle Transform Gizmo", "View", "", [this]() {
+        m_overlay.gizmo = !m_overlay.gizmo;
+    } });
+    cp.Register({ "Toggle Viewport HUD", "View", "", [this]() {
+        m_overlay.hud = !m_overlay.hud;
     } });
     cp.Register({ "Undo", "Edit", "Ctrl+Z", [this]() {
         if (m_history) m_history->Undo();
@@ -2835,6 +3060,32 @@ void Application::Run()
                         if (ImGui::MenuItem("Command Palette", "Ctrl+P"))
                             m_command_palette->ToggleOpen();
                     }
+
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("Render Mode"))
+                    {
+                        for (int i = 0; i <= (int)ViewportRenderMode::Unlit; ++i)
+                        {
+                            const ViewportRenderMode mode = (ViewportRenderMode)i;
+                            if (ImGui::MenuItem(
+                                    ViewportOverlaySettings::RenderModeLabel(mode),
+                                    nullptr, m_overlay.render_mode == mode))
+                                m_overlay.SetRenderMode(mode);
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::MenuItem("Show Grid", nullptr, m_overlay.grid))
+                        m_overlay.grid = !m_overlay.grid;
+                    if (ImGui::MenuItem("Show Colliders", nullptr, m_overlay.colliders))
+                        m_overlay.colliders = !m_overlay.colliders;
+                    if (ImGui::MenuItem("Show Light Gizmos", nullptr, m_overlay.light_gizmos))
+                        m_overlay.light_gizmos = !m_overlay.light_gizmos;
+                    if (ImGui::MenuItem("Show Bounding Boxes", nullptr, m_overlay.bounds))
+                        m_overlay.bounds = !m_overlay.bounds;
+                    if (ImGui::MenuItem("Show Transform Gizmo", nullptr, m_overlay.gizmo))
+                        m_overlay.gizmo = !m_overlay.gizmo;
+                    if (ImGui::MenuItem("Viewport HUD", nullptr, m_overlay.hud))
+                        m_overlay.hud = !m_overlay.hud;
 
                     ImGui::Separator();
                     if (ImGui::MenuItem("Status Bar", nullptr, m_status_bar_visible))

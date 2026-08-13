@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.28.0-alpha — Final UI & Workspace Consolidation
+v0.29.0-alpha — Viewport Overlays & Gizmo Toggle Toolbar
 
 ## Dependencies
 
@@ -29,6 +29,7 @@ src/
     │   ├── Application.h/.cpp
     │   ├── CameraManager.h/.cpp (multi-viewport camera stack)
     │   ├── ToastManager.h/.cpp  (editor toast notifications)
+    │   ├── ViewportOverlaySettings.h (viewport render modes + overlay toggles)
     │   ├── Window.h/.cpp
     ├── render/        SDL2 rendering wrappers (future)
     └── editor/        Dear ImGui editor panels

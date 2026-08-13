@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/ToastManager.h"
+#include "core/ViewportOverlaySettings.h"
 
 #include <memory>
 #include <string>
@@ -185,6 +186,15 @@ private:
                            const char *material_path);
     void DeleteSelection();
 
+    // Phase 29 viewport overlays & gizmo toolbar:
+    //   DrawViewportToolbar - the docked header bar inside the Viewport window
+    //                         (render modes, overlay toggles, snapping quick
+    //                         controls). Wired as ViewportPanel::on_toolbar.
+    //   DrawViewportHud     - on-viewport stats overlay (FPS + camera pose),
+    //                         wired as ViewportPanel::on_overlay.
+    void DrawViewportToolbar();
+    void DrawViewportHud();
+
     Window *m_window;
     bool m_running;
     bool m_flying;
@@ -263,6 +273,11 @@ private:
     float m_fps = 0.0f;              // exponentially-smoothed editor FPS
     ToastManager m_toasts;           // push via PushToast(), drawn by DrawToasts()
     bool m_status_bar_visible = true;// View menu toggle (rebuilds the dock on change)
+
+    // Phase 29: viewport overlay & gizmo toolbar state. One instance is shared
+    // by the header toolbar, the View menu, and the command palette; the render
+    // passes read it each frame. Snap steps live in m_snap (GizmoController.h).
+    ViewportOverlaySettings m_overlay;
 
     // RMB over the viewport is a two-way gesture: a quick click opens the
     // context menu; press-and-move (past kViewportRmbFlyThreshold px) captures
