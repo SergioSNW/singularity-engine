@@ -2,6 +2,7 @@
 
 #include "EditorPanel.h"
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -78,4 +79,7 @@ private:
     float m_editor_pos[2];       // remembered code-window position
     float m_editor_size[2];      // remembered code-window size
     bool m_editor_pos_valid;     // remembered code-window geometry exists
+    bool m_auto_save;            // save the buffer when the code window blurs
+    bool m_was_code_focused;     // code window had focus last frame
+    std::int64_t m_last_write_time;  // file mtime when last opened/saved
 };

@@ -55,6 +55,11 @@ const char *kApiRegistry = "Singe.EngineApi";
 // (the engine owns the manager; this is only an observer for the Lua bridge).
 AudioManager *g_audio_manager = nullptr;
 
+// The Scene the REPL's `scene` table resolves against. Rebound on every
+// Execute() call so snippets always address the active scene (and never a torn
+// down play session); mirrors g_audio_manager's observer semantics.
+Scene *g_exec_scene = nullptr;
+
 // --- Vector3 ---
 
 float *LuaVec3Ptr(LuaVec3 *v)
@@ -487,6 +492,66 @@ void RegisterEngineApi(lua_State *L)
     lua_setfield(L, LUA_REGISTRYINDEX, kApiRegistry);
 }
 
+// --- REPL `scene` table ---
+//
+// The persistent REPL scratchpad exposes the active scene through a small
+// read/write surface: count() sizes the entity list, get(i) fetches the i-th
+// entity (1-based), find(name) looks one up by tag, and name reports the
+// scene's display name. Entities are the same Singe.Entity userdata gameplay
+// scripts use, so snippets can read and mutate transforms in place.
+
+int LuaSceneName(lua_State *L)
+{
+    lua_pushstring(L, (g_exec_scene && !g_exec_scene->Meta().name.empty())
+                          ? g_exec_scene->Meta().name.c_str()
+                          : "");
+    return 1;
+}
+
+int LuaSceneCount(lua_State *L)
+{
+    lua_pushinteger(L, g_exec_scene ? (lua_Integer)g_exec_scene->GetEntities().size() : 0);
+    return 1;
+}
+
+int LuaSceneGet(lua_State *L)
+{
+    const lua_Integer idx = luaL_checkinteger(L, 1);
+    if (!g_exec_scene)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto &entities = g_exec_scene->GetEntities();
+    if (idx < 1 || idx > (lua_Integer)entities.size())
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushEntity(L, entities[(std::size_t)(idx - 1)].get());
+    return 1;
+}
+
+int LuaSceneFind(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    if (!g_exec_scene)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    for (auto &entity_ptr : g_exec_scene->GetEntities())
+    {
+        if (entity_ptr->tag.tag == name)
+        {
+            PushEntity(L, entity_ptr.get());
+            return 1;
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
 // Build a fresh _ENV table for one entity: its own metatable resolves unknown
 // names through the engine API table (which itself chains to Lua's _G), so
 // scripts see `entity`, `transform`, `self`, `Vector3`, and the stdlib.
@@ -515,12 +580,20 @@ void NewScriptEnv(lua_State *L, Entity *entity)
 ScriptEngine::ScriptEngine()
     : m_lua(nullptr)
     , m_audio(nullptr)
+    , m_repl(nullptr)
+    , m_repl_env_ref(LUA_NOREF)
 {
 }
 
 ScriptEngine::~ScriptEngine()
 {
     StopSession();
+    if (m_repl)
+    {
+        luaL_unref(m_repl, LUA_REGISTRYINDEX, m_repl_env_ref);
+        lua_close(m_repl);
+        m_repl = nullptr;
+    }
 }
 
 void ScriptEngine::SetAudioManager(AudioManager *audio)
@@ -745,4 +818,98 @@ void ScriptEngine::StopSession()
     m_lua = nullptr;
     m_error.clear();
     m_last_error_logged.clear();
+}
+
+void ScriptEngine::EnsureReplState()
+{
+    if (m_repl)
+        return;
+
+    m_repl = luaL_newstate();
+    if (!m_repl)
+        return;
+    luaL_openlibs(m_repl);
+    RegisterVec3(m_repl);
+    RegisterTransform(m_repl);
+    RegisterEntity(m_repl);
+    RegisterEngineApi(m_repl);
+
+    // Route print() into the editor console, exactly like a play session.
+    lua_pushcfunction(m_repl, LuaPrint);
+    lua_setglobal(m_repl, "print");
+
+    // Isolated scratchpad environment: a fresh table chained to the engine API
+    // (which itself chains to _G), so Vector3 / Audio / print / the stdlib
+    // resolve without polluting the globals of any play session. The `scene`
+    // table is bound to whichever scene Execute() was last handed.
+    lua_newtable(m_repl);                       // [env]
+    lua_newtable(m_repl);                       // [env, mt]
+    lua_getfield(m_repl, LUA_REGISTRYINDEX, kApiRegistry);
+    lua_setfield(m_repl, -2, "__index");
+    lua_setmetatable(m_repl, -2);               // [env]
+
+    lua_newtable(m_repl);                       // [env, scene]
+    lua_pushcfunction(m_repl, LuaSceneName);  lua_setfield(m_repl, -2, "name");
+    lua_pushcfunction(m_repl, LuaSceneCount); lua_setfield(m_repl, -2, "count");
+    lua_pushcfunction(m_repl, LuaSceneGet);   lua_setfield(m_repl, -2, "get");
+    lua_pushcfunction(m_repl, LuaSceneFind);  lua_setfield(m_repl, -2, "find");
+    lua_setfield(m_repl, -2, "scene");          // env.scene = scene -> [env]
+
+    m_repl_env_ref = luaL_ref(m_repl, LUA_REGISTRYINDEX);
+}
+
+bool ScriptEngine::Execute(Scene &scene, const std::string &code, std::string &error)
+{
+    EnsureReplState();
+    if (!m_repl)
+    {
+        error = "REPL unavailable (failed to create Lua state)";
+        return false;
+    }
+    g_exec_scene = &scene;
+
+    // [env]
+    lua_rawgeti(m_repl, LUA_REGISTRYINDEX, m_repl_env_ref);
+    if (luaL_loadbuffer(m_repl, code.data(), code.size(), "repl") != LUA_OK)
+    {
+        error = lua_tostring(m_repl, -1);
+        lua_pop(m_repl, 2);                     // error + env
+        ConsoleError("[REPL] " + error);
+        return false;
+    }
+    lua_pushvalue(m_repl, -2);                  // [env, chunk, env]
+    lua_setupvalue(m_repl, -2, 1);              // chunk's _ENV = env -> [env, chunk]
+    if (lua_pcall(m_repl, 0, LUA_MULTRET, 0) != LUA_OK)
+    {
+        error = lua_tostring(m_repl, -1);
+        lua_pop(m_repl, 2);                     // error + env
+        ConsoleError("[REPL] " + error);
+        return false;
+    }
+    // Success: stack is [env, r1..rn]. Print any chunk return values through
+    // the same tostring path print() uses, so `return expr` echoes a value.
+    const int n = lua_gettop(m_repl) - 1;
+    if (n > 0)
+    {
+        lua_getglobal(m_repl, "tostring");      // [env, r1..rn, tostring]
+        std::string out;
+        for (int i = 1; i <= n; ++i)
+        {
+            if (i > 1)
+                out += '\t';
+            lua_pushvalue(m_repl, -1);          // tostring
+            lua_pushvalue(m_repl, i + 1);       // r_i
+            if (lua_pcall(m_repl, 1, 1, 0) == LUA_OK)
+            {
+                const char *s = lua_tostring(m_repl, -1);
+                if (s)
+                    out += s;
+            }
+            lua_pop(m_repl, 1);                 // pop result
+        }
+        lua_pop(m_repl, 1);                     // pop tostring
+        ConsoleInfo("=> " + out);
+    }
+    lua_settop(m_repl, 0);                      // env + returns
+    return true;
 }

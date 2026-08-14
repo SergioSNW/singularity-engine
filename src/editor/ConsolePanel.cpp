@@ -4,7 +4,12 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <cstring>
+
 ConsolePanel::ConsolePanel()
+    : m_input{0}
+    , m_history_index(0)
 {
 }
 
@@ -64,5 +69,75 @@ void ConsolePanel::OnImGuiRender(float /*dt*/)
         ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
 
+    DrawReplInput();
+
     ImGui::End();
+}
+
+void ConsolePanel::CycleHistory(int direction)
+{
+    const int size = (int)m_history.size();
+    if (size == 0)
+        return;
+    if (direction < 0 && m_history_index > 0)
+        --m_history_index;
+    else if (direction > 0 && m_history_index < size)
+        ++m_history_index;
+
+    if (m_history_index == size)
+    {
+        m_input[0] = '\0';
+        return;
+    }
+    const std::string &entry = m_history[m_history_index];
+    const std::size_t len = std::min<std::size_t>(entry.size(), sizeof(m_input) - 1);
+    std::memcpy(m_input, entry.data(), len);
+    m_input[len] = '\0';
+}
+
+void ConsolePanel::DrawReplInput()
+{
+    ImGui::Separator();
+    ImGui::PushID("repl");
+
+    ImGui::TextDisabled("Lua REPL");
+    ImGui::SameLine();
+    ImGui::TextDisabled("enter=run  up/down=history  esc=clear");
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const bool submit = ImGui::InputText("##input", m_input, sizeof(m_input),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemActive())
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
+            CycleHistory(-1);
+        else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
+            CycleHistory(1);
+    }
+
+    if (submit)
+    {
+        std::string line = m_input;
+        const std::size_t first = line.find_first_not_of(" \t\r\n");
+        if (first != std::string::npos)
+        {
+            const std::size_t last = line.find_last_not_of(" \t\r\n");
+            line = line.substr(first, last - first + 1);
+            if (!line.empty())
+            {
+                m_history.push_back(line);
+                m_history_index = (int)m_history.size();
+                if (on_execute)
+                    on_execute(line);
+            }
+        }
+        m_input[0] = '\0';
+        ImGui::SetKeyboardFocusHere(-1);  // keep typing on the same field
+    }
+    else if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        m_input[0] = '\0';
+    }
+
+    ImGui::PopID();
 }

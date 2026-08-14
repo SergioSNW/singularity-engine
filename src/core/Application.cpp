@@ -2659,6 +2659,16 @@ bool Application::Init(int width, int height, const char *title)
     // Console: dockable log window fed by the shared Console sink (Lua print,
     // script exceptions, engine messages, and redirected stdout/stderr).
     m_console_panel = new ConsolePanel();
+    // The console's Lua REPL line executes snippets against the active scene
+    // (edit or play) through the persistent ScriptEngine::Execute state.
+    m_console_panel->on_execute = [this](const std::string &code) {
+        if (!m_script_engine)
+            return;
+        std::string error;
+        m_script_engine->Execute(*m_scene, code, error);
+        if (!error.empty())
+            m_scene_status = "REPL: " + error;
+    };
     m_panels.push_back(std::shared_ptr<ConsolePanel>(m_console_panel));
     cp.Register({ "Toggle Console", "View", "", [this]() {
         if (m_console_panel)

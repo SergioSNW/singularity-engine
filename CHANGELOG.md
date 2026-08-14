@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.32.0-alpha] — 2026-08-14
+
+### Added
+
+- **ScriptEngine REPL** (`src/script/ScriptEngine.{h,cpp}`): a new `Execute(scene, code, error)` method evaluates live Lua snippets against the active scene in a persistent, isolated scratchpad VM. The state is created lazily on first use and survives play sessions, so REPL definitions persist for the whole editor run. The scratchpad `_ENV` is chained to the engine API (Vector3 / Audio / print / the stdlib resolve without polluting any play session's globals) and exposes a `scene` table with `count()` / `get(i)` (1-based) / `find(name)` / `name`; entities are the same `Singe.Entity` userdata gameplay scripts use, so snippets can read and mutate transforms in place. `print()` output and any chunk return values (`=> ...`, one `tostring()` per value) route to the Console sink; compile and runtime errors are returned and logged as Error.
+- **ConsolePanel REPL command line** (`src/editor/ConsolePanel.{h,cpp}`): the console gains a Lua input row under the log — Enter runs the snippet through `on_execute` (wired by the Application to `ScriptEngine::Execute`), Up/Down walk the input history, Escape clears the line, and the field keeps focus so multi-line tinkering stays in place.
+- **ScriptEditorPanel real-time editing hooks** (`src/editor/ScriptEditorPanel.{h,cpp}`): an **Auto-save** toggle (default on) writes the buffer the instant the code window loses focus — and, when a play session is live, hot-reloads it through the existing `ReloadSession` callback. A disk watcher compares the open file's mtime against the last open/save: an external edit (e.g. another tool) is adopted and the live session reloaded, and a dirty buffer is never clobbered (surfaced in the status line instead).
+- **Wiring & versioning**: `Application::Init` binds the console's `on_execute` to `ScriptEngine::Execute` against the active scene; `CMakeLists.txt` bumps the project version to `0.32.0`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 32 chapter ("Integrated Lua Scripting IDE") covering the REPL VM, the scene bindings, the console command line, and the editor's real-time save/hot-reload hooks.
+
+### Verified
+
+- Clean rebuild succeeds. Editor smoke run stays alive with the REPL state + console command line + auto-save/external-reload hooks wired and an empty log.
+
 ## [0.31.0-alpha] — 2026-08-14
 
 ### Added

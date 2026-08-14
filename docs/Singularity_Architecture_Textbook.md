@@ -9,6 +9,7 @@
 5. [Phase 29 — Viewport Overlays & Gizmo Toggle Toolbar](#5-phase-29--viewport-overlays--gizmo-toggle-toolbar)
 6. [Phase 30 — Real-Time Performance Profiler UI](#6-phase-30--real-time-performance-profiler-ui)
 7. [Phase 31 — Advanced Content Browser & Thumbnail Generator](#7-phase-31--advanced-content-browser--thumbnail-generator)
+8. [Phase 32 — Integrated Lua Scripting IDE](#8-phase-32--integrated-lua-scripting-ide)
 
 ---
 
@@ -555,3 +556,76 @@ prefabs via the `.prefab.json` convention, unknowns), chip pass/fail logic with
 folders always visible, case-insensitive search matching, and breadcrumb
 segmentation. The engine rebuilds clean and the smoke run stays alive with the
 thumbnail cache, list view, search, chips, and breadcrumbs wired.
+
+---
+
+## 8. Phase 32 — Integrated Lua Scripting IDE
+
+The script subsystem before Phase 32 was two disjoint halves: a code editor that
+wrote `.lua` files and a runtime that bound them on play. Phase 32 closes the loop
+with an interactive loop of its own — a Lua REPL in the console, and real-time
+editing hooks that push saved edits straight into a running play session.
+
+### 8.1 The REPL Engine: `ScriptEngine::Execute` (`src/script/ScriptEngine.{h,cpp}`)
+
+The REPL is not a second binding path but a *second Lua state* owned by the engine,
+created lazily on the first snippet and kept alive for the whole editor run:
+
+- **Persistent scratchpad** — definitions survive play sessions, so `function` and
+  `global` assignments made in the console are still there after Stop/Start. The
+  state is independent of `m_lua` (the play VM), so snippets can never corrupt a
+  live session's environment table.
+- **Chained `_ENV`** — the scratchpad environment is a fresh table whose metatable
+  resolves through the same `Singe.EngineApi` registry table gameplay scripts use,
+  which in turn chains to `_G`. `Vector3`, `Audio`, `print` and the full stdlib are
+  visible; nothing written in the REPL leaks into any entity's environment.
+- **`scene` bindings** — a `scene` table is bound to the active scene each call:
+  `count()`, `get(i)` (1-based), `find(name)`, and `name`. Entities are the exact
+  `Singe.Entity` userdata gameplay scripts see, so `scene.find("Cube").transform.position.y = 5`
+  mutates the real transform in place. The pointer is rebound on every `Execute`,
+  mirroring the `g_audio_manager` observer pattern, so the REPL always addresses
+  the current scene and never a torn-down play session.
+- **Output routing** — `print()` funnels into the Console sink through the same
+  `LuaPrint` handler as play sessions; a successful chunk's return values are echoed
+  as `=> value` (one `tostring()` per value, mirroring stdlib semantics) so
+  `return 2+2` behaves like a classic REPL; compile and runtime errors are returned
+  to the caller and logged as Error.
+
+Compilation uses `luaL_loadbuffer` + `lua_setupvalue(1)` to install the scratchpad
+environment before `lua_pcall(LUA_MULTRET)`, and the stack is left clean after every
+path (success and error) — the same discipline the entity binding path uses.
+
+### 8.2 The Console Command Line: `ConsolePanel` (`src/editor/ConsolePanel.{h,cpp}`)
+
+The log pane gains a REPL row beneath it. Enter submits the line through a
+`std::function<void(const std::string&)> on_execute` hook, Up/Down walk a per-run
+input history (indexing `[0..size]`, `size` meaning "editing fresh"), Escape clears
+the current line, and `SetKeyboardFocusHere(-1)` keeps the field focused after a
+submit so the developer can keep typing. `Application::Init` wires the hook to
+`m_script_engine->Execute(*m_scene, code, error)`; a REPL error surfaces in the
+engine status line while the Console sink itself carries the full output.
+
+### 8.3 Real-Time Save and Hot Reload: `ScriptEditorPanel` (`src/editor/ScriptEditorPanel.{h,cpp}`)
+
+The existing Save / Save & Reload path was manual. Two hooks make it automatic:
+
+- **Auto-save on blur** — an **Auto-save** checkbox (default on) tracks whether the
+  code window held focus; the moment it loses it, a dirty buffer is written and the
+  existing `ReloadSession` callback is fired, so leaving the editor while in play
+  mode applies the change to the live session immediately.
+- **Disk watcher** — the panel records the open file's mtime on every open and
+  save. Each frame it stats the file again; a strictly-newer mtime with differing
+  content means an external edit (another tool, a git checkout). If the buffer is
+  clean the new text is adopted and the live session hot-reloaded; if it is dirty
+  the change is *not* clobbered — it is surfaced in the status line instead.
+
+Both hooks reuse `ReloadCallback`, which the Application gates on `EngineState::Play`,
+so outside play mode saving is a no-op reload (the session binds fresh on the next
+Enter Play Mode).
+
+### 8.4 Testability and Verification
+
+`ScriptEngine::Execute` shares the exact userdata, metatable, and print plumbing
+the play session uses, so the verified bindings carry over. The engine rebuilds
+clean; the editor smoke run stays alive with the REPL state, console command line,
+and the auto-save/external-reload hooks wired and an empty log.

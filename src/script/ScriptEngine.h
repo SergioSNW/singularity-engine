@@ -52,6 +52,16 @@ public:
     // Tear the VM down and release all per-entity references.
     void StopSession();
 
+    // Evaluate a live Lua snippet against `scene` in a persistent REPL state
+    // (created on first use, kept across sessions so definitions survive the
+    // whole editor run). The snippet's _ENV is an isolated scratchpad chained
+    // to the engine API — Vector3, Audio, print and the stdlib resolve, plus a
+    // `scene` table (count / get / find / name) bound to `scene`. print()
+    // output and any chunk return values are routed to the Console sink; on
+    // failure `error` holds the compile/runtime message (also logged as
+    // Error). Returns true when the chunk ran without error.
+    bool Execute(Scene &scene, const std::string &code, std::string &error);
+
     // The AudioManager the Audio.* bindings route playback through. May be
     // null (audio is optional at runtime); the bindings then degrade to a
     // silent error-free no-op. The engine never owns it through this pointer.
@@ -61,6 +71,7 @@ public:
 
 private:
     bool BindEntity(Scene &scene, Entity &entity, std::string &error);
+    void EnsureReplState();
 
     struct ScriptedEntity
     {
@@ -79,4 +90,7 @@ private:
     std::string m_error;
     std::string m_last_error_logged;  // dedupe persistent runtime errors
     AudioManager *m_audio;
+
+    lua_State *m_repl;        // persistent REPL VM (null until first Execute)
+    int m_repl_env_ref;       // registry ref to the REPL scratchpad _ENV
 };

@@ -36,6 +36,9 @@ ScriptEditorPanel::ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload)
     , m_dock_requested(false)
     , m_dock_node(0)
     , m_editor_pos_valid(false)
+    , m_auto_save(true)
+    , m_was_code_focused(false)
+    , m_last_write_time(0)
 {
     m_new_name[0] = '\0';
 
@@ -121,8 +124,15 @@ bool ScriptEditorPanel::OpenFile(const std::string &path, std::string *error)
     m_current = path;
     m_saved_text = ss.str();
     m_editor->SetText(m_saved_text);
+    // TextEditor canonicalizes line endings / trailing newlines, so re-read the
+    // buffer's canonical text as the saved baseline; otherwise the buffer looks
+    // dirty right after opening (and auto-save would rewrite the file).
+    m_saved_text = m_editor->GetText();
     m_editor_open = true;
     m_focus_code_window = true;
+    std::error_code ec;
+    m_last_write_time =
+        std::filesystem::last_write_time(m_current, ec).time_since_epoch().count();
     m_status = "Opened " + path;
     return true;
 }
@@ -146,6 +156,9 @@ bool ScriptEditorPanel::SaveCurrent(std::string *error)
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
     out.close();
     m_saved_text = text;
+    std::error_code ec;
+    m_last_write_time =
+        std::filesystem::last_write_time(m_current, ec).time_since_epoch().count();
     m_status = "Saved " + m_current;
     return true;
 }
@@ -344,6 +357,8 @@ void ScriptEditorPanel::DrawCodeWindow()
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::Checkbox("Auto-save", &m_auto_save);
+    ImGui::SameLine();
     if (!m_status.empty())
         ImGui::TextDisabled("%s", m_status.c_str());
     ImGui::Separator();
@@ -355,6 +370,62 @@ void ScriptEditorPanel::DrawCodeWindow()
         std::string error;
         if (!SaveCurrent(&error))
             m_status = error;
+    }
+
+    // Real-time hooks: auto-save the buffer when the code window loses focus,
+    // and watch the file on disk so an external edit hot-reloads the live
+    // session (the reload callback no-ops outside play mode).
+    const bool focused_now = ImGui::IsWindowFocused();
+    if (focused_now)
+    {
+        m_was_code_focused = true;
+    }
+    else if (m_was_code_focused)
+    {
+        m_was_code_focused = false;
+        if (m_auto_save && m_editor->GetText() != m_saved_text)
+        {
+            std::string error;
+            if (SaveCurrent(&error))
+                m_status = (m_reload && m_reload()) ? "Auto-saved & live session reloaded"
+                                                    : "Auto-saved";
+            else
+                m_status = error;
+        }
+    }
+
+    if (!m_current.empty())
+    {
+        std::error_code ec;
+        const auto mtime = std::filesystem::last_write_time(m_current, ec);
+        if (!ec && mtime.time_since_epoch().count() > m_last_write_time)
+        {
+            m_last_write_time = mtime.time_since_epoch().count();
+            std::ifstream in(m_current, std::ios::in | std::ios::binary);
+            if (in.is_open())
+            {
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                const std::string on_disk = ss.str();
+                if (on_disk != m_saved_text)
+                {
+                    // A dirty buffer is never clobbered by an external edit.
+                    if (m_editor->GetText() == m_saved_text)
+                    {
+                        m_saved_text = on_disk;
+                        m_editor->SetText(on_disk);
+                        m_saved_text = m_editor->GetText();  // canonical baseline
+                        m_status = (m_reload && m_reload())
+                                       ? "Reloaded external change & live session"
+                                       : "Reloaded external change";
+                    }
+                    else
+                    {
+                        m_status = "File changed on disk; buffer dirty (not clobbered)";
+                    }
+                }
+            }
+        }
     }
 
     // The syntax-highlighting buffer fills the remaining content region.
