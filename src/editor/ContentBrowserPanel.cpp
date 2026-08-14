@@ -4,11 +4,14 @@
 #include "SceneSerializer.h"
 #include "editor/ScriptEditorPanel.h"
 #include "Material.h"
+#include "Mesh.h"
 #include "Texture.h"
+#include "render/ThumbnailCache.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -59,22 +62,64 @@ std::string ClipToWidth(const std::string &label, float max_width)
     return label.substr(0, len) + "...";
 }
 
+// Human-readable byte count for the list view's size column.
+std::string HumanSize(uint64_t bytes)
+{
+    if (bytes >= 1024ull * 1024ull)
+    {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+        return buf;
+    }
+    if (bytes >= 1024ull)
+    {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.1f KB", (double)bytes / 1024.0);
+        return buf;
+    }
+    return std::to_string(bytes) + " B";
+}
+
+// Per-type preview badge color (small square), shared by grid cells, list rows,
+// and the fallback drawn when no live thumbnail is available.
+ImU32 BadgeColor(AssetCatalog::AssetKind kind)
+{
+    switch (kind)
+    {
+        case AssetCatalog::AssetKind::Folder:   return IM_COL32(210, 175, 90, 255);
+        case AssetCatalog::AssetKind::Scene:    return IM_COL32(90, 175, 220, 255);
+        case AssetCatalog::AssetKind::Prefab:   return IM_COL32(220, 120, 220, 255);
+        case AssetCatalog::AssetKind::Script:   return IM_COL32(110, 200, 110, 255);
+        case AssetCatalog::AssetKind::Mesh:     return IM_COL32(220, 140, 90, 255);
+        case AssetCatalog::AssetKind::Material: return IM_COL32(120, 180, 235, 255);
+        case AssetCatalog::AssetKind::Texture:  return IM_COL32(240, 210, 130, 255);
+        case AssetCatalog::AssetKind::Audio:    return IM_COL32(130, 210, 210, 255);
+        default:                                return IM_COL32(150, 150, 150, 255);
+    }
+}
+
 } // namespace
 
 ContentBrowserPanel::ContentBrowserPanel(SceneManager *scene_manager,
                                          ScriptEditorPanel *script_editor,
                                          MaterialLibrary *material_library,
-                                         TextureLibrary *texture_library)
+                                         TextureLibrary *texture_library,
+                                         SDL_Renderer *renderer,
+                                         MeshLibrary *mesh_library)
     : m_scene_manager(scene_manager)
     , m_script_editor(script_editor)
     , m_material_library(material_library)
     , m_texture_library(texture_library)
+    , m_thumbnails(std::make_unique<ThumbnailCache>(
+          renderer, mesh_library, material_library, texture_library))
     , m_root("assets")
 {
     m_current = m_root;
     RefreshTree();
     RefreshFiles();
 }
+
+ContentBrowserPanel::~ContentBrowserPanel() = default;
 
 bool ContentBrowserPanel::UnderRoot(const std::string &path) const
 {
@@ -85,18 +130,12 @@ bool ContentBrowserPanel::UnderRoot(const std::string &path) const
 
 ContentBrowserPanel::FileKind ContentBrowserPanel::Classify(const std::string &path)
 {
+    // Prefabs vs scenes are decided by file content (a prefab flag in the JSON
+    // root), which the extension-based AssetCatalog can't see; everything else
+    // delegates to the shared taxonomy so the browser and OS importer agree.
     if (EndsWith(path, ".json"))
         return SceneSerializer::IsPrefabFile(path) ? FileKind::Prefab : FileKind::Scene;
-    if (EndsWith(path, ".lua"))
-        return FileKind::Script;
-    if (EndsWith(path, ".obj"))
-        return FileKind::Mesh;
-    if (EndsWith(path, ".mat"))
-        return FileKind::Material;
-    if (EndsWith(path, ".bmp") || EndsWith(path, ".png") || EndsWith(path, ".jpg") ||
-        EndsWith(path, ".jpeg") || EndsWith(path, ".tga") || EndsWith(path, ".gif"))
-        return FileKind::Texture;
-    return FileKind::Other;
+    return AssetCatalog::ClassifyAsset(path);
 }
 
 void ContentBrowserPanel::RefreshTree()
@@ -188,7 +227,32 @@ void ContentBrowserPanel::DrawToolbar()
     ImGui::EndDisabled();
     ImGui::SameLine();
 
-    ImGui::TextUnformatted(m_current.c_str());
+    // Breadcrumbs: each path segment jumps straight to that folder.
+    const std::vector<std::string> crumbs = AssetCatalog::BreadcrumbSegments(m_current);
+    for (size_t i = 0; i < crumbs.size(); ++i)
+    {
+        if (i > 0)
+        {
+            ImGui::TextDisabled("/");
+            ImGui::SameLine();
+        }
+        ImGui::PushID(("crumb" + std::to_string(i)).c_str());
+        if (ImGui::SmallButton(Leaf(crumbs[i]).c_str()))
+            Navigate(crumbs[i]);
+        ImGui::PopID();
+        ImGui::SameLine();
+    }
+
+    // Filtered item count (what the grid/list will actually show).
+    int visible = 0;
+    for (const std::string &path : m_files)
+    {
+        std::error_code ec;
+        const bool is_dir = fs::is_directory(path, ec);
+        if (PassesFilter(path, is_dir ? FileKind::Folder : Classify(path)))
+            ++visible;
+    }
+    ImGui::TextDisabled("%d item(s)", visible);
     ImGui::SameLine();
 
     if (ImGui::Button("Refresh"))
@@ -200,9 +264,51 @@ void ContentBrowserPanel::DrawToolbar()
 
     if (ImGui::Button("New Folder"))
         m_show_new_folder = !m_show_new_folder;
+
+    ImGui::Separator();
+
+    // View mode + thumbnail scale + live search + category chips.
+    if (ImGui::Button(m_list_view ? "Grid View" : "List View"))
+        m_list_view = !m_list_view;
     ImGui::SameLine();
 
-    ImGui::TextDisabled("%d item(s)", (int)m_files.size());
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Thumb", &m_thumb_scale, 48.0f, 192.0f, "%.0f");
+    ImGui::SameLine();
+
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::InputTextWithHint("##content_search", "Search assets...",
+                             m_search, sizeof(m_search));
+
+    ImGui::TextDisabled("Filter:");
+    ImGui::SameLine();
+    const AssetCatalog::AssetFilter filters[] = {
+        AssetCatalog::AssetFilter::All,
+        AssetCatalog::AssetFilter::Meshes,
+        AssetCatalog::AssetFilter::Materials,
+        AssetCatalog::AssetFilter::Textures,
+        AssetCatalog::AssetFilter::Audio,
+        AssetCatalog::AssetFilter::Prefabs,
+    };
+    for (const AssetCatalog::AssetFilter f : filters)
+    {
+        const bool active = (m_filter == f);
+        if (ImGui::Selectable(AssetCatalog::AssetFilterLabel(f), active,
+                              ImGuiSelectableFlags_DontClosePopups))
+            m_filter = f;
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+}
+
+bool ContentBrowserPanel::PassesFilter(const std::string &path, FileKind kind) const
+{
+    // Search matches file/folder names (case-insensitive substring); category
+    // chips hide files that aren't of the requested kind. Folders always pass
+    // the chip so navigation stays possible under an active filter.
+    if (m_search[0] != '\0' && !AssetCatalog::NameMatches(Leaf(path), m_search))
+        return false;
+    return AssetCatalog::AssetPassesFilter(kind, m_filter);
 }
 
 void ContentBrowserPanel::DrawCreateFolderRow()
@@ -294,7 +400,7 @@ void ContentBrowserPanel::DrawRenameRow()
 }
 
 void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
-                                   int col, int cols, float cell_w)
+                                   int col, int cols, float cell_w, float cell_h)
 {
     ImGui::PushID(path.c_str());
     if (col > 0)
@@ -302,7 +408,7 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 
     const bool selected = (m_selected == path);
     if (ImGui::Selectable("##cell", selected, ImGuiSelectableFlags_DontClosePopups,
-                          ImVec2(cell_w, 64.0f)))
+                          ImVec2(cell_w, cell_h)))
         m_selected = path;
 
     // Drag source: prefabs spawn into the Hierarchy, mesh assets spawn as
@@ -341,19 +447,27 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         OpenItem(path, kind);
 
-    // Overlay the preview badge/thumbnail + clipped label inside the cell.
-    // Textures render a live image preview (scaled to the preview box), .mat
-    // assets show a swatch of their diffuse color; everything else keeps the
-    // colored per-type badge.
+    // Overlay the preview (thumbnail, swatch, image, or badge) + clipped label.
+    // Meshes and materials come from the off-screen ThumbnailCache, image
+    // assets render the loaded texture aspect-fitted, everything else keeps a
+    // small colored per-type badge.
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 pmin = ImGui::GetItemRectMin();
-    const float box = 44.0f;
+    const float box = m_thumb_scale;
     const ImVec2 box_min(pmin.x + 10.0f, pmin.y + 8.0f);
     const ImVec2 box_max(box_min.x + box, box_min.y + box);
 
     bool preview_drawn = false;
 
-    if (kind == FileKind::Texture && m_texture_library)
+    if ((kind == FileKind::Mesh || kind == FileKind::Material) && m_thumbnails)
+    {
+        if (SDL_Texture *thumb = m_thumbnails->Get(path))
+        {
+            dl->AddImage((ImTextureID)thumb, box_min, box_max);
+            preview_drawn = true;
+        }
+    }
+    else if (kind == FileKind::Texture && m_texture_library)
     {
         if (const TextureInfo *info = m_texture_library->Load(path))
         {
@@ -368,38 +482,16 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
             preview_drawn = true;
         }
     }
-    else if (kind == FileKind::Material && m_material_library)
-    {
-        if (const Material *mat = m_material_library->Load(path))
-        {
-            const ImU32 tint = ImGui::GetColorU32(
-                ImVec4(mat->color[0], mat->color[1], mat->color[2], mat->color[3]));
-            dl->AddRectFilled(box_min, box_max, tint, 4.0f);
-            dl->AddRect(box_min, box_max, ImGui::GetColorU32(ImGuiCol_Border), 4.0f);
-            preview_drawn = true;
-        }
-    }
 
     if (!preview_drawn)
     {
         // Fallback per-type badge (small square in the preview box corner).
-        ImU32 color;
-        switch (kind)
-        {
-            case FileKind::Folder:   color = IM_COL32(210, 175, 90, 255); break;
-            case FileKind::Scene:    color = IM_COL32(90, 175, 220, 255); break;
-            case FileKind::Prefab:   color = IM_COL32(220, 120, 220, 255); break;
-            case FileKind::Script:   color = IM_COL32(110, 200, 110, 255); break;
-            case FileKind::Mesh:     color = IM_COL32(220, 140, 90, 255); break;
-            case FileKind::Material: color = IM_COL32(120, 180, 235, 255); break;
-            case FileKind::Texture:  color = IM_COL32(240, 210, 130, 255); break;
-            default:                 color = IM_COL32(150, 150, 150, 255); break;
-        }
         dl->AddRectFilled(ImVec2(box_min.x, box_min.y),
-                          ImVec2(box_min.x + 12.0f, box_min.y + 12.0f), color, 3.0f);
+                          ImVec2(box_min.x + 12.0f, box_min.y + 12.0f),
+                          BadgeColor(kind), 3.0f);
     }
 
-    dl->AddText(ImVec2(pmin.x + 10.0f, pmin.y + 56.0f),
+    dl->AddText(ImVec2(pmin.x + 10.0f, box_max.y + 8.0f),
                 ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_Text),
                 ClipToWidth(Leaf(path), cell_w - 18.0f).c_str());
 
@@ -423,23 +515,170 @@ void ContentBrowserPanel::DrawFileGrid()
 
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float avail = ImGui::GetContentRegionAvail().x;
-    const float min_cell = 140.0f;
+    const float min_cell = m_thumb_scale + 26.0f;
     const int cols = std::max(1, (int)((avail + spacing) / (min_cell + spacing)));
     const float cell_w = (avail - spacing * (cols - 1)) / (float)cols;
+    const float cell_h = m_thumb_scale + 34.0f;
 
     int col = 0;
+    int visible = 0;
     for (const std::string &path : m_files)
     {
         std::error_code ec;
         const bool is_dir = fs::is_directory(path, ec);
-        DrawItem(path, is_dir ? FileKind::Folder : Classify(path), col, cols, cell_w);
+        const FileKind kind = is_dir ? FileKind::Folder : Classify(path);
+        if (!PassesFilter(path, kind))
+            continue;
+        DrawItem(path, kind, col, cols, cell_w, cell_h);
         col = (col + 1) % cols;
+        ++visible;
     }
 
-    if (m_files.empty())
+    if (visible == 0)
     {
         ImGui::Dummy(ImVec2(0.0f, 40.0f));
-        ImGui::TextDisabled("Empty folder. Use 'New Folder' or drop assets here.");
+        ImGui::TextDisabled(m_files.empty()
+            ? "Empty folder. Use 'New Folder' or drop assets here."
+            : "No items match the current filter or search.");
+    }
+
+    ImGui::EndChild();
+}
+
+void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
+{
+    ImGui::PushID(path.c_str());
+
+    const bool selected = (m_selected == path);
+    if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_DontClosePopups,
+                          ImVec2(-FLT_MIN, 22.0f)))
+        m_selected = path;
+
+    if (kind == FileKind::Prefab && ImGui::BeginDragDropSource(
+            ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        ImGui::SetDragDropPayload("PREFAB", path.c_str(), path.size() + 1, ImGuiCond_Once);
+        ImGui::TextUnformatted(Leaf(path).c_str());
+        ImGui::EndDragDropSource();
+    }
+    if (kind == FileKind::Mesh && ImGui::BeginDragDropSource(
+            ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        ImGui::SetDragDropPayload("MESH", path.c_str(), path.size() + 1, ImGuiCond_Once);
+        ImGui::TextUnformatted(Leaf(path).c_str());
+        ImGui::EndDragDropSource();
+    }
+    if ((kind == FileKind::Material || kind == FileKind::Texture) &&
+        ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        ImGui::SetDragDropPayload(kind == FileKind::Material ? "MATERIAL" : "TEXTURE",
+                                  path.c_str(), path.size() + 1, ImGuiCond_Once);
+        ImGui::TextUnformatted(Leaf(path).c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    if (ImGui::BeginPopupContextItem())
+    {
+        ContextMenu(path, kind);
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) &&
+        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        OpenItem(path, kind);
+
+    // Small preview on the left, name + kind + size across the row.
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 pmin = ImGui::GetItemRectMin();
+    const float row_h = ImGui::GetItemRectMax().y - pmin.y;
+    const float box = 16.0f;
+    const ImVec2 box_min(pmin.x + 6.0f, pmin.y + (row_h - box) * 0.5f);
+    const ImVec2 box_max(box_min.x + box, box_min.y + box);
+
+    bool preview_drawn = false;
+    if ((kind == FileKind::Mesh || kind == FileKind::Material) && m_thumbnails)
+    {
+        if (SDL_Texture *thumb = m_thumbnails->Get(path))
+        {
+            dl->AddImage((ImTextureID)thumb, box_min, box_max);
+            preview_drawn = true;
+        }
+    }
+    else if (kind == FileKind::Texture && m_texture_library)
+    {
+        if (const TextureInfo *info = m_texture_library->Load(path))
+        {
+            const float iw = (float)std::max(1, info->width);
+            const float ih = (float)std::max(1, info->height);
+            float w = box, h = box;
+            if (iw > ih) h = box * (ih / iw);
+            else         w = box * (iw / ih);
+            const ImVec2 tl(box_min.x + (box - w) * 0.5f, box_min.y + (box - h) * 0.5f);
+            dl->AddImage((ImTextureID)info->texture, tl, ImVec2(tl.x + w, tl.y + h));
+            preview_drawn = true;
+        }
+    }
+    if (!preview_drawn)
+    {
+        dl->AddRectFilled(ImVec2(box_min.x, box_min.y),
+                          ImVec2(box_min.x + 10.0f, box_min.y + 10.0f),
+                          BadgeColor(kind), 2.0f);
+    }
+
+    // Name (clipped to leave room for the right-aligned meta) + kind/size.
+    const ImVec2 text_pos(pmin.x + 28.0f, pmin.y + (row_h - ImGui::GetFontSize()) * 0.5f);
+    const float meta_w = ImGui::CalcTextSize("Material  999.9 KB").x;
+    const float name_w = ImGui::GetWindowWidth() - 36.0f - meta_w;
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_pos,
+                ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_Text),
+                ClipToWidth(Leaf(path), name_w).c_str());
+
+    std::string size_str = "-";
+    std::error_code ec;
+    if (const uintmax_t bytes = fs::file_size(path, ec); !ec)
+        size_str = HumanSize(bytes);
+    const std::string meta = std::string(AssetCatalog::AssetKindLabel(kind)) + "  " + size_str;
+    const ImVec2 meta_size = ImGui::CalcTextSize(meta.c_str());
+    const ImVec2 meta_pos(pmin.x + ImGui::GetWindowWidth() - meta_size.x - 10.0f,
+                          text_pos.y);
+    dl->AddText(meta_pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), meta.c_str());
+
+    ImGui::PopID();
+}
+
+void ContentBrowserPanel::DrawFileList()
+{
+    ImGui::BeginChild("##content_list", ImVec2(0.0f, 0.0f));
+
+    DrawToolbar();
+    ImGui::Separator();
+    DrawCreateFolderRow();
+    DrawRenameRow();
+
+    if (!m_status.empty())
+    {
+        ImGui::TextDisabled("%s", m_status.c_str());
+        ImGui::Separator();
+    }
+
+    int visible = 0;
+    for (const std::string &path : m_files)
+    {
+        std::error_code ec;
+        const bool is_dir = fs::is_directory(path, ec);
+        const FileKind kind = is_dir ? FileKind::Folder : Classify(path);
+        if (!PassesFilter(path, kind))
+            continue;
+        DrawListRow(path, kind);
+        ++visible;
+    }
+
+    if (visible == 0)
+    {
+        ImGui::Dummy(ImVec2(0.0f, 40.0f));
+        ImGui::TextDisabled(m_files.empty()
+            ? "Empty folder. Use 'New Folder' or drop assets here."
+            : "No items match the current filter or search.");
     }
 
     ImGui::EndChild();
@@ -615,6 +854,9 @@ void ContentBrowserPanel::OpenItem(const std::string &path, FileKind kind)
             m_status = "Texture asset: " + path +
                        " (drag onto an entity's Material section to assign)";
             break;
+        case FileKind::Audio:
+            m_status = "Audio asset: " + path;
+            break;
         default:
             m_status = "No action for: " + path;
             break;
@@ -639,7 +881,10 @@ void ContentBrowserPanel::OnImGuiRender(float dt)
 
     DrawFolderTree();
     ImGui::SameLine();
-    DrawFileGrid();
+    if (m_list_view)
+        DrawFileList();
+    else
+        DrawFileGrid();
 
     // Transient overlay after an OS file drop imported assets (Phase 23).
     if (m_import_flash_timer > 0.0f)

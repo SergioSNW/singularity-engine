@@ -2647,7 +2647,8 @@ bool Application::Init(int width, int height, const char *title)
     // name in both workspace presets; the command toggles visibility so the
     // docked slot can be dismissed and restored.
     m_content_browser = new ContentBrowserPanel(m_scene_manager, m_script_editor,
-                                                m_material_library, m_texture_library);
+                                                m_material_library, m_texture_library,
+                                                m_window->GetNativeRenderer(), m_mesh_library);
     m_content_browser->on_load_scene = [this](const std::string &path) { LoadSceneFile(path); };
     m_panels.push_back(std::shared_ptr<ContentBrowserPanel>(m_content_browser));
     cp.Register({ "Toggle Content Browser", "View", "", [this]() {

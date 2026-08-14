@@ -8,6 +8,7 @@
 4. [Modular Class Architecture — Structural Reasoning](#4-modular-class-architecture--structural-reasoning)
 5. [Phase 29 — Viewport Overlays & Gizmo Toggle Toolbar](#5-phase-29--viewport-overlays--gizmo-toggle-toolbar)
 6. [Phase 30 — Real-Time Performance Profiler UI](#6-phase-30--real-time-performance-profiler-ui)
+7. [Phase 31 — Advanced Content Browser & Thumbnail Generator](#7-phase-31--advanced-content-browser--thumbnail-generator)
 
 ---
 
@@ -400,7 +401,7 @@ the snap-step defaults the toolbar edits (29/29 checks).
 
 ---
 
-*End of textbook section covering versions v0.1.0-alpha through the architecture refactor and the v0.30.0-alpha real-time performance profiler UI.*
+*End of textbook section covering versions v0.1.0-alpha through the architecture refactor, the v0.30.0-alpha real-time performance profiler UI, and the v0.31.0-alpha advanced content browser & thumbnail generator.*
 
 ## 6. Phase 30 — Real-Time Performance Profiler UI
 
@@ -468,3 +469,89 @@ fresh state, a measurable Update stage + resource snapshot, ring-buffer wrap (15
 frames keep a fixed 120-sample window with correct oldest/newest ordering), Pause
 freezing vs. Resume, and Clear (41/41 checks). The engine smoke run stays alive with
 the profiler wired and an empty log.
+
+---
+
+## 7. Phase 31 — Advanced Content Browser & Thumbnail Generator
+
+The Content Browser began as a flat grid of colored badges. Phase 31 turns it into a
+real browsing surface: live previews for the assets that can be previewed, a compact
+list view for dense folders, and the standard power tools — search, category chips,
+thumbnail sizing, and breadcrumb navigation. Every piece follows the project's
+"pure Core + thin editor" split: the taxonomy that decides what a file is lives in a
+SDL/ImGui-free header, the pixel work lives in a render module, and the panel only
+wires the two together.
+
+### 7.1 The Pure Taxonomy: `AssetCatalog` (`src/core/AssetCatalog.h`)
+
+Before Phase 31, the browser and the OS importer each classified files by extension
+in their own way, and neither knew about audio assets. `AssetCatalog` is the single
+source of truth:
+
+- **Classification** — `ClassifyAsset(path)` maps extensions to an `AssetKind`
+  (`Scene` for `.json`, `Prefab` for the `<name>.prefab.json` convention, `Script`
+  for `.lua`, `Mesh` for `.obj`, `Material` for `.mat`, `Texture` for image formats,
+  `Audio` for `.wav/.ogg`, `Other` otherwise). The Content Browser still decides
+  scene-vs-prefab from the JSON content (`SceneSerializer::IsPrefabFile`), then
+  delegates everything else to this module so the UI and the importer agree.
+- **Search** — `NameMatches(name, query)` is a case-insensitive substring match
+  against the item's leaf name; an empty query matches everything.
+- **Chips** — `AssetFilter` (`All` / `Meshes` / `Materials` / `Textures` / `Audio` /
+  `Prefabs`) with `AssetPassesFilter(kind, filter)`, which always lets `Folder`
+  through so a category filter never strands the user without navigation.
+- **Breadcrumbs** — `BreadcrumbSegments(path)` splits `assets/meshes/props` into the
+  clickable cumulative prefixes `["assets", "assets/meshes", "assets/meshes/props"]`.
+
+The file is header-only and dependency-free, which is what makes the
+`phase31_asset_catalog_test` harness link standalone.
+
+### 7.2 The Renderer: `ThumbnailCache` (`src/render/ThumbnailCache.{h,cpp}`)
+
+This is the first file in the `render/` layer of the skeleton — SDL2-drawing logic
+kept out of `core/` and `editor/`. The cache generates and stores previews lazily:
+
+| Asset kind | Thumbnail |
+|------------|-----------|
+| **Mesh (.obj)** | Off-screen 96×96 `SDL_TEXTUREACCESS_TARGET` texture; a bounds-framing orbit camera (`Mat4LookAt` + `Mat4Perspective`, 45° FOV, yaw 45° / pitch 22°, distance scaled to the mesh radius) projects the triangle soup with the engine's own `ProjectToScreen` math. Faces are flat-shaded with the default directional light (dir `{0,-1,0}`, ambient 0.35), painter-sorted by depth, rasterized via `SDL_RenderGeometry`, then the deduplicated `edge_lines` are stroked on top in a brighter tint — the same fills+wireframe look as the viewport at thumbnail scale. |
+| **Material (.mat)** | A swatch texture cleared to the diffuse RGBA color with a subtle inner border so it reads as a card. |
+| **Image** | The TextureLibrary's already-decoded GPU texture, borrowed — never owned by the cache. |
+
+Thumbnails are cached in a `std::map<std::string, Entry>` where `Entry` tracks
+ownership: mesh/material textures are created here and destroyed in `Shutdown()`;
+image handles belong to the TextureLibrary. Because generation happens during the
+panel's ImGui frame (when the renderer target is the window), each pass saves and
+restores the current render target around `SDL_SetRenderTarget` so the ImGui blit is
+never disturbed. `Application::Shutdown` clears panels before destroying libraries
+and the window, so the cache's SDL textures are released while the renderer is alive.
+
+### 7.3 The Panel: Search, Chips, Views, and Breadcrumbs (`ContentBrowserPanel`)
+
+`ContentBrowserPanel` gains a `ThumbnailCache` (constructed with the SDL renderer +
+`MeshLibrary` + the material/texture libraries it already had) and a view state:
+`m_list_view`, `m_thumb_scale` (48–192 px), `m_search`, and `m_filter`. The toolbar
+is now two rows:
+
+- **Row 1** — Up button, **breadcrumbs** (each cumulative path segment is a small
+  button that jumps straight to that folder), item count, Refresh, New Folder.
+- **Row 2** — a **Grid/List** view toggle, a **Thumb** slider, a live **search**
+  box, and the **category chips**. `PassesFilter` applies search to item names and
+  the chip to files (folders always pass); when both are empty of matches the area
+  says so instead of the generic "Empty folder" hint.
+
+The grid keeps its responsive column layout but the cell size follows
+`m_thumb_scale`; meshes and materials draw their off-screen thumbnails, images keep
+their aspect-fit preview, and everything else falls back to the per-type badge
+(`BadgeColor`, which now also knows `Audio`). The new **list view** (`DrawListRow`)
+renders a full-width selectable per item with a small preview, the name, the type
+label, and a human-readable file size (`HumanSize`), while preserving every existing
+interaction: selection, double-click open, context menus (rename/duplicate/delete),
+and the `PREFAB` / `MESH` / `MATERIAL` / `TEXTURE` drag payloads.
+
+### 7.4 Testability and Verification
+
+The `phase31_asset_catalog_test` harness links standalone against `AssetCatalog.h`
+and verifies extension classification (meshes, materials, images, audio, scenes,
+prefabs via the `.prefab.json` convention, unknowns), chip pass/fail logic with
+folders always visible, case-insensitive search matching, and breadcrumb
+segmentation. The engine rebuilds clean and the smoke run stays alive with the
+thumbnail cache, list view, search, chips, and breadcrumbs wired.

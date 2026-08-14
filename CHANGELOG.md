@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.31.0-alpha] — 2026-08-14
+
+### Added
+
+- **AssetCatalog taxonomy** (`src/core/AssetCatalog.h`, pure header-only, no SDL/ImGui): extension-based asset classification mirroring `AssetImporter` (including the `<name>.prefab.json` prefab convention and `.wav/.ogg` audio), category-chip filtering (`All` / `Meshes` / `Materials` / `Textures` / `Audio` / `Prefabs`, folders always passing so navigation survives an active filter), case-insensitive name search matching, and breadcrumb path splitting — one shared taxonomy for the browser UI and the OS importer.
+- **ThumbnailCache render module** (`src/render/ThumbnailCache.{h,cpp}`): lazy off-screen preview generation with an in-memory cache keyed by asset path. `.obj` meshes render into a 96×96 `SDL_TEXTUREACCESS_TARGET` texture with a bounds-framing orbit camera (perspective, `Mat4LookAt`/`Mat4Perspective`), flat shading from the engine's default directional light, painter's-algorithm depth-sorted fills via `SDL_RenderGeometry`, and the engine's wireframe edge pass; `.mat` materials render a diffuse-color swatch with a border; image assets borrow the already-decoded `TextureLibrary` GPU texture (never owned). The render target is saved/restored around generation so the panel's thumbnails never disturb the ImGui blit; `Shutdown()` releases owned textures while the renderer is still alive in `Application::Shutdown` (panels are torn down first).
+- **ContentBrowserPanel rework** (Phase 31): the file area switches between the responsive **grid** and a compact **list view** (small preview, name, type label, human-readable file size). A **Thumb** slider scales the preview cells (48–192 px); a live **search** box filters item names case-insensitively; **category chips** (All/Meshes/Materials/Textures/Audio/Prefabs) hide files that aren't of the requested kind while keeping folders visible for navigation; **breadcrumbs** split the current path into clickable segments that jump straight to that folder. Mesh/material items draw real off-screen thumbnails; image assets keep their aspect-fit preview; everything else falls back to the colored per-type badge. Audio (.wav/.ogg) is now classified and labeled in both views.
+- **Wiring & versioning**: `Application::Init` passes the SDL renderer + `MeshLibrary` into `ContentBrowserPanel`; `CMakeLists.txt` adds `src/render/ThumbnailCache.cpp` and bumps the project version to `0.31.0`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 31 chapter ("Advanced Content Browser & Thumbnail Generator") covering the taxonomy, the off-screen thumbnail pipeline, the grid/list views with search + chips + breadcrumbs, and the harness.
+
+### Verified
+
+- New `phase31_asset_catalog_test` harness (links standalone, pure Core): extension classification across every supported kind (including `.prefab.json` vs plain `.json`, audio, unknown extensions), category-chip pass/fail logic (folders always pass), case-insensitive search matching, and breadcrumb segmentation — all checks pass. Clean rebuild succeeds; editor smoke run stays alive with the thumbnail cache + new views wired and an empty log.
+
 ## [0.30.0-alpha] — 2026-08-14
 
 ### Added

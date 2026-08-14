@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.30.0-alpha — Real-Time Performance Profiler UI
+v0.31.0-alpha — Advanced Content Browser & Thumbnail Generator
 
 ## Dependencies
 
