@@ -42,6 +42,11 @@ public:
     // mesh asset render this cube.
     const Mesh* GetBuiltinCube() const;
 
+    // Estimated resident memory (bytes) across every cached mesh: the map
+    // node plus the vector storage for positions / edge lines / UVs. A cheap
+    // order-of-magnitude figure for the Profiler readout, not a malloc trace.
+    size_t ResidentBytes() const;
+
 private:
     std::map<std::string, Mesh> m_meshes;
 };

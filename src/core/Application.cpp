@@ -29,6 +29,7 @@
 #include "editor/MaterialPanel.h"
 #include "editor/HistoryPanel.h"
 #include "editor/ViewportLayoutPanel.h"
+#include "editor/ProfilerPanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -153,7 +154,8 @@ void Application::RecreateViewportTarget(int width, int height)
 }
 
 static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
-                              float near_p, int w, int h, Vec3 a, Vec3 b)
+                              float near_p, int w, int h, Vec3 a, Vec3 b,
+                              int *draw_calls = nullptr)
 {
     // For the perspective matrix, w_out == -z_view (depth in front of camera).
     float wa, wb;
@@ -189,6 +191,8 @@ static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
     int bx = (int)((cb.x / wb + 1.0f) * 0.5f * w);
     int by = (int)((1.0f - cb.y / wb) * 0.5f * h);
 
+    if (draw_calls)
+        ++(*draw_calls);
     SDL_RenderDrawLine(renderer, ax, ay, bx, by);
 }
 
@@ -196,7 +200,8 @@ static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
 // projected-line path with near-plane clipping as the grid and mesh wireframes.
 static void DrawWorldAABB(SDL_Renderer *renderer, const Mat4 &view_proj, float near_p,
                           int w, int h, const Vec3 &min, const Vec3 &max,
-                          Uint8 r, Uint8 g, Uint8 b)
+                          Uint8 r, Uint8 g, Uint8 b,
+                          int *draw_calls = nullptr)
 {
     const Vec3 c[8] = {
         { min.x, min.y, min.z }, { max.x, min.y, min.z },
@@ -212,11 +217,12 @@ static void DrawWorldAABB(SDL_Renderer *renderer, const Mat4 &view_proj, float n
     SDL_SetRenderDrawColor(renderer, r, g, b, 255);
     for (int i = 0; i < 12; ++i)
         DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                          c[EDGES[i][0]], c[EDGES[i][1]]);
+                          c[EDGES[i][0]], c[EDGES[i][1]], draw_calls);
 }
 
 static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
-                             float near_p, int w, int h)
+                             float near_p, int w, int h,
+                             int *draw_calls = nullptr)
 {
     const float extent = 20.0f;
 
@@ -227,18 +233,22 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
         if (k == 0)
             continue;
         DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                          { (float)k, 0.0f, -extent }, { (float)k, 0.0f, extent });
+                          { (float)k, 0.0f, -extent }, { (float)k, 0.0f, extent },
+                          draw_calls);
         DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                          { -extent, 0.0f, (float)k }, { extent, 0.0f, (float)k });
+                          { -extent, 0.0f, (float)k }, { extent, 0.0f, (float)k },
+                          draw_calls);
     }
 
     // Highlighted world axes: X = red, Z = blue.
     SDL_SetRenderDrawColor(renderer, 220, 70, 70, 255);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                      { -extent, 0.0f, 0.0f }, { extent, 0.0f, 0.0f });
+                      { -extent, 0.0f, 0.0f }, { extent, 0.0f, 0.0f },
+                      draw_calls);
     SDL_SetRenderDrawColor(renderer, 70, 110, 230, 255);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                      { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent });
+                      { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent },
+                      draw_calls);
 }
 
 // --- Mesh rendering ---------------------------------------------------------
@@ -413,7 +423,7 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
 }
 
 static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts,
-                          SDL_Texture *texture)
+                          SDL_Texture *texture, int *draw_calls = nullptr)
 {
     if (verts.empty())
         return;
@@ -423,6 +433,8 @@ static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts
     while (offset < verts.size())
     {
         size_t count = std::min(MAX_VERTS, verts.size() - offset);
+        if (draw_calls)
+            ++(*draw_calls);
         SDL_RenderGeometry(renderer, texture, verts.data() + offset, (int)count, nullptr, 0);
         offset += count;
     }
@@ -431,7 +443,8 @@ static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts
 
 static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
                                 float near_p, int w, int h, const Mat4 &world,
-                                const Mesh &mesh, const float color[3], bool brighten)
+                                const Mesh &mesh, const float color[3], bool brighten,
+                                int *draw_calls = nullptr)
 {
     float gain = brighten ? 1.35f : 1.0f;
     Uint8 r = (Uint8)std::min(255.0f, color[0] * 255.0f * gain);
@@ -443,11 +456,12 @@ static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
     {
         Vec3 a = Mat4TransformPoint(world, mesh.edge_lines[i]);
         Vec3 b2 = Mat4TransformPoint(world, mesh.edge_lines[i + 1]);
-        DrawProjectedLine(renderer, view_proj, near_p, w, h, a, b2);
+        DrawProjectedLine(renderer, view_proj, near_p, w, h, a, b2, draw_calls);
     }
 }
 
-static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, int w, int h)
+static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, int w, int h,
+                          int *draw_calls = nullptr)
 {
     // Painter's algorithm across all entities: farthest triangles first.
     std::stable_sort(tris.begin(), tris.end(),
@@ -462,7 +476,7 @@ static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, in
         // receives a coherent vertex set for one texture (or flat shading).
         if (t.texture != active_texture)
         {
-            FlushTriBatch(renderer, verts, active_texture);
+            FlushTriBatch(renderer, verts, active_texture, draw_calls);
             active_texture = t.texture;
         }
         SDL_Color col = { t.r, t.g, t.b, 255 };
@@ -470,9 +484,9 @@ static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, in
         verts.push_back({ { (float)t.x1, (float)t.y1 }, col, { t.u1, t.v1 } });
         verts.push_back({ { (float)t.x2, (float)t.y2 }, col, { t.u2, t.v2 } });
         if (verts.size() >= 6000)
-            FlushTriBatch(renderer, verts, active_texture);
+            FlushTriBatch(renderer, verts, active_texture, draw_calls);
     }
-    FlushTriBatch(renderer, verts, active_texture);
+    FlushTriBatch(renderer, verts, active_texture, draw_calls);
     tris.clear();
 }
 
@@ -562,10 +576,11 @@ void Application::RenderViewportTarget()
 
             const bool is_primary = ((int)idx == primary_idx);
             Entity *skip = is_primary ? GetPrimarySkipEntity() : nullptr;
-            RenderScenePass(renderer, view_proj, near_p, rw, rh, skip);
+            RenderScenePass(renderer, view_proj, near_p, rw, rh, skip, m_draw_calls);
 
             if (is_primary && m_state == EngineState::Editor && m_gizmo)
-                RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh);
+                RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh,
+                                    m_draw_calls);
         }
     }
 
@@ -578,14 +593,15 @@ void Application::RenderViewportTarget()
 // itself. This is the per-entry body of the multi-viewport render and the
 // Inspector camera preview.
 void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
-                                  float near_p, int w, int h, Entity *skip_entity)
+                                  float near_p, int w, int h, Entity *skip_entity,
+                                  int &draw_calls)
 {
     if (!m_scene)
         return;
 
     // Ground-plane grid first so entities draw on top of it.
     if (m_overlay.grid)
-        RenderGroundGrid(renderer, view_proj, near_p, w, h);
+        RenderGroundGrid(renderer, view_proj, near_p, w, h, &draw_calls);
 
     // Phase 29 render modes: Lit shades from the scene lights, Wireframe
     // skips solid fills entirely, and Unlit skips the light loop so surfaces
@@ -667,7 +683,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
                            tint, texture, uvs, lights, occluders, &entity);
         }
-        DrawTriangles(renderer, tris, w, h);
+        DrawTriangles(renderer, tris, w, h, &draw_calls);
     }
 
     // --- Pass 2: wireframe overlay for every visible entity ---
@@ -686,7 +702,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
 
             Mat4 world = m_scene->ComputeWorldMatrix(entity);
             RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
-                                *mesh, entity.material.color, true);
+                                *mesh, entity.material.color, true, &draw_calls);
         }
     }
 }
@@ -697,7 +713,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
 // hovered entity's bounds box still draws.
 void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
                                       const EditorCamera &pose, float near_p,
-                                      int w, int h)
+                                      int w, int h, int &draw_calls)
 {
     if (!m_scene || !m_selection || !m_gizmo)
         return;
@@ -717,7 +733,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
         {
             Mat4 world = m_scene->ComputeWorldMatrix(*selected);
             RenderMeshWireframe(renderer, view_proj, near_p, w, h,
-                                world, *mesh, OUTLINE, false);
+                                world, *mesh, OUTLINE, false, &draw_calls);
         }
         // Draw the bounds box in world space: the AABB component
         // stores LOCAL bounds, so transform them into the entity's
@@ -728,7 +744,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                       selected->bounds.local_max, sel_world,
                       sel_wmin, sel_wmax);
         DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                      sel_wmin, sel_wmax, 255, 255, 255);
+                      sel_wmin, sel_wmax, 255, 255, 255, &draw_calls);
     }
 
     // Hovered entity (ray/AABB hit under the cursor): light-blue
@@ -747,7 +763,8 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                               hover->bounds.local_max, hover_world,
                               hover_wmin, hover_wmax);
                 DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                              hover_wmin, hover_wmax, 110, 180, 255);
+                              hover_wmin, hover_wmax, 110, 180, 255,
+                              &draw_calls);
             }
         }
     }
@@ -783,7 +800,8 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                           cwmin, cwmax,
                           is_trigger ? 90 : 80,
                           is_trigger ? 200 : 230,
-                          is_trigger ? 210 : 110);
+                          is_trigger ? 210 : 110,
+                          &draw_calls);
         }
     }
 
@@ -814,21 +832,26 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
             SDL_SetRenderDrawColor(renderer, 255, 205, 90, 255);
             // Sun cross (world X/Z ticks around the light position).
             DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                              { pos.x - arm, pos.y, pos.z }, { pos.x + arm, pos.y, pos.z });
+                              { pos.x - arm, pos.y, pos.z }, { pos.x + arm, pos.y, pos.z },
+                              &draw_calls);
             DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                              { pos.x, pos.y, pos.z - arm }, { pos.x, pos.y, pos.z + arm });
+                              { pos.x, pos.y, pos.z - arm }, { pos.x, pos.y, pos.z + arm },
+                              &draw_calls);
             // Direction arrow + head tick.
             const Vec3 tip{ pos.x + dir.x * reach, pos.y + dir.y * reach, pos.z + dir.z * reach };
-            DrawProjectedLine(renderer, view_proj, near_p, w, h, pos, tip);
+            DrawProjectedLine(renderer, view_proj, near_p, w, h, pos, tip,
+                              &draw_calls);
             const Vec3 side = Vec3Normalize(Vec3Cross(dir, { 0.0f, 1.0f, 0.0f }));
             if (side.x != 0.0f || side.y != 0.0f || side.z != 0.0f)
             {
                 const float head = 0.35f;
                 const Vec3 perp{ side.x * head, side.y * head, side.z * head };
                 DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                                  tip, { tip.x + perp.x, tip.y + perp.y, tip.z + perp.z });
+                                  tip, { tip.x + perp.x, tip.y + perp.y, tip.z + perp.z },
+                                  &draw_calls);
                 DrawProjectedLine(renderer, view_proj, near_p, w, h,
-                                  tip, { tip.x - perp.x, tip.y - perp.y, tip.z - perp.z });
+                                  tip, { tip.x - perp.x, tip.y - perp.y, tip.z - perp.z },
+                                  &draw_calls);
             }
         }
     }
@@ -1050,7 +1073,7 @@ void Application::RenderCameraPreview()
         {
             // The previewed camera is skipped so it never sees itself.
             RenderScenePass(renderer, view_proj, preview_cam->camera.near_plane,
-                            w, h, preview_cam);
+                            w, h, preview_cam, m_draw_calls);
         }
     }
 
@@ -2660,6 +2683,23 @@ bool Application::Init(int width, int height, const char *title)
         if (m_history_panel)
             m_history_panel->ToggleVisible();
     } });
+
+    // Profiler panel (Phase 30): live performance telemetry (per-stage frame
+    // times, entity count, draw calls, resident memory) with a Pause/Freeze
+    // snapshot and Clear. Reads the Application's Profiler instance.
+    m_profiler_panel = new ProfilerPanel(&m_profiler);
+    m_panels.push_back(std::shared_ptr<ProfilerPanel>(m_profiler_panel));
+    cp.Register({ "Toggle Profiler", "View", "", [this]() {
+        if (m_profiler_panel)
+            m_profiler_panel->ToggleVisible();
+    } });
+    cp.Register({ "Pause/Resume Profiler", "View", "", [this]() {
+        m_profiler.SetPaused(!m_profiler.IsPaused());
+    } });
+    cp.Register({ "Clear Profiler Data", "View", "", [this]() {
+        m_profiler.Clear();
+    } });
+
     cp.Register({ "Toggle Viewport Layout", "View", "", [this]() {
         if (m_viewport_layout_panel)
             m_viewport_layout_panel->ToggleVisible();
@@ -2729,6 +2769,11 @@ void Application::Run()
         Uint64 curr_counter = SDL_GetPerformanceCounter();
         double dt = (double)(curr_counter - prev_counter) / (double)freq;
         prev_counter = curr_counter;
+
+        // Open the profiler frame and clear this frame's draw-call tally before
+        // any of the stages below accumulate into them.
+        m_profiler.StartFrame();
+        m_draw_calls = 0;
 
         // Smoothed FPS for the status bar: exponential moving average so the
         // instant frame-to-frame jitter averages out.
@@ -2801,6 +2846,11 @@ void Application::Run()
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // Profiler: the UI stage spans ImGui's NewFrame -> Render (the editor
+        // chrome, panels, menus) and the final SDL blit + Present below; the
+        // two spans never overlap the Update/Physics/Render stages.
+        m_profiler.BeginStage(Profiler::UI);
 
         // Pull any redirected stdout/stderr bytes into the console every frame
         // (cheap: a single pipe peek when empty). The ConsolePanel also drains,
@@ -3048,6 +3098,13 @@ void Application::Run()
                             m_history_panel->ToggleVisible();
                     }
 
+                    if (m_profiler_panel)
+                    {
+                        if (ImGui::MenuItem("Profiler", nullptr,
+                                            m_profiler_panel->IsVisible()))
+                            m_profiler_panel->ToggleVisible();
+                    }
+
                     if (m_viewport_layout_panel)
                     {
                         if (ImGui::MenuItem("Viewport Layout", nullptr,
@@ -3164,6 +3221,7 @@ void Application::Run()
         ProcessExternalDrops();
 
         ImGui::Render();
+        m_profiler.EndStage(Profiler::UI);
 
         // Persist a "Save Current Layout as Default" capture now that the frame
         // (and its window state) is fully serializable.
@@ -3203,6 +3261,11 @@ void Application::Run()
 
         UpdateCameraControls((float)dt);
 
+        // Profiler: the Update stage wraps gameplay scripts and editor
+        // interaction (viewport picking + gizmo drags). The physics step runs
+        // nested inside it — a dedicated stage so its cost is visible, but it
+        // only ever runs in play mode where the editor block below is skipped.
+        m_profiler.BeginStage(Profiler::Update);
         // Gameplay scripts run only during play: OnUpdate(dt) fires for every
         // bound entity before the 3D pass renders the resulting transforms.
         // The physics step then detects solid/trigger overlaps at those new
@@ -3213,7 +3276,11 @@ void Application::Run()
             if (m_script_engine)
                 m_script_engine->UpdateSession(*m_scene, (float)dt);
             if (m_physics)
+            {
+                m_profiler.BeginStage(Profiler::Physics);
                 m_physics->Step(*m_scene, *m_script_engine);
+                m_profiler.EndStage(Profiler::Physics);
+            }
         }
 
         // Editor interaction: viewport picking + gizmo dragging. Skipped in
@@ -3272,22 +3339,48 @@ void Application::Run()
                 m_gizmo->Update(gf);
             }
         }
+        m_profiler.EndStage(Profiler::Update);
 
-        // Skip the 3D render pass while minimized; the restore event already
-        // queued a target recreation for the frame we come back.
+        // Profiler: the Render stage is the off-screen 3D pass (scene render
+        // + editor overlays) plus the Inspector camera preview. Skipped for
+        // the minimized window, but the preview still renders.
         if (!minimized)
+        {
+            m_profiler.BeginStage(Profiler::Render);
             RenderViewportTarget();
+            RenderCameraPreview();
+            m_profiler.EndStage(Profiler::Render);
+        }
+        else
+        {
+            RenderCameraPreview();
+        }
 
         // Inspector camera preview: render the selected camera entity into the
         // preview target after the main pass so its scene pass reuses fresh
         // AABB bounds. Drawn by the Inspector's Camera section.
-        RenderCameraPreview();
-
         SDL_Renderer *renderer = m_window->GetNativeRenderer();
+        m_profiler.BeginStage(Profiler::UI);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        m_profiler.EndStage(Profiler::UI);
+
+        // Commit this frame's samples and record the resource snapshot:
+        // live entity count, the 3D draw calls issued this frame, and an
+        // estimate of resident mesh + GPU texture memory.
+        size_t memory_bytes = 0;
+        if (m_mesh_library)
+            memory_bytes += m_mesh_library->ResidentBytes();
+        if (m_texture_library)
+            memory_bytes += m_texture_library->ResidentBytes();
+        if (m_scene)
+            memory_bytes += m_scene->GetEntities().size() * sizeof(Entity);
+        m_profiler.RecordResources(
+            m_scene ? (int)m_scene->GetEntities().size() : 0,
+            m_draw_calls, memory_bytes);
+        m_profiler.EndFrame();
 
         if (dt < TARGET_FRAME_TIME)
         {
@@ -3311,6 +3404,7 @@ void Application::Shutdown()
     m_console_panel = nullptr;
     m_inspector_panel = nullptr;
     m_viewport_layout_panel = nullptr;
+    m_profiler_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further
     // stdout traffic can target a closed pipe.

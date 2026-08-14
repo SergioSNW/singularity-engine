@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.29.0-alpha — Viewport Overlays & Gizmo Toggle Toolbar
+v0.30.0-alpha — Real-Time Performance Profiler UI
 
 ## Dependencies
 
@@ -30,11 +30,13 @@ src/
     │   ├── CameraManager.h/.cpp (multi-viewport camera stack)
     │   ├── ToastManager.h/.cpp  (editor toast notifications)
     │   ├── ViewportOverlaySettings.h (viewport render modes + overlay toggles)
+    │   ├── Profiler.h           (rolling per-stage frame-time telemetry)
     │   ├── Window.h/.cpp
     ├── render/        SDL2 rendering wrappers (future)
     └── editor/        Dear ImGui editor panels
         ├── EditorPanel.h            (base interface)
         ├── StatsPanel.h/.cpp        (diagnostics)
+        ├── ProfilerPanel.h/.cpp     (performance plots + Pause/Freeze)
         ├── SceneHierarchyPanel.h/.cpp (scene tree)
         ├── InspectorPanel.h/.cpp    (property editor)
         └── ViewportLayoutPanel.h/.cpp (camera layout editor)

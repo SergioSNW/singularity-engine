@@ -329,3 +329,17 @@ const Mesh* MeshLibrary::GetBuiltinCube() const
 {
     return Get("__builtin_cube__");
 }
+
+size_t MeshLibrary::ResidentBytes() const
+{
+    size_t bytes = 0;
+    for (const auto &kv : m_meshes)
+    {
+        const Mesh &m = kv.second;
+        bytes += sizeof(kv.second) + m.name.capacity();
+        bytes += m.positions.capacity() * sizeof(Vec3);
+        bytes += m.edge_lines.capacity() * sizeof(Vec3);
+        bytes += m.uvs.capacity() * sizeof(Vec2);
+    }
+    return bytes;
+}

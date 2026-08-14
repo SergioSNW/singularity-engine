@@ -112,3 +112,11 @@ void TextureLibrary::DestroyAll()
             SDL_DestroyTexture(entry.second.texture);
     m_textures.clear();
 }
+
+size_t TextureLibrary::ResidentBytes() const
+{
+    size_t bytes = 0;
+    for (const auto &entry : m_textures)
+        bytes += (size_t)entry.second.width * (size_t)entry.second.height * 4u;
+    return bytes;
+}

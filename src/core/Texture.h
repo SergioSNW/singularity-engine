@@ -44,6 +44,11 @@ public:
     // Convenience: Load(), then return just the SDL handle (or nullptr).
     SDL_Texture* GetTexture(const std::string &path, std::string *error = nullptr);
 
+    // Estimated GPU memory (bytes) across every cached texture (w*h*4 RGBA).
+    // SDL2 exposes no per-texture size query, so this is the conventional
+    // estimate used by the Profiler's resource readout.
+    size_t ResidentBytes() const;
+
     // Release every GPU texture. Call before the renderer/window are torn down.
     void DestroyAll();
 

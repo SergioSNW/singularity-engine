@@ -2,6 +2,7 @@
 
 #include "core/ToastManager.h"
 #include "core/ViewportOverlaySettings.h"
+#include "core/Profiler.h"
 
 #include <memory>
 #include <string>
@@ -47,6 +48,7 @@ class MaterialPanel;
 class ViewportLayoutPanel;
 class CommandHistory;
 class HistoryPanel;
+class ProfilerPanel;
 struct Entity;
 
 // Editor runtime state machine. Play mode isolates the viewport as a full-window
@@ -100,10 +102,14 @@ private:
     //                            (its own camera), used for picking.
     //   GetPrimaryViewportRect- pixel rect of the primary entry in the render
     //                            target, for mouse->world mapping.
+    // `draw_calls` accumulates the SDL draw calls issued by the pass (line
+    // primitives + geometry batches) for the Profiler's resource readout.
     void RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
-                         float near_p, int w, int h, Entity *skip_entity);
+                         float near_p, int w, int h, Entity *skip_entity,
+                         int &draw_calls);
     void RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
-                             const EditorCamera &pose, float near_p, int w, int h);
+                             const EditorCamera &pose, float near_p, int w, int h,
+                             int &draw_calls);
     bool CaptureSceneCamera(Entity &camera_entity, EditorCamera &out);
     bool ResolveCameraPose(const CameraEntry &entry, EditorCamera &out);
     bool BuildViewProjFromPose(const EditorCamera &pose, float near_p,
@@ -220,6 +226,7 @@ private:
     MaterialPanel *m_material_panel;
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
+    ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
     SDL_Texture *m_viewport_target;
     int m_viewport_target_w;
     int m_viewport_target_h;
@@ -278,6 +285,13 @@ private:
     // by the header toolbar, the View menu, and the command palette; the render
     // passes read it each frame. Snap steps live in m_snap (GizmoController.h).
     ViewportOverlaySettings m_overlay;
+
+    // Phase 30: real-time performance telemetry. Run() drives StartFrame /
+    // BeginStage / EndStage / RecordResources every frame; the ProfilerPanel
+    // renders the rolling series. m_draw_calls accumulates the SDL draw calls
+    // issued by the 3D passes each frame (reset at frame start).
+    Profiler m_profiler;
+    int m_draw_calls = 0;
 
     // RMB over the viewport is a two-way gesture: a quick click opens the
     // context menu; press-and-move (past kViewportRmbFlyThreshold px) captures

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.30.0-alpha] — 2026-08-14
+
+### Added
+
+- **Profiler telemetry core** (`src/core/Profiler.h`, pure header-only, no SDL/ImGui dependency): a 120-frame rolling `Series` ring buffer per stage (Update / Render / UI / Physics) plus the frame total, each keeping running sum/max for O(1) latest/avg/peak reads. `StartFrame` / `BeginStage` / `EndStage` / `EndFrame` bracket the phases; `RecordResources(entities, draw_calls, memory_bytes)` snapshots live entity count, 3D draw calls, and resident memory (latest values readable even while paused); `SetPaused` freezes the buffers for frame inspection; `Clear` drops everything.
+- **Run-loop instrumentation** (`Application::Run`): the Update stage wraps gameplay script updates + editor gizmo/camera interaction (the physics step runs nested as its own stage, play-mode only), the Render stage wraps the off-screen 3D pass (`RenderViewportTarget`) + Inspector camera preview, and the UI stage spans ImGui's NewFrame→Render plus the final SDL blit + Present. `RenderScenePass` / `RenderEditorOverlay` thread an `int &draw_calls` tally through every `DrawProjectedLine` / `FlushTriBatch` call, so the draw-call count reflects real `SDL_RenderDrawLine` / `SDL_RenderGeometry` load (resets each frame).
+- **ProfilerPanel** (`src/editor/ProfilerPanel.{h,cpp}`): a dockable `EditorPanel` that plots frame time and each stage's ms trend (`ImGui::PlotLines`), with latest/avg/peak readouts per stage and entities / draw calls / memory MB resource plots. A **Pause/Resume** button freezes the buffers (with a "FROZEN" indicator), **Clear** empties the history. Toggled from the View menu ("Profiler") and the command palette (`Toggle Profiler`, `Pause/Resume Profiler`, `Clear Profiler Data`).
+- **Memory estimates**: `MeshLibrary::ResidentBytes()` (map nodes + vector storage for positions/edge lines/UVs) and `TextureLibrary::ResidentBytes()` (w×h×4 per cached GPU texture), summed with the live entity count each frame.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 30 chapter ("Real-Time Performance Profiler UI") covering the pure telemetry core, run-loop stage instrumentation, draw-call tallying, the panel, and the harness.
+
+### Verified
+
+- New `phase30_profiler_test` harness (links standalone, pure Core): fresh-profiler state, one frame with a measurable Update stage + resource snapshot, ring-buffer wrap (150 frames → fixed 120-sample window, oldest/newest ordering), Pause freeze / Resume behavior, and Clear — 41/41 checks pass. Clean rebuild succeeds; editor smoke run stays alive with the Profiler wired and an empty log.
+
 ## [0.29.0-alpha] — 2026-08-13
 
 ### Added

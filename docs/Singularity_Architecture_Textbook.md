@@ -7,6 +7,7 @@
 3. [Dear ImGui Integration and Lifecycle Binding](#3-dear-imgui-integration-and-lifecycle-binding)
 4. [Modular Class Architecture — Structural Reasoning](#4-modular-class-architecture--structural-reasoning)
 5. [Phase 29 — Viewport Overlays & Gizmo Toggle Toolbar](#5-phase-29--viewport-overlays--gizmo-toggle-toolbar)
+6. [Phase 30 — Real-Time Performance Profiler UI](#6-phase-30--real-time-performance-profiler-ui)
 
 ---
 
@@ -399,4 +400,71 @@ the snap-step defaults the toolbar edits (29/29 checks).
 
 ---
 
-*End of textbook section covering versions v0.1.0-alpha through the architecture refactor and the v0.29.0-alpha viewport overlay toolbar.*
+*End of textbook section covering versions v0.1.0-alpha through the architecture refactor and the v0.30.0-alpha real-time performance profiler UI.*
+
+## 6. Phase 30 — Real-Time Performance Profiler UI
+
+Optimizing an editor without measurement is guesswork. Phase 30 adds a lightweight,
+always-on telemetry core and a dockable panel that plots it — cheap enough to run
+every frame on thermally-constrained hardware, and pure enough to unit-test standalone.
+
+### 6.1 The Pure Core: `Profiler` (`src/core/Profiler.h`)
+
+No SDL, no ImGui, just `std::array` / `std::chrono` — the same "pure Core" pattern as
+`ToastManager` and `ViewportOverlaySettings`. Per frame it records:
+
+- **Four stage series** (`Update`, `Render`, `UI`, `Physics`) plus the **frame total**,
+  each a fixed 120-sample rolling `Series` ring buffer that keeps a running sum and max
+  so latest / average / peak are O(1) reads. `StartFrame()` opens the frame clock and
+  zeroes the accumulators; `BeginStage`/`EndStage` bracket each phase (repeatable —
+  the accumulator sums disjoint spans); `EndFrame()` commits one sample per stage.
+- **A resource snapshot** — entity count, 3D draw calls, resident memory bytes —
+  recorded via `RecordResources(...)` and kept as both a readable "latest" and a
+  rolling trend series.
+- **Pause / Clear** — `SetPaused(true)` makes every recorder a no-op, so the history
+  freezes mid-scroll for frame-by-frame inspection; `Clear()` drops all samples.
+
+```cpp
+Profiler p;
+p.StartFrame();
+p.BeginStage(Profiler::Update);   // gameplay + editor interaction
+p.EndStage(Profiler::Update);
+p.RecordResources(entities, draw_calls, mem);
+p.EndFrame();
+```
+
+### 6.2 Run-Loop Instrumentation (`Application::Run`)
+
+Each loop iteration calls `m_profiler.StartFrame()` up front, then brackets every
+phase so the four stages are mutually exclusive and together span the frame:
+
+| Stage | Bracket |
+|-------|---------|
+| **UI** | ImGui `NewFrame` → `ImGui::Render` (editor chrome, panels, menus), **plus** the final `SDL_RenderClear` / `RenderDrawData` / `SDL_RenderPresent` blit (two disjoint spans, summed by the accumulator) |
+| **Update** | `UpdateCameraControls` + play-mode script `UpdateSession` + editor gizmo/picking interaction |
+| **Physics** | `PhysicsManager::Step` (nested inside Update; play-mode only) |
+| **Render** | `RenderViewportTarget` (off-screen 3D pass) + `RenderCameraPreview` |
+
+Draw calls are counted, not guessed: `RenderScenePass` / `RenderEditorOverlay` now
+thread an `int &draw_calls` tally through every `DrawProjectedLine` (one per
+`SDL_RenderDrawLine`) and `FlushTriBatch` (one per `SDL_RenderGeometry` chunk), reset
+to zero each frame. Memory is an order-of-magnitude estimate from new
+`MeshLibrary::ResidentBytes()` (map nodes + vector storage) and
+`TextureLibrary::ResidentBytes()` (w×h×4 per cached GPU texture), plus the live entity
+count.
+
+### 6.3 The Panel: `ProfilerPanel` (`src/editor/ProfilerPanel.{h,cpp}`)
+
+A standard `EditorPanel` (View-menu toggle + command palette). It plots the rolling
+series with `ImGui::PlotLines` — frame time and each stage in milliseconds (seconds
+scaled ×1000), plus raw entities / draw calls / memory-MB trends — with a
+latest/avg/peak text row per graph. The header row offers **Pause/Resume** (freezes
+the buffers, shows a "FROZEN" tag), **Clear**, and the recorded frame count.
+
+### 6.4 Testability
+
+The `phase30_profiler_test` harness links standalone against `Profiler.h` and verifies
+fresh state, a measurable Update stage + resource snapshot, ring-buffer wrap (150
+frames keep a fixed 120-sample window with correct oldest/newest ordering), Pause
+freezing vs. Resume, and Clear (41/41 checks). The engine smoke run stays alive with
+the profiler wired and an empty log.
