@@ -95,9 +95,11 @@ void WorkspaceManager::RebuildLayout()
     {
         case Workspace::Scripting:
         {
-            // Scripting workspace: taller bottom strip dedicated to the IDE,
-            // with the code window docked in its own slot beside the sidebar
-            // so it is part of the unified dock rather than floating.
+            // Scripting workspace: a taller bottom strip dedicated to the IDE,
+            // with the unified "Script Editor" mini-IDE (browser sidebar, tab
+            // bar and code pane all inside the one window) docked beside the
+            // "Development Zone" tabs, so the whole IDE is part of the unified
+            // dock rather than floating.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.62f, &top, &bottom);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
@@ -105,21 +107,20 @@ void WorkspaceManager::RebuildLayout()
             ImGuiID left_top, left_bottom;
             ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
 
-            ImGuiID bottom_left, bottom_center, dev_right;
-            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.18f, &bottom_left, &bottom_center);
-            ImGui::DockBuilderSplitNode(bottom_center, ImGuiDir_Right, 0.22f, &dev_right, &bottom_center);
+            ImGuiID ide_slot, dev_right;
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.66f, &ide_slot, &dev_right);
 
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
             ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
             dock_right_rail(right);
-            ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_left);
+            ImGui::DockBuilderDockWindow(kScriptEditorWindow, ide_slot);
             dock_dev_zone(dev_right);
 
-            // The code window title embeds the file name, so it cannot be
-            // docked by name here; the Application routes it through
-            // SetNextWindowDockID with this node.
-            m_code_window_node = bottom_center;
+            // The mini-IDE is a single fixed-title window ("Script Editor"),
+            // so it can be docked by name; the node is still routed to the
+            // Application for the Float/Dock toolbar toggle.
+            m_code_window_node = ide_slot;
             break;
         }
         case Workspace::ShadingAndAssets:
@@ -156,8 +157,8 @@ void WorkspaceManager::RebuildLayout()
             // Hierarchy (max room to manage entities and light sources), the
             // right rail tabs Inspector over Editor Settings, and the bottom
             // "Development Zone" groups the Material Editor, Console, History,
-            // Stats and Content Browser in one tabbed strip beside the Script
-            // Editor sidebar. The code window stays free-floating.
+            // Stats and Content Browser in one tabbed strip beside the docked
+            // Script Editor mini-IDE.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.76f, &top, &bottom);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.20f, &left, &center);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
@@ -171,6 +172,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kStatsWindow, bottom_left);
             dock_dev_zone(bottom_left);
             ImGui::DockBuilderDockWindow(kScriptEditorWindow, bottom_right);
+            m_code_window_node = bottom_right;
             break;
         }
     }
@@ -244,10 +246,10 @@ unsigned int WorkspaceManager::ApplyWorkspace(Workspace ws)
     return m_code_window_node;
 }
 
-void WorkspaceManager::ResetToDefault()
+unsigned int WorkspaceManager::ResetToWorkspaceDefault()
 {
     m_saved_layout.clear();
-    ApplyWorkspace(Workspace::LevelDesign);
+    return ApplyWorkspace(m_workspace);
 }
 
 void WorkspaceManager::RequestSaveCurrent()

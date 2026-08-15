@@ -15,18 +15,18 @@
 //                        Viewport center-stage, Inspector + Editor Settings
 //                        tabbed in the right rail, and a bottom "Development
 //                        Zone" grouping Content Browser + Console as tabs next
-//                        to the Script Editor sidebar. The code editor stays
-//                        free-floating.
+//                        to the docked Script Editor mini-IDE.
 //   * Scripting        — a script-authoring workspace: a taller bottom strip
-//                        split into the script sidebar (left), a *docked* code
-//                        window (center), and the Content Browser + Console
-//                        tabs (right), so the whole IDE is part of the unified
-//                        dock.
+//                        hosts the unified Script Editor mini-IDE (browser
+//                        sidebar, tab bar and code pane in a single window)
+//                        beside the Content Browser + Console tabs, so the
+//                        whole IDE is part of the unified dock.
 //   * ShadingAndAssets — an asset/material workspace: the Material Editor is
 //                        the primary right-rail authoring zone, with Inspector
 //                        + Editor Settings + Content Browser tabbed beneath it
 //                        and a bottom Console + Stats tab group, maximizing the
-//                        viewport for inspecting shaded geometry.
+//                        viewport for inspecting shaded geometry. The Script
+//                        Editor stays free-floating here.
 //
 // Tab groups conserve screen real estate: several windows docked into one node
 // render as a single tabbed window, with the last-docked window focused.
@@ -59,13 +59,13 @@ public:
     void RequestRebuild();
 
     // Switch to a built-in workspace: rebuilds the tree immediately and
-    // returns the dock node the script-editor code window should be placed in
+    // returns the dock node the Script Editor window should be placed in
     // (0 = the workspace leaves it free-floating).
     unsigned int ApplyWorkspace(Workspace ws);
 
-    // Restore the pristine Level Design workspace and forget any saved custom
-    // layout.
-    void ResetToDefault();
+    // Restore the active workspace's canonical layout and forget any saved
+    // custom layout. Returns the dock node for the Script Editor window.
+    unsigned int ResetToWorkspaceDefault();
 
     // Capture the current dock layout as the startup default. The serialized
     // .ini is stored at the end of the frame by FinalizeSave().

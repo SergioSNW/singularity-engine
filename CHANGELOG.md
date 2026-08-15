@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.33.0-alpha] — 2026-08-15
+
+### Added
+
+- **True workspace layouts** (`src/core/WorkspaceManager.{h,cpp}`): the built-in workspaces now describe canonical dock layouts for the unified **Script Editor** mini-IDE — the Scripting workspace hosts the whole IDE (browser sidebar + tab bar + code pane in one docked window) in a taller bottom strip beside the Development Zone tabs, and the Level Design workspace docks it in the bottom-right beside the Stats/Content Browser/Console group. `ApplyWorkspace` returns the dock node reserved for the IDE (0 = floating, as in Shading & Assets), and a new **Reset to Workspace Default** action rebuilds the *active* workspace's canonical layout and forgets any captured custom layout (returning the IDE node to route). The old split sidebar + floating code-window model is gone.
+- **Tabbed mini-IDE** (`src/editor/ScriptEditorPanel.{h,cpp}`): the single dockable "Script Editor" window now keeps multiple `.lua` scripts open as tabs — every tab owns its own `TextEditor` buffer, undo stack, and canonical saved-on-disk baseline, so switching tabs never loses edits. Dirty tabs carry a `*` (amber) and per-tab `x` close buttons confirm unsaved changes (Save / Discard / Cancel); a toolbar offers Save / Save & Reload / Auto-save and a **Float / Dock to Workspace** toggle that pops the whole window out of the dock or routes it back through the Application's redock callback. Ctrl+S, auto-save-on-blur, and the external-edit disk watcher all carry over, scoped to the active tab. The Content Browser's `.lua` double-click still opens files through `RequestOpen`.
+- **Mini-IDE theme + gutter fill** (`third_party/ImGuiColorTextEdit/TextEditor.{h,cpp}`): a new `PaletteIndex::LineNumberFill` paints a contrasting gutter strip behind the line numbers (added to the dark/light/retro palettes), and the IDE applies its own accent-tuned palette (deep navy-black background, accent current-line, `#82AAFF` known identifiers).
+- **Wiring & versioning**: `Application::Init` builds the `ScriptEditorPanel` with a redock callback that re-applies the current workspace, and all three reset entries (Workspace menu, View menu, command palette) now route the returned IDE node. `CMakeLists.txt` bumps the project version to `0.33.0`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 33 chapter ("True Workspace Layouts, Tabbed Mini-IDE & Theme") covering the state-driven workspace presets, the reset-to-workspace action, the tabbed IDE, the Float/Dock toggle, and the mini-theme.
+
+### Verified
+
+- Clean rebuild succeeds. Editor smoke run stays alive with the workspace presets, tabbed IDE, Float/Dock toggle and gutter-filled mini-theme wired, an empty log, and no stray file edits on disk.
+
 ## [0.32.0-alpha] — 2026-08-14
 
 ### Added

@@ -10,6 +10,7 @@
 6. [Phase 30 — Real-Time Performance Profiler UI](#6-phase-30--real-time-performance-profiler-ui)
 7. [Phase 31 — Advanced Content Browser & Thumbnail Generator](#7-phase-31--advanced-content-browser--thumbnail-generator)
 8. [Phase 32 — Integrated Lua Scripting IDE](#8-phase-32--integrated-lua-scripting-ide)
+9. [Phase 33 — True Workspace Layouts, Tabbed Mini-IDE & Theme](#9-phase-33--true-workspace-layouts-tabbed-mini-ide--theme)
 
 ---
 
@@ -629,3 +630,87 @@ Enter Play Mode).
 the play session uses, so the verified bindings carry over. The engine rebuilds
 clean; the editor smoke run stays alive with the REPL state, console command line,
 and the auto-save/external-reload hooks wired and an empty log.
+
+---
+
+## 9. Phase 33 — True Workspace Layouts, Tabbed Mini-IDE & Theme
+
+Phase 33 completes the editor shell: workspace presets become real, state-driven
+dock layouts that own the whole script-authoring surface, and the script editor
+becomes a multi-file tabbed mini-IDE with its own visual theme.
+
+### 9.1 State-Driven Workspace Layouts (`src/core/WorkspaceManager.{h,cpp}`)
+
+Up to Phase 32 the workspaces were a hybrid: the Script Editor sidebar docked into
+the tree while the actual code window floated by name. Since the mini-IDE is now a
+*single* window titled `"Script Editor"` (browser sidebar, tab bar, and code pane
+all inside one `ImGui::Begin("Script Editor", ...)`), the workspace layouts can
+own the entire authoring surface deterministically:
+
+- **Level Design** docks the mini-IDE in the bottom-right, beside the bottom-left
+  "Development Zone" (Stats + Material Editor / Console / History / Viewport Layout
+  / Content Browser tabs), with Hierarchy over Stats on the left and the
+  Inspector/Editor Settings right rail.
+- **Scripting** raises the bottom strip to 38% and gives the mini-IDE the wide
+  left slot (66%) with the Development Zone tabs beside it, so the whole IDE is
+  part of the unified dock.
+- **Shading & Assets** maximizes the viewport; the mini-IDE is left floating
+  (`m_code_window_node = 0`).
+
+`ApplyWorkspace(ws)` rebuilds the tree with `DockBuilder`, sets
+`m_code_window_node` to the slot reserved for the mini-IDE, persists the active
+workspace to `editor_layout.json`, and returns that node — which the Application
+routes straight into `ScriptEditorPanel::RequestDockCodeWindow(node)` so the
+window lands exactly in its workspace slot.
+
+The new **Reset to Workspace Default** action (Workspace menu, View menu, and
+command palette) calls `ResetToWorkspaceDefault()`: it clears any captured custom
+layout and re-applies the *active* workspace's canonical layout, returning the
+IDE node to route. It supersedes the old "Reset to Level Design", which always
+jumped back to the Level Design preset regardless of the current workspace.
+
+### 9.2 The Tabbed Mini-IDE (`src/editor/ScriptEditorPanel.{h,cpp}`)
+
+The single `ScriptEditorPanel` window now hosts multiple open `.lua` scripts:
+
+- **Tabs** — every tab owns a `Tab { path, TextEditor *editor, saved_text,
+  last_write_time }`. Because each tab has its own `TextEditor`, undo stack, and
+  canonical saved baseline, switching tabs never loses edits. The custom tab strip
+  draws dirty tabs with a `*` prefix in amber and a per-tab `x` close button;
+  closing a dirty tab opens a modal (Save / Discard / Cancel) that saves then
+  closes, discards, or aborts.
+- **Toolbar** — Save and Save & Reload (both gated on dirtiness), the Auto-save
+  toggle, and the **Float / Dock to Workspace** toggle. "Float" pops the whole
+  window out of the dock (`RequestDockCodeWindow(0)`); "Dock to Workspace"
+  fires a `RedockCallback` that re-applies the current workspace in the
+  Application and routes the returned IDE node back, so the window lands in its
+  canonical slot.
+- **Real-time hooks carry over, scoped to the active tab** — Ctrl+S, auto-save on
+  window blur, and the disk watcher all operate on `m_active_tab`; a dirty buffer
+  is still never clobbered by an external edit.
+
+The Content Browser still opens `.lua` assets through the unchanged
+`RequestOpen(path)`.
+
+### 9.3 Mini-IDE Theme and the Line-Number Gutter (`third_party/ImGuiColorTextEdit`)
+
+The vendored TextEditor stores palettes as `0xAABBGGRR` and blends every
+`PaletteIndex` from `0` to `Max`. A new `PaletteIndex::LineNumberFill` (inserted
+between `Breakpoint` and `LineNumber`) paints a contrasting gutter strip behind
+the line numbers — drawn before the (semi-transparent) current-line highlight so
+the gutter keeps its tone on every row. The index was added to all three static
+palettes (dark `0xff1a1d22`, light `0xffe8e8ec`, retro `0xff000000`), so any
+consumer compiling against the vendored header stays consistent.
+
+The mini-IDE applies its own `MakeEditorPalette()`: a deep navy-black background
+(`#12141B`), the engine accent (`#5B7CFA`) tinted current-line fill/edge, a
+darker gutter with muted line numbers, `#82AAFF` known identifiers, and a curated
+keyword/number/string set — giving the code pane a distinct identity from the
+panels around it.
+
+### 9.4 Testability and Verification
+
+The engine rebuilds clean (the new `LineNumberFill` index flows through the
+existing palette-blend loop). The editor smoke run stays alive with the workspace
+presets, the tabbed IDE, the Float/Dock toggle, and the gutter-filled mini-theme
+wired, an empty log, and no stray file edits on disk.

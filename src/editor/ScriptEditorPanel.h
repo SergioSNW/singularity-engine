@@ -10,13 +10,18 @@
 class TextEditor;
 struct ImFont;
 
-// In-editor Lua script editor. The "Script Editor" window is a file-browser
-// sidebar over assets/scripts/; selecting a script spawns a dedicated floating
-// "Script Editor: <file>" code window (resizable, minimizable, dockable) that
-// hosts the syntax-highlighting buffer, a Save / Save & Reload toolbar, and a
-// dirty marker. "Save & Reload" writes the file to disk and, when a play
-// session is live, hot-swaps the running session via
-// ScriptEngine::ReloadSession so OnStart re-runs against the new text.
+// In-editor Lua mini-IDE. A single dockable "Script Editor" window hosts a
+// file-browser sidebar, a tab bar, and the syntax-highlighting code pane for
+// the active tab. Multiple .lua scripts stay open at once: every tab owns its
+// own TextEditor buffer, undo stack, and saved-on-disk baseline, so switching
+// tabs never loses edits. Dirty tabs carry a '*' in the label and are
+// confirmed before closing. The whole window docks by name into the workspace
+// layouts ("Script Editor") and can be popped out as a floating window via the
+// toolbar toggle.
+//
+// Real-time editing hooks carry over from Phase 32: Auto-save writes the active
+// buffer the moment the IDE loses focus, and a disk watcher adopts external
+// edits (hot-reloading the live play session through the ReloadCallback).
 class ScriptEditorPanel : public EditorPanel
 {
 public:
@@ -24,7 +29,13 @@ public:
     // return true when a running session was actually swapped.
     using ReloadCallback = std::function<bool()>;
 
-    explicit ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload);
+    // Invoked when the user pops the IDE back into the dock ("Dock" button);
+    // the Application re-applies the current workspace, which routes the
+    // window back into its canonical dock node.
+    using RedockCallback = std::function<void()>;
+
+    explicit ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload,
+                               RedockCallback redock);
     ~ScriptEditorPanel() override;
 
     void OnImGuiRender(float dt) override;
@@ -32,54 +43,61 @@ public:
     bool IsVisible() const { return m_visible; }
     void ToggleVisible();
 
-    // Hide/show the whole script-editing UI (sidebar + code window). Hiding
-    // also closes the floating code window; restoring reopens it when a file
-    // is already loaded, exactly like ToggleVisible. Used by the play-mode
+    // Hide/show the whole script-editing UI. Hiding preserves every open tab;
+    // restoring reopens the window with the tabs intact. Used by the play-mode
     // panel isolation so the IDE is not rendered during gameplay.
     void SetVisible(bool visible);
 
-    // One-shot: dock the dedicated code window into `node_id` on its next
-    // render. Pass 0 to undock it back to a floating window. Used by the
-    // layout-preset system so the code editor participates in the workspace.
+    // One-shot: dock the IDE window into `node_id` on its next render.
+    // Pass 0 to pop it out as a floating window.
     void RequestDockCodeWindow(unsigned int node_id);
 
-    // The code window's ImGui title ("Script Editor: <file>"), or "" when no
-    // file is open.
+    // The IDE window's ImGui title ("Script Editor"), or the title of the
+    // active tab's file when a file is open.
     std::string GetCodeWindowTitle() const;
 
-    // Open `path` in the code window. If the current buffer is dirty, the
-    // unsaved-changes dialog runs first. Safe to call from other panels (the
-    // Content Browser uses it for .lua assets).
+    // Open `path` in a tab, activating it if already open. Safe to call from
+    // other panels (the Content Browser uses it for .lua assets).
     void RequestOpen(const std::string &path);
 
 private:
+    struct Tab
+    {
+        std::string path;
+        TextEditor *editor;          // owned
+        std::string saved_text;      // canonical saved-on-disk baseline
+        std::int64_t last_write_time;
+    };
+
     void RefreshFileList();
-    bool OpenFile(const std::string &path, std::string *error);
-    bool SaveCurrent(std::string *error);
+    int FindTab(const std::string &path) const;
+    int OpenFile(const std::string &path, std::string *error);
+    void CloseTab(int index);
+    bool SaveTab(int index, std::string *error);
+    bool IsTabDirty(int index) const;
+
     void ConfirmUnsavedModal();
     void DrawFileBrowser();
-    void DrawCodeWindow();
+    void DrawTabBar();
+    void DrawToolbar(bool dirty, bool docked);
+    void DrawEditorPane(int tab_index);
 
     ReloadCallback m_reload;
-    TextEditor *m_editor;
+    RedockCallback m_redock;
     ImFont *m_mono_font;
 
     std::vector<std::string> m_files;
-    std::string m_current;       // path of the open file ("" when none open)
-    std::string m_saved_text;    // last text written to disk
-    std::string m_status;        // last-action feedback line
-    char m_new_name[256];        // "New Script" name input buffer
-    std::string m_pending_open;  // switch target waiting on the unsaved-changes dialog
-    bool m_visible;              // sidebar (file browser) window visible
-    bool m_editor_open;          // dedicated code window visible
-    bool m_modal_requested;      // open the unsaved-changes dialog this frame
-    bool m_focus_code_window;    // focus the code window next frame
-    bool m_dock_requested;       // apply m_dock_node on the next code-window render
-    unsigned int m_dock_node;    // dock node for the code window (0 = floating)
-    float m_editor_pos[2];       // remembered code-window position
-    float m_editor_size[2];      // remembered code-window size
-    bool m_editor_pos_valid;     // remembered code-window geometry exists
-    bool m_auto_save;            // save the buffer when the code window blurs
-    bool m_was_code_focused;     // code window had focus last frame
-    std::int64_t m_last_write_time;  // file mtime when last opened/saved
+    std::vector<Tab> m_tabs;
+    int m_active_tab;             // index into m_tabs (-1 when none open)
+    std::string m_status;         // last-action feedback line
+    char m_new_name[256];         // "New Script" name input buffer
+    int m_pending_close;          // tab waiting on the unsaved-changes dialog
+    bool m_visible;               // IDE window visible
+    bool m_modal_requested;       // open the unsaved-changes dialog this frame
+    bool m_focus_window;          // focus the IDE window next frame
+    bool m_dock_requested;        // apply m_dock_node on the next render
+    unsigned int m_dock_node;     // dock node for the IDE (0 = floating)
+    float m_sidebar_width;        // file-browser sidebar width (px)
+    bool m_auto_save;             // save the active buffer when the IDE blurs
+    bool m_was_focused;           // IDE window had focus last frame
 };

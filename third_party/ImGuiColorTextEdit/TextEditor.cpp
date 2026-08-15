@@ -958,6 +958,15 @@ void TextEditor::Render()
 			snprintf(buf, 16, "%d  ", lineNo + 1);
 
 			auto lineNoWidth = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x;
+
+			// Gutter background: a contrasting strip behind the line numbers.
+			// Drawn before the current-line highlight (semi-transparent), so the
+			// gutter keeps its distinct tone on every row.
+			drawList->AddRectFilled(
+				ImVec2(lineStartScreenPos.x, lineStartScreenPos.y),
+				ImVec2(lineStartScreenPos.x + mTextStart, lineStartScreenPos.y + mCharAdvance.y),
+				mPalette[(int)PaletteIndex::LineNumberFill]);
+
 			drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart - lineNoWidth, lineStartScreenPos.y), mPalette[(int)PaletteIndex::LineNumber], buf);
 
 			if (mState.mCursorPosition.mLine == lineNo)
@@ -2022,6 +2031,7 @@ const TextEditor::Palette & TextEditor::GetDarkPalette()
 			0x80a06020, // Selection
 			0x800020ff, // ErrorMarker
 			0x40f08000, // Breakpoint
+			0xff1a1d22, // Line number fill
 			0xff707000, // Line number
 			0x40000000, // Current line fill
 			0x40808080, // Current line fill (inactive)
@@ -2050,6 +2060,7 @@ const TextEditor::Palette & TextEditor::GetLightPalette()
 			0x80600000, // Selection
 			0xa00010ff, // ErrorMarker
 			0x80f08000, // Breakpoint
+			0xffe8e8ec, // Line number fill
 			0xff505000, // Line number
 			0x40000000, // Current line fill
 			0x40808080, // Current line fill (inactive)
@@ -2078,6 +2089,7 @@ const TextEditor::Palette & TextEditor::GetRetroBluePalette()
 			0x80ffff00, // Selection
 			0xa00000ff, // ErrorMarker
 			0x80ff8000, // Breakpoint
+			0xff000000, // Line number fill
 			0xff808000, // Line number
 			0x40000000, // Current line fill
 			0x40808080, // Current line fill (inactive)

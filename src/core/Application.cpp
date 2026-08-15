@@ -2532,19 +2532,29 @@ bool Application::Init(int width, int height, const char *title)
     m_viewport_layout_panel = new ViewportLayoutPanel(m_cameras);
     m_panels.push_back(std::shared_ptr<ViewportLayoutPanel>(m_viewport_layout_panel));
 
-    // Script editor: sidebar over assets/scripts/ + dedicated floating code
-    // window. Its reload callback hot-swaps the running play session after a
-    // save so script edits apply without leaving play mode.
-    m_script_editor = new ScriptEditorPanel(m_fonts.mono, [this]() -> bool {
-        if (m_state != EngineState::Play)
-            return false;
-        std::string script_errors;
-        m_script_engine->ReloadSession(*m_scene, script_errors);
-        m_scene_status = script_errors.empty()
-                             ? "Script session reloaded (OnStart re-ran)"
-                             : "Reload errors -> " + script_errors;
-        return true;
-    });
+    // Script editor: a tabbed mini-IDE (browser sidebar + multiple script
+    // tabs) docked by name into the workspace layouts. Its reload callback
+    // hot-swaps the running play session after a save so script edits apply
+    // without leaving play mode; its redock callback pops the IDE back into
+    // the current workspace when the user re-docks it from floating state.
+    m_script_editor = new ScriptEditorPanel(m_fonts.mono,
+        [this]() -> bool {
+            if (m_state != EngineState::Play)
+                return false;
+            std::string script_errors;
+            m_script_engine->ReloadSession(*m_scene, script_errors);
+            m_scene_status = script_errors.empty()
+                                 ? "Script session reloaded (OnStart re-ran)"
+                                 : "Reload errors -> " + script_errors;
+            return true;
+        },
+        [this]() {
+            // Re-apply the active workspace: rebuilds its canonical layout and
+            // routes the mini-IDE window back into its dedicated dock node.
+            m_script_editor->RequestDockCodeWindow(
+                m_workspace_manager.ApplyWorkspace(
+                    m_workspace_manager.GetWorkspace()));
+        });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
     // Live theme customizer + grid snapping config + viewport navigation
@@ -2591,10 +2601,10 @@ bool Application::Init(int width, int height, const char *title)
         m_script_editor->RequestDockCodeWindow(
             m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
     } });
-    cp.Register({ "Reset View to Default Workspace", "Workspace", "", [this]() {
-        m_workspace_manager.ResetToDefault();
-        m_script_editor->RequestDockCodeWindow(0);
-        PushToast("Reset to default layout");
+    cp.Register({ "Reset View to Workspace Default", "Workspace", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            m_workspace_manager.ResetToWorkspaceDefault());
+        PushToast("Reset to workspace default");
     } });
     cp.Register({ "Save Current Layout as Default", "Workspace", "", [this]() {
         m_workspace_manager.RequestSaveCurrent();
@@ -3011,10 +3021,10 @@ void Application::Run()
                     ImGui::Spacing();
                     ImGui::TextDisabled("Layout");
                     ImGui::Separator();
-                    if (ImGui::MenuItem("Reset to Level Design"))
+                    if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
-                        m_workspace_manager.ResetToDefault();
-                        m_script_editor->RequestDockCodeWindow(0);
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ResetToWorkspaceDefault());
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
                                         m_workspace_manager.HasSavedLayout()))
@@ -3165,11 +3175,11 @@ void Application::Run()
                         m_workspace_manager.SetBottomBarHeight(
                             m_status_bar_visible ? kStatusBarHeight : 0.0f);
                     }
-                    if (ImGui::MenuItem("Reset to Default Layout"))
+                    if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
-                        m_workspace_manager.ResetToDefault();
-                        m_script_editor->RequestDockCodeWindow(0);
-                        PushToast("Reset to default layout");
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ResetToWorkspaceDefault());
+                        PushToast("Reset to workspace default");
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default"))
                         m_workspace_manager.RequestSaveCurrent();

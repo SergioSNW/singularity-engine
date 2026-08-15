@@ -32,6 +32,7 @@ public:
 		Selection,
 		ErrorMarker,
 		Breakpoint,
+		LineNumberFill,
 		LineNumber,
 		CurrentLineFill,
 		CurrentLineFillInactive,

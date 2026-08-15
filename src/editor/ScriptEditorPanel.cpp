@@ -9,60 +9,64 @@
 #include <sstream>
 #include <utility>
 
-// Palette tuned to the engine's dark theme. TextEditor ships a dark palette;
-// only the surface tones are overridden so the buffer matches the editor UI
-// while keeping the keyword/number/string colors intact. The values mirror
-// Theme.cpp (BgWindow 0x1B1D23, BgChild 0x1F2128, accent 0x5B7CFA).
+// Mini-IDE theme: a deeper navy-black editor with accent-tinted current line,
+// a contrasting line-number gutter, and syntax colors tuned to the engine's
+// accent (0x5B7CFA). TextEditor stores palette entries as 0xAABBGGRR.
 static TextEditor::Palette MakeEditorPalette()
 {
-    TextEditor::Palette palette = TextEditor::GetDarkPalette();
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::Background)] = 0x1B1D23FF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFill)] = 0x22252CFF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFillInactive)] = 0x1F2128FF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineEdge)] = 0x00000000;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::LineNumber)] = 0x5A606EFF;
-    palette[static_cast<size_t>(TextEditor::PaletteIndex::Selection)] = 0x5B7CFA50;
-    return palette;
+    TextEditor::Palette p = TextEditor::GetDarkPalette();
+    p[(size_t)TextEditor::PaletteIndex::Background] = 0xFF1B1412;        // #12141B
+    p[(size_t)TextEditor::PaletteIndex::CurrentLineFill] = 0x22FA7C5B;   // accent @ 13%
+    p[(size_t)TextEditor::PaletteIndex::CurrentLineFillInactive] = 0x06FFFFFF;
+    p[(size_t)TextEditor::PaletteIndex::CurrentLineEdge] = 0x55FA7C5B;   // accent @ 33%
+    p[(size_t)TextEditor::PaletteIndex::LineNumberFill] = 0xFF221916;    // #161922 gutter
+    p[(size_t)TextEditor::PaletteIndex::LineNumber] = 0xFF62524A;        // #4A5262
+    p[(size_t)TextEditor::PaletteIndex::Selection] = 0x809E4F3A;         // #3A4F9E
+    p[(size_t)TextEditor::PaletteIndex::Keyword] = 0xFFF58D9C;           // #9C8DF5
+    p[(size_t)TextEditor::PaletteIndex::Number] = 0xFF4BA0E5;            // #E5A04B
+    p[(size_t)TextEditor::PaletteIndex::String] = 0xFFA7C85C;            // #5CC8A7
+    p[(size_t)TextEditor::PaletteIndex::CharLiteral] = 0xFFC2D97F;       // #7FD9C2
+    p[(size_t)TextEditor::PaletteIndex::Punctuation] = 0xFFA3938A;       // #8A93A3
+    p[(size_t)TextEditor::PaletteIndex::Preprocessor] = 0xFFDB7BB5;      // #B57BDB
+    p[(size_t)TextEditor::PaletteIndex::Identifier] = 0xFFD4C9C4;        // #C4C9D4
+    p[(size_t)TextEditor::PaletteIndex::KnownIdentifier] = 0xFFFFAA82;   // #82AAFF
+    p[(size_t)TextEditor::PaletteIndex::PreprocIdentifier] = 0xFFF0A6E0; // #E0A6F0
+    p[(size_t)TextEditor::PaletteIndex::Comment] = 0xFF72645B;           // #5B6472
+    p[(size_t)TextEditor::PaletteIndex::MultiLineComment] = 0xFF66564E;  // #4E5666
+    p[(size_t)TextEditor::PaletteIndex::Cursor] = 0xFFFFFFFF;
+    return p;
 }
 
-ScriptEditorPanel::ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload)
+ScriptEditorPanel::ScriptEditorPanel(ImFont *mono_font, ReloadCallback reload,
+                                     RedockCallback redock)
     : m_reload(std::move(reload))
-    , m_editor(new TextEditor())
+    , m_redock(std::move(redock))
     , m_mono_font(mono_font)
+    , m_active_tab(-1)
+    , m_pending_close(-1)
     , m_visible(true)
-    , m_editor_open(false)
     , m_modal_requested(false)
-    , m_focus_code_window(false)
+    , m_focus_window(false)
     , m_dock_requested(false)
     , m_dock_node(0)
-    , m_editor_pos_valid(false)
+    , m_sidebar_width(220.0f)
     , m_auto_save(true)
-    , m_was_code_focused(false)
-    , m_last_write_time(0)
+    , m_was_focused(false)
 {
     m_new_name[0] = '\0';
-
-    // The monospace font is baked by Theme (DPI-aware) and shared across the
-    // editor, so the buffer stays razor-sharp on high-DPI displays.
-    m_editor->SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
-    m_editor->SetPalette(MakeEditorPalette());
 }
 
 ScriptEditorPanel::~ScriptEditorPanel()
 {
-    delete m_editor;
+    for (Tab &tab : m_tabs)
+        delete tab.editor;
 }
 
 void ScriptEditorPanel::ToggleVisible()
 {
     m_visible = !m_visible;
-    // The View-menu toggle and F4 control the whole script-editing UI: hiding
-    // the sidebar also hides the floating code window, and re-showing it
-    // brings the code window back when a file is already loaded.
-    if (!m_visible)
-        m_editor_open = false;
-    else if (!m_current.empty())
-        m_editor_open = true;
+    if (m_visible)
+        m_focus_window = true;
 }
 
 void ScriptEditorPanel::SetVisible(bool visible)
@@ -80,9 +84,10 @@ void ScriptEditorPanel::RequestDockCodeWindow(unsigned int node_id)
 
 std::string ScriptEditorPanel::GetCodeWindowTitle() const
 {
-    if (m_current.empty())
+    if (m_active_tab < 0)
         return std::string();
-    return "Script Editor: " + std::filesystem::path(m_current).filename().string();
+    return "Script Editor: " +
+           std::filesystem::path(m_tabs[m_active_tab].path).filename().string();
 }
 
 void ScriptEditorPanel::RefreshFileList()
@@ -102,78 +107,118 @@ void ScriptEditorPanel::RefreshFileList()
     std::sort(m_files.begin(), m_files.end());
 }
 
-bool ScriptEditorPanel::OpenFile(const std::string &path, std::string *error)
+int ScriptEditorPanel::FindTab(const std::string &path) const
 {
+    for (int i = 0; i < (int)m_tabs.size(); ++i)
+    {
+        if (m_tabs[i].path == path)
+            return i;
+    }
+    return -1;
+}
+
+int ScriptEditorPanel::OpenFile(const std::string &path, std::string *error)
+{
+    const int existing = FindTab(path);
+    if (existing >= 0)
+    {
+        m_active_tab = existing;
+        return existing;
+    }
+
     std::ifstream in(path, std::ios::in | std::ios::binary);
     if (!in.is_open())
     {
         if (error)
             *error = "cannot open '" + path + "'";
-        return false;
+        return -1;
     }
-
-    // The code-window title embeds the file name, so switching files changes
-    // the ImGui window identity. If a code window is already showing a
-    // different file, remember its geometry so the retitled window reappears
-    // in the same spot instead of bouncing around.
-    if (m_editor_open && !m_current.empty() && m_current != path)
-        m_editor_pos_valid = true;
-
     std::ostringstream ss;
     ss << in.rdbuf();
-    m_current = path;
-    m_saved_text = ss.str();
-    m_editor->SetText(m_saved_text);
+
+    Tab tab;
+    tab.path = path;
+    tab.editor = new TextEditor();
+    tab.editor->SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
+    tab.editor->SetPalette(MakeEditorPalette());
+    tab.saved_text = ss.str();
+    tab.editor->SetText(tab.saved_text);
     // TextEditor canonicalizes line endings / trailing newlines, so re-read the
     // buffer's canonical text as the saved baseline; otherwise the buffer looks
     // dirty right after opening (and auto-save would rewrite the file).
-    m_saved_text = m_editor->GetText();
-    m_editor_open = true;
-    m_focus_code_window = true;
+    tab.saved_text = tab.editor->GetText();
     std::error_code ec;
-    m_last_write_time =
-        std::filesystem::last_write_time(m_current, ec).time_since_epoch().count();
+    tab.last_write_time =
+        std::filesystem::last_write_time(path, ec).time_since_epoch().count();
+
+    m_tabs.push_back(std::move(tab));
+    m_active_tab = (int)m_tabs.size() - 1;
     m_status = "Opened " + path;
-    return true;
+    return m_active_tab;
 }
 
-bool ScriptEditorPanel::SaveCurrent(std::string *error)
+void ScriptEditorPanel::CloseTab(int index)
 {
-    if (m_current.empty())
+    if (index < 0 || index >= (int)m_tabs.size())
+        return;
+    if (IsTabDirty(index))
+    {
+        m_pending_close = index;
+        m_modal_requested = true;
+        return;
+    }
+    delete m_tabs[index].editor;
+    m_tabs.erase(m_tabs.begin() + index);
+    if (m_active_tab > index)
+        m_active_tab = m_active_tab - 1;
+    else if (m_active_tab == index)
+        m_active_tab = (int)m_tabs.size() - 1;  // now-last tab (-1 if empty)
+}
+
+bool ScriptEditorPanel::SaveTab(int index, std::string *error)
+{
+    if (index < 0 || index >= (int)m_tabs.size())
     {
         if (error)
             *error = "no script open";
         return false;
     }
-    std::ofstream out(m_current, std::ios::out | std::ios::binary | std::ios::trunc);
+    Tab &tab = m_tabs[index];
+    std::ofstream out(tab.path, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
         if (error)
-            *error = "cannot write '" + m_current + "'";
+            *error = "cannot write '" + tab.path + "'";
         return false;
     }
-    const std::string text = m_editor->GetText();
+    const std::string text = tab.editor->GetText();
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
     out.close();
-    m_saved_text = text;
+    tab.saved_text = text;
     std::error_code ec;
-    m_last_write_time =
-        std::filesystem::last_write_time(m_current, ec).time_since_epoch().count();
-    m_status = "Saved " + m_current;
+    tab.last_write_time =
+        std::filesystem::last_write_time(tab.path, ec).time_since_epoch().count();
+    m_status = "Saved " + tab.path;
     return true;
+}
+
+bool ScriptEditorPanel::IsTabDirty(int index) const
+{
+    if (index < 0 || index >= (int)m_tabs.size())
+        return false;
+    return m_tabs[index].editor->GetText() != m_tabs[index].saved_text;
 }
 
 void ScriptEditorPanel::RequestOpen(const std::string &path)
 {
-    // A dirty buffer is never silently discarded: ask first.
-    if (m_editor->GetText() != m_saved_text)
+    const int existing = FindTab(path);
+    if (existing >= 0)
     {
-        m_pending_open = path;
-        m_modal_requested = true;
+        m_active_tab = existing;
         return;
     }
     std::string error;
-    if (!OpenFile(path, &error))
+    if (OpenFile(path, &error) < 0)
         m_status = error;
 }
 
@@ -189,40 +234,39 @@ void ScriptEditorPanel::ConfirmUnsavedModal()
     if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
 
-    ImGui::TextUnformatted("Save changes to the current script before switching?");
-    if (!m_pending_open.empty())
-        ImGui::TextDisabled("%s", m_pending_open.c_str());
+    if (m_pending_close >= 0 && m_pending_close < (int)m_tabs.size())
+    {
+        const std::string file =
+            std::filesystem::path(m_tabs[m_pending_close].path).filename().string();
+        ImGui::TextUnformatted(("Save changes to '" + file + "' before closing?").c_str());
+    }
     ImGui::Separator();
 
     if (ImGui::Button("Save"))
     {
-        std::string error;
-        if (SaveCurrent(&error))
+        if (m_pending_close >= 0)
         {
-            if (!OpenFile(m_pending_open, &error))
+            std::string error;
+            if (SaveTab(m_pending_close, &error))
+                CloseTab(m_pending_close);
+            else
                 m_status = error;
-            m_pending_open.clear();
         }
-        else
-            m_status = error;
+        m_pending_close = -1;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard"))
     {
-        if (!m_pending_open.empty())
-        {
-            std::string error;
-            if (!OpenFile(m_pending_open, &error))
-                m_status = error;
-            m_pending_open.clear();
-        }
+        if (m_pending_close >= 0)
+            CloseTab(m_pending_close);
+        m_pending_close = -1;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel"))
     {
-        m_pending_open.clear();
+        m_pending_close = -1;
         ImGui::CloseCurrentPopup();
     }
 
@@ -234,10 +278,10 @@ void ScriptEditorPanel::DrawFileBrowser()
     ImGui::TextUnformatted("Scripts (assets/scripts)");
     ImGui::Separator();
 
-    ImGui::BeginChild("ScriptsList", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()));
+    ImGui::BeginChild("ScriptsList", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() * 2.5f));
     for (const std::string &path : m_files)
     {
-        const bool selected = (path == m_current);
+        const bool selected = (FindTab(path) >= 0);
         if (ImGui::Selectable(path.c_str(), selected))
             RequestOpen(path);
     }
@@ -255,7 +299,7 @@ void ScriptEditorPanel::DrawFileBrowser()
     if (ImGui::Button("Refresh"))
         RefreshFileList();
     ImGui::SameLine();
-    ImGui::TextDisabled("%zu scripts", m_files.size());
+    ImGui::TextDisabled("%zu scripts, %d open", m_files.size(), (int)m_tabs.size());
 
     if (create_pressed || enter_pressed)
     {
@@ -290,67 +334,70 @@ void ScriptEditorPanel::DrawFileBrowser()
     }
 }
 
-void ScriptEditorPanel::DrawCodeWindow()
+void ScriptEditorPanel::DrawTabBar()
 {
-    if (!m_editor_open || m_current.empty())
-        return;
+    ImGui::BeginChild("##ScriptTabs", ImVec2(0.0f, ImGui::GetFrameHeightWithSpacing() + 2.0f));
+    int close_after = -1;
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+    for (int i = 0; i < (int)m_tabs.size(); ++i)
+    {
+        const Tab &tab = m_tabs[i];
+        const bool dirty = IsTabDirty(i);
+        const bool selected = (i == m_active_tab);
+        const std::string file = std::filesystem::path(tab.path).filename().string();
+        // The '*' dirty marker is display text; the stable path id keeps the
+        // tab's identity across dirty-state toggles.
+        const std::string label = (dirty ? "*" : "") + file;
 
-    // The title embeds the file name (window identity changes on switch), so a
-    // remembered geometry is re-applied before Begin to keep the window put —
-    // unless a layout preset explicitly docks or undocks it this frame.
-    if (m_dock_requested)
-    {
-        ImGui::SetNextWindowDockID(m_dock_node, ImGuiCond_Always);
-        m_dock_requested = false;
-        m_editor_pos_valid = false;
-    }
-    else if (m_editor_pos_valid)
-    {
-        ImGui::SetNextWindowPos(ImVec2(m_editor_pos[0], m_editor_pos[1]));
-        ImGui::SetNextWindowSize(ImVec2(m_editor_size[0], m_editor_size[1]));
-        m_editor_pos_valid = false;
-    }
-    ImGui::SetNextWindowSize(ImVec2(720.0f, 480.0f), ImGuiCond_FirstUseEver);
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              selected ? ImVec4(0.36f, 0.49f, 0.98f, 0.22f)
+                                       : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              selected ? ImVec4(0.36f, 0.49f, 0.98f, 0.32f)
+                                       : ImVec4(0.30f, 0.34f, 0.42f, 0.25f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              dirty ? ImVec4(1.0f, 0.80f, 0.25f, 1.0f)
+                                    : ImVec4(0.82f, 0.85f, 0.90f, 1.0f));
+        if (ImGui::Button(label.c_str()))
+            m_active_tab = i;
+        ImGui::PopStyleColor(3);
 
-    const std::string name = std::filesystem::path(m_current).filename().string();
-    const std::string title = "Script Editor: " + name;
-    if (!ImGui::Begin(title.c_str(), &m_editor_open))
-    {
-        ImGui::End();
-        return;
-    }
-    if (m_focus_code_window)
-    {
-        ImGui::SetWindowFocus();
-        m_focus_code_window = false;
-    }
-    m_editor_pos[0] = ImGui::GetWindowPos().x;
-    m_editor_pos[1] = ImGui::GetWindowPos().y;
-    m_editor_size[0] = ImGui::GetWindowSize().x;
-    m_editor_size[1] = ImGui::GetWindowSize().y;
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.25f, 0.25f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.66f, 0.74f, 1.0f));
+        if (ImGui::Button(("x##close" + tab.path).c_str()))
+            close_after = i;
+        ImGui::PopStyleColor(3);
 
-    // Toolbar: dirty marker, save actions, last-action status.
-    const bool dirty = (m_editor->GetText() != m_saved_text);
-    if (dirty)
-        ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1.00f), "* %s", name.c_str());
-    else
-        ImGui::TextUnformatted(name.c_str());
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!dirty);
+        ImGui::SameLine();
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::EndChild();
+
+    if (close_after >= 0)
+        CloseTab(close_after);
+}
+
+void ScriptEditorPanel::DrawToolbar(bool dirty, bool docked)
+{
+    ImGui::BeginDisabled(m_active_tab < 0 || !dirty);
     if (ImGui::Button("Save"))
     {
         std::string error;
-        if (!SaveCurrent(&error))
+        if (!SaveTab(m_active_tab, &error))
             m_status = error;
     }
     ImGui::SameLine();
     if (ImGui::Button("Save & Reload"))
     {
         std::string error;
-        if (SaveCurrent(&error))
+        if (SaveTab(m_active_tab, &error))
         {
             const bool reloaded = m_reload ? m_reload() : false;
-            m_status = reloaded ? "Saved & live session reloaded" : "Saved (loads on next Play)";
+            m_status = reloaded ? "Saved & live session reloaded"
+                                : "Saved (loads on next Play)";
         }
         else
             m_status = error;
@@ -359,108 +406,169 @@ void ScriptEditorPanel::DrawCodeWindow()
     ImGui::SameLine();
     ImGui::Checkbox("Auto-save", &m_auto_save);
     ImGui::SameLine();
+    if (ImGui::Button(docked ? "Float" : "Dock to Workspace"))
+    {
+        if (docked)
+        {
+            // Pop the mini-IDE out of the dock as a floating window.
+            m_dock_requested = true;
+            m_dock_node = 0;
+        }
+        else if (m_redock)
+        {
+            m_redock();
+        }
+    }
+    ImGui::SameLine();
     if (!m_status.empty())
         ImGui::TextDisabled("%s", m_status.c_str());
     ImGui::Separator();
+}
 
-    // Ctrl+S saves while this window has keyboard focus.
-    if (ImGui::GetIO().KeyCtrl && ImGui::IsWindowFocused() &&
-        ImGui::GetIO().WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_S, false))
+void ScriptEditorPanel::DrawEditorPane(int tab_index)
+{
+    if (tab_index < 0)
+    {
+        ImGui::TextDisabled("No script open — pick one in the sidebar or the "
+                            "Content Browser.");
+        return;
+    }
+    Tab &tab = m_tabs[tab_index];
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImGui::PushFont(m_mono_font ? m_mono_font : ImGui::GetFont());
+    tab.editor->Render("##ScriptBuffer", avail, false);
+    ImGui::PopFont();
+}
+
+void ScriptEditorPanel::OnImGuiRender(float /*dt*/)
+{
+    RefreshFileList();
+
+    if (!m_visible)
+        return;
+
+    if (m_dock_requested)
+    {
+        ImGui::SetNextWindowDockID(m_dock_node, ImGuiCond_Always);
+        m_dock_requested = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(920.0f, 560.0f), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Script Editor", &m_visible, ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+    const bool docked = ImGui::IsWindowDocked();
+    if (m_focus_window)
+    {
+        ImGui::SetWindowFocus();
+        m_focus_window = false;
+    }
+
+    ConfirmUnsavedModal();
+
+    // Auto-open the first script the first time the IDE appears.
+    if (m_active_tab < 0 && !m_files.empty())
     {
         std::string error;
-        if (!SaveCurrent(&error))
+        if (OpenFile(m_files.front(), &error) < 0)
             m_status = error;
     }
 
-    // Real-time hooks: auto-save the buffer when the code window loses focus,
-    // and watch the file on disk so an external edit hot-reloads the live
-    // session (the reload callback no-ops outside play mode).
-    const bool focused_now = ImGui::IsWindowFocused();
-    if (focused_now)
+    // Sidebar | splitter | (tab bar + toolbar + editor).
+    ImGui::BeginChild("##IDE_sidebar", ImVec2(m_sidebar_width, 0.0f),
+                      ImGuiChildFlags_Borders);
+    DrawFileBrowser();
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+    ImGui::InvisibleButton("##ide_splitter",
+                           ImVec2(6.0f, ImGui::GetContentRegionAvail().y));
+    ImGui::PopStyleVar();
+    if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x != 0.0f)
+        m_sidebar_width = std::clamp(m_sidebar_width + ImGui::GetIO().MouseDelta.x,
+                                     130.0f, 420.0f);
+    if (ImGui::IsItemHovered())
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+
+    ImGui::SameLine();
+    ImGui::BeginChild("##IDE_content", ImVec2(0.0f, 0.0f));
     {
-        m_was_code_focused = true;
-    }
-    else if (m_was_code_focused)
-    {
-        m_was_code_focused = false;
-        if (m_auto_save && m_editor->GetText() != m_saved_text)
+        DrawTabBar();
+        DrawToolbar(m_active_tab >= 0 && IsTabDirty(m_active_tab), docked);
+        DrawEditorPane(m_active_tab);
+
+        // Ctrl+S saves the active tab while the IDE has keyboard focus.
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsWindowFocused() &&
+            ImGui::GetIO().WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             std::string error;
-            if (SaveCurrent(&error))
-                m_status = (m_reload && m_reload()) ? "Auto-saved & live session reloaded"
-                                                    : "Auto-saved";
-            else
+            if (!SaveTab(m_active_tab, &error))
                 m_status = error;
         }
-    }
 
-    if (!m_current.empty())
-    {
-        std::error_code ec;
-        const auto mtime = std::filesystem::last_write_time(m_current, ec);
-        if (!ec && mtime.time_since_epoch().count() > m_last_write_time)
+        // Real-time hooks (active tab only): auto-save on blur, and watch the
+        // file on disk so an external edit hot-reloads the live session (the
+        // reload callback no-ops outside play mode).
+        const bool focused_now = ImGui::IsWindowFocused();
+        if (focused_now)
         {
-            m_last_write_time = mtime.time_since_epoch().count();
-            std::ifstream in(m_current, std::ios::in | std::ios::binary);
-            if (in.is_open())
+            m_was_focused = true;
+        }
+        else if (m_was_focused)
+        {
+            m_was_focused = false;
+            if (m_auto_save && m_active_tab >= 0 && IsTabDirty(m_active_tab))
             {
-                std::ostringstream ss;
-                ss << in.rdbuf();
-                const std::string on_disk = ss.str();
-                if (on_disk != m_saved_text)
+                std::string error;
+                if (SaveTab(m_active_tab, &error))
+                    m_status = (m_reload && m_reload())
+                                   ? "Auto-saved & live session reloaded"
+                                   : "Auto-saved";
+                else
+                    m_status = error;
+            }
+        }
+
+        if (m_active_tab >= 0)
+        {
+            Tab &tab = m_tabs[m_active_tab];
+            std::error_code ec;
+            const auto mtime = std::filesystem::last_write_time(tab.path, ec);
+            if (!ec && mtime.time_since_epoch().count() > tab.last_write_time)
+            {
+                tab.last_write_time = mtime.time_since_epoch().count();
+                std::ifstream in(tab.path, std::ios::in | std::ios::binary);
+                if (in.is_open())
                 {
-                    // A dirty buffer is never clobbered by an external edit.
-                    if (m_editor->GetText() == m_saved_text)
+                    std::ostringstream ss;
+                    ss << in.rdbuf();
+                    const std::string on_disk = ss.str();
+                    if (on_disk != tab.saved_text)
                     {
-                        m_saved_text = on_disk;
-                        m_editor->SetText(on_disk);
-                        m_saved_text = m_editor->GetText();  // canonical baseline
-                        m_status = (m_reload && m_reload())
-                                       ? "Reloaded external change & live session"
-                                       : "Reloaded external change";
-                    }
-                    else
-                    {
-                        m_status = "File changed on disk; buffer dirty (not clobbered)";
+                        // A dirty buffer is never clobbered by an external edit.
+                        if (!IsTabDirty(m_active_tab))
+                        {
+                            tab.saved_text = on_disk;
+                            tab.editor->SetText(on_disk);
+                            tab.saved_text = tab.editor->GetText();  // canonical
+                            m_status = (m_reload && m_reload())
+                                           ? "Reloaded external change & live session"
+                                           : "Reloaded external change";
+                        }
+                        else
+                        {
+                            m_status =
+                                "File changed on disk; buffer dirty (not clobbered)";
+                        }
                     }
                 }
             }
         }
     }
-
-    // The syntax-highlighting buffer fills the remaining content region.
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImGui::PushFont(m_mono_font ? m_mono_font : ImGui::GetFont());
-    m_editor->Render("##ScriptBuffer", avail, false);
-    ImGui::PopFont();
+    ImGui::EndChild();
 
     ImGui::End();
-}
-
-void ScriptEditorPanel::OnImGuiRender(float dt)
-{
-    (void)dt;
-    RefreshFileList();
-
-    if (m_visible)
-    {
-        if (ImGui::Begin("Script Editor", &m_visible, ImGuiWindowFlags_NoCollapse))
-        {
-            ConfirmUnsavedModal();
-
-            // Open the first script the first time the editor appears.
-            if (m_current.empty() && !m_files.empty())
-            {
-                std::string error;
-                if (!OpenFile(m_files.front(), &error))
-                    m_status = error;
-            }
-
-            DrawFileBrowser();
-        }
-        ImGui::End();
-    }
-
-    // The dedicated code window floats independently of the sidebar.
-    DrawCodeWindow();
 }
