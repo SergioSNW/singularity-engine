@@ -389,6 +389,7 @@ private:
     // issued by the 3D passes each frame (reset at frame start).
     Profiler m_profiler;
     int m_draw_calls = 0;
+    double m_last_diagnostic_time = 0.0;  // last time diagnostics were logged
 
     // RMB over the viewport is a two-way gesture: a quick click opens the
     // context menu; press-and-move (past kViewportRmbFlyThreshold px) captures

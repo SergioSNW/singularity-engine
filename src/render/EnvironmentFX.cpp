@@ -147,8 +147,8 @@ void EnvironmentFX::RebuildSky(SDL_Renderer *renderer, const EnvironmentSettings
     if (!m_sky)
         return;
 
-    const int count = w * h;
-    m_sky_pixels.assign((size_t)count, 0xFF000000u);
+    const size_t count = (size_t)w * (size_t)h;
+    m_sky_pixels.assign(count, 0xFF000000u);
 
     env::SkyParams sp;
     sp.top[0] = env.sky_color_top[0];
@@ -417,9 +417,9 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
 
     // Read the region pixels (RGBA8888, matching the target format).
     SDL_Rect region = { x, y, w, h };
-    std::vector<uint32_t> raw((size_t)w * h);
+    std::vector<uint32_t> raw((size_t)w * (size_t)h);
     if (SDL_RenderReadPixels(renderer, &region, SDL_PIXELFORMAT_RGBA8888,
-                             raw.data(), w * 4) != 0)
+                             raw.data(), (int)((size_t)w * 4)) != 0)
         return false;
 
     // Downsample to the working resolution into m_lin (linear RGB floats).

@@ -52,6 +52,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -69,7 +70,7 @@ static const float kStatusBarHeight = 24.0f;
 // viewport rect with linear filtering (2x factor = 4x samples per output
 // pixel). Must stay >= 1.0; multiplied into both the target size and the
 // gizmo's dpi_scale so screen-constant metrics keep their on-screen size.
-static const float kViewportSupersample = 2.0f;
+static const float kViewportSupersample = 1.0f;
 
 // World-space camera basis from an EditorCamera pose (degrees). Matches the
 // view construction in BuildViewProjFromPose (RotX(-pitch) * RotY(-yaw)):
@@ -599,7 +600,7 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
     Uint8 base_g = (Uint8)alb_g;
     Uint8 base_b = (Uint8)alb_b;
 
-    const bool textured = texture != nullptr;
+    const bool textured = texture != nullptr && uvs != nullptr;
     const std::vector<Vec3> &pos = mesh.positions;
     for (size_t i = 0; i + 2 < pos.size(); i += 3)
     {
@@ -949,20 +950,24 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
 
     // World AABBs of the visible mesh-bearing entities, used as
     // directional-shadow blockers for the ray cast in EmitEntityTris.
+    // Only needed when there are lights that cast shadows.
     std::vector<WorldAABB> occluders;
-    for (auto &entity_ptr : m_scene->GetEntities())
+    if (use_lighting && !lights.empty())
     {
-        Entity &e = *entity_ptr;
-        if (&e == skip_entity || !e.material.active)
-            continue;
-        const Mesh *mesh = ResolveEntityMesh(e);
-        if (!mesh)
-            continue;
-        Mat4 world = m_scene->ComputeWorldMatrix(e);
-        WorldAABB box;
-        TransformAABB(e.bounds.local_min, e.bounds.local_max, world, box.min, box.max);
-        box.entity = &e;
-        occluders.push_back(box);
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &e = *entity_ptr;
+            if (&e == skip_entity || !e.material.active)
+                continue;
+            const Mesh *mesh = ResolveEntityMesh(e);
+            if (!mesh)
+                continue;
+            Mat4 world = m_scene->ComputeWorldMatrix(e);
+            WorldAABB box;
+            TransformAABB(e.bounds.local_min, e.bounds.local_max, world, box.min, box.max);
+            box.entity = &e;
+            occluders.push_back(box);
+        }
     }
 
     // --- Pass 1: solid fills, one global painter's pass ---
@@ -4447,6 +4452,33 @@ void Application::Run()
             m_scene ? (int)m_scene->GetEntities().size() : 0,
             m_draw_calls, memory_bytes);
         m_profiler.EndFrame();
+
+        // Periodic diagnostic logging: every 2 seconds, write FPS, frame time,
+        // draw calls, and entity count to a diagnostics file so the smoke test
+        // can verify real-time performance rather than just checking process
+        // survival. ConsoleInfo also logs to the internal panel.
+        {
+            const double now = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+            if (m_last_diagnostic_time <= 0.0 || now - m_last_diagnostic_time >= 2.0)
+            {
+                m_last_diagnostic_time = now;
+                const float ms = (float)(dt * 1000.0);
+                const int entities = m_scene ? (int)m_scene->GetEntities().size() : 0;
+                const int fps_val = (int)std::lround(m_fps);
+                const std::string line = "[diag] " + std::to_string(fps_val) +
+                    " FPS | " + std::to_string(ms).substr(0, 5) +
+                    " ms/frame | " + std::to_string(m_draw_calls) +
+                    " draws | " + std::to_string(entities) + " entities";
+                ConsoleInfo(line);
+                // Write to a diagnostics file for the smoke test
+                FILE *f = std::fopen("se_diagnostics.txt", "a");
+                if (f)
+                {
+                    std::fputs((line + "\n").c_str(), f);
+                    std::fclose(f);
+                }
+            }
+        }
 
         if (dt < TARGET_FRAME_TIME)
         {
