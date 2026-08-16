@@ -4,6 +4,7 @@
 #include "Entity.h"
 #include "EngineMath.h"
 #include "Material.h"
+#include "PhysicsMaterial.h"
 #include "Texture.h"
 #include "AudioManager.h"
 #include "core/Animation.h"
@@ -71,6 +72,23 @@ std::vector<std::string> ListTextureAssets()
     return out;
 }
 
+// .pmat physics material assets under assets/physics/.
+std::vector<std::string> ListPhysicsMaterialAssets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("assets/physics", ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::string path = entry.path().filename().string();
+        if (path.size() > 5 && path.substr(path.size() - 5) == ".pmat")
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 // Drag payload type used by the Content Browser when a .mat / image asset is
 // dragged. Kept as string literals (same values in both panels).
 constexpr const char *kMaterialPayload = "MATERIAL";
@@ -111,7 +129,8 @@ InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
                                TextureLibrary *texture_library,
                                CommandHistory *history, AudioManager *audio,
                                const std::function<void *(int, int)> &camera_preview_provider,
-                               TimelineBridge *timeline_bridge)
+                               TimelineBridge *timeline_bridge,
+                               PhysicsMaterialLibrary *physics_material_library)
     : m_selection(selection)
     , m_scene(scene)
     , m_material_library(material_library)
@@ -120,6 +139,7 @@ InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
     , m_audio(audio)
     , m_camera_preview_provider(camera_preview_provider)
     , m_timeline_bridge(timeline_bridge)
+    , m_physics_material_library(physics_material_library)
 {
 }
 
@@ -527,6 +547,8 @@ void InspectorPanel::OnImGuiRender(float dt)
         entity->collider.type = ColliderComponent::Type::Solid;
         entity->collider.center = { 0.0f, 0.0f, 0.0f };
         entity->collider.extents = { 0.5f, 0.5f, 0.5f };
+        entity->collider.layers = 1u;
+        entity->collider.physics_material.clear();
         if (m_history)
         {
             m_history->EndEntityEdit();
@@ -555,6 +577,117 @@ void InspectorPanel::OnImGuiRender(float dt)
         EndEditSessionIfReleased();
         ImGui::DragFloat3("Extents", &entity->collider.extents.x, 0.05f, 0.01f, 100.0f);
         EndEditSessionIfReleased();
+
+        // Phase 36 collision layers: a bitmask over the scene's CollisionMatrix.
+        // Checked layers are the ones this collider belongs to; a pair is live
+        // only when the matrix lets any of the two bodies' layers interact.
+        ImGui::Spacing();
+        ImGui::Separator();
+        std::string layers_preview;
+        for (int i = 0; i < CollisionMatrix::kLayerCount; ++i)
+        {
+            if ((entity->collider.layers >> i) & 1u)
+            {
+                if (!layers_preview.empty())
+                    layers_preview += ", ";
+                layers_preview += m_scene->collision_matrix.LayerName(i);
+            }
+        }
+        if (layers_preview.empty())
+            layers_preview = "None";
+        unsigned int layers = entity->collider.layers;
+        if (ImGui::BeginCombo("Layers", layers_preview.c_str()))
+        {
+            for (int i = 0; i < CollisionMatrix::kLayerCount; ++i)
+            {
+                bool on = (layers >> i) & 1u;
+                if (ImGui::Checkbox(m_scene->collision_matrix.LayerName(i), &on))
+                {
+                    if (on)
+                        layers |= (1u << i);
+                    else
+                        layers &= ~(1u << i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (layers != entity->collider.layers)
+            CommitEdit("Edit Collider Layers", [this, entity, layers]() {
+                entity->collider.layers = layers;
+            });
+        ImGui::TextDisabled("Membership bits; toggle pairs in the Collision Matrix panel");
+
+        // Phase 36 physics material: an optional .pmat asset (assets/physics/).
+        // Empty = the library's Default material (friction 0.5, restitution 0.1).
+        ImGui::Spacing();
+        ImGui::Separator();
+        const char *pm_preview = entity->collider.physics_material.empty()
+            ? "Default" : entity->collider.physics_material.c_str();
+        if (ImGui::BeginCombo("Physics Material", pm_preview))
+        {
+            if (ImGui::Selectable("Default", entity->collider.physics_material.empty()))
+                CommitEdit("Assign Physics Material", [this, entity]() {
+                    entity->collider.physics_material.clear();
+                });
+            for (const std::string &path : ListPhysicsMaterialAssets())
+            {
+                bool selected = (entity->collider.physics_material == path);
+                if (ImGui::Selectable(path.c_str(), selected))
+                    CommitEdit("Assign Physics Material", [this, entity, path]() {
+                        entity->collider.physics_material = path;
+                    });
+            }
+            ImGui::EndCombo();
+        }
+        if (m_physics_material_library)
+        {
+            const PhysicsMaterial *pm = entity->collider.physics_material.empty()
+                ? nullptr
+                : m_physics_material_library->Load(entity->collider.physics_material);
+            const PhysicsMaterial &effective = pm
+                ? *pm : *m_physics_material_library->GetDefault();
+            ImGui::TextDisabled("Friction %.2f   Restitution %.2f",
+                                effective.friction, effective.restitution);
+        }
+
+        if (ImGui::Button("New Physics Material"))
+            m_new_physics_material_open = !m_new_physics_material_open;
+        ImGui::SameLine();
+        ImGui::TextDisabled("Create a .pmat asset from the sliders");
+        if (m_new_physics_material_open)
+        {
+            ImGui::SliderFloat("Friction", &m_new_physics_friction, 0.0f, 1.0f);
+            ImGui::SliderFloat("Restitution", &m_new_physics_restitution, 0.0f, 1.0f);
+            ImGui::InputText("File Name", m_new_physics_material_buffer,
+                             sizeof(m_new_physics_material_buffer));
+            if (ImGui::Button("Create"))
+            {
+                std::string name = m_new_physics_material_buffer;
+                if (!name.empty())
+                {
+                    if (name.size() < 5 || name.substr(name.size() - 5) != ".pmat")
+                        name += ".pmat";
+                    PhysicsMaterial new_pm;
+                    new_pm.friction = m_new_physics_friction;
+                    new_pm.restitution = m_new_physics_restitution;
+                    std::string error;
+                    if (m_physics_material_library &&
+                        m_physics_material_library->Create(name, new_pm, &error))
+                        CommitEdit("Assign Physics Material", [this, entity, name]() {
+                            entity->collider.physics_material = name;
+                        });
+                    m_new_physics_material_open = false;
+                    m_new_physics_material_buffer[0] = '\0';
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                m_new_physics_material_open = false;
+                m_new_physics_material_buffer[0] = '\0';
+            }
+        }
+
         ImGui::TextDisabled("Solid blocks solids; Trigger is pass-through (events only)");
     }
 

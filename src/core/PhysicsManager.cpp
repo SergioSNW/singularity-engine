@@ -99,6 +99,14 @@ void PhysicsManager::Step(Scene &scene, ScriptEngine &scripts)
             if (!AABBsOverlap(a, b))
                 continue;
 
+            // Phase 36 collision layer matrix: bodies interact only when any
+            // layer of A is allowed to collide with any layer of B. Pairs the
+            // matrix rejects are skipped entirely — no solid separation and no
+            // trigger events, so disabled pairs behave as pure pass-through.
+            if (!scene.collision_matrix.LayersInteract(
+                    a.entity->collider.layers, b.entity->collider.layers))
+                continue;
+
             const bool a_trigger =
                 (a.entity->collider.type == ColliderComponent::Type::Trigger);
             const bool b_trigger =

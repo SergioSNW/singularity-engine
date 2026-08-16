@@ -127,6 +127,9 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     );
     collider.object.emplace_back("center", Vec3ToJson(&e.collider.center.x));
     collider.object.emplace_back("extents", Vec3ToJson(&e.collider.extents.x));
+    collider.object.emplace_back("layers", json::Value::MakeNumber(e.collider.layers));
+    collider.object.emplace_back(
+        "physics_material", json::Value::MakeString(e.collider.physics_material));
     ent.object.emplace_back("collider", std::move(collider));
 
     json::Value script = json::Value::MakeObject();
@@ -225,6 +228,10 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
             ? ColliderComponent::Type::Trigger : ColliderComponent::Type::Solid;
         Vec3FromJson(&e.collider.center.x, col->Find("center"));
         Vec3FromJson(&e.collider.extents.x, col->Find("extents"));
+        e.collider.layers =
+            (unsigned int)col->Number("layers", (double)e.collider.layers);
+        e.collider.physics_material =
+            col->String("physics_material", e.collider.physics_material);
     }
 
     if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())
@@ -356,6 +363,20 @@ json::Value SceneSerializer::SerializeScene(const Scene &scene)
     meta.object.emplace_back("created", json::Value::MakeString(scene.Meta().created));
     root.object.emplace_back("meta", std::move(meta));
 
+    // Phase 36 collision layer matrix: one entry per layer holding its editable
+    // name and the bitmask of the layers it collides with. Written whenever a
+    // scene is saved so layer tuning survives round-trips like any other scene
+    // state; older files without the block fall back to the all-on defaults.
+    json::Value matrix = json::Value::MakeObject();
+    for (int i = 0; i < CollisionMatrix::kLayerCount; ++i)
+    {
+        json::Value layer = json::Value::MakeObject();
+        layer.object.emplace_back("name", json::Value::MakeString(scene.collision_matrix.names[i]));
+        layer.object.emplace_back("mask", json::Value::MakeNumber(scene.collision_matrix.rows[i]));
+        matrix.object.emplace_back("layer_" + std::to_string(i), std::move(layer));
+    }
+    root.object.emplace_back("collision_matrix", std::move(matrix));
+
     json::Value entities = json::Value::MakeArray();
     for (const auto &entity_ptr : scene.GetEntities())
     {
@@ -392,6 +413,25 @@ bool SceneSerializer::DeserializeScene(Scene &scene, const json::Value &root, st
     }
 
     scene.Clear();
+
+    // Phase 36: restore the collision layer matrix (names + pair bitmasks).
+    // Missing block -> leave the all-on defaults the fresh Scene provides.
+    if (const json::Value *matrix = root.Find("collision_matrix");
+        matrix && matrix->IsObject())
+    {
+        for (int i = 0; i < CollisionMatrix::kLayerCount; ++i)
+        {
+            const std::string key = "layer_" + std::to_string(i);
+            const json::Value *layer = matrix->Find(key);
+            if (!layer || !layer->IsObject())
+                continue;
+            const std::string name = layer->String("name", "");
+            if (!name.empty())
+                scene.collision_matrix.SetLayerName(i, name);
+            const unsigned int mask = (unsigned int)layer->Number("mask", 0xFFFF);
+            scene.collision_matrix.rows[i] = (std::uint16_t)(mask & CollisionMatrix::kAllLayers);
+        }
+    }
 
     if (const json::Value *meta = root.Find("meta"); meta && meta->IsObject())
     {

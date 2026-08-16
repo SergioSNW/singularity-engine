@@ -10,6 +10,7 @@ class MaterialLibrary;
 class TextureLibrary;
 class CommandHistory;
 class AudioManager;
+class PhysicsMaterialLibrary;
 struct TimelineBridge;
 
 class InspectorPanel : public EditorPanel
@@ -19,7 +20,8 @@ public:
                    MaterialLibrary *material_library, TextureLibrary *texture_library,
                    CommandHistory *history, AudioManager *audio,
                    const std::function<void *(int, int)> &camera_preview_provider,
-                   TimelineBridge *timeline_bridge);
+                   TimelineBridge *timeline_bridge,
+                   PhysicsMaterialLibrary *physics_material_library);
     void OnImGuiRender(float dt) override;
 
     bool IsVisible() const { return m_visible; }
@@ -48,6 +50,7 @@ private:
     // size and returns its ImTextureID (nullptr when no preview is available).
     std::function<void *(int, int)> m_camera_preview_provider;
     TimelineBridge *m_timeline_bridge;  // nullable: keyframe toggles degrade
+    PhysicsMaterialLibrary *m_physics_material_library;  // nullable: .pmat combo degrades
     int m_edit_entity = -1;
     char m_tag_buffer[256] = {};
     char m_mesh_buffer[256] = {};
@@ -57,4 +60,8 @@ private:
     int m_last_selected_id = -1;
     bool m_visible = true;
     bool m_new_material_open = false;
+    bool m_new_physics_material_open = false;
+    char m_new_physics_material_buffer[256] = {};
+    float m_new_physics_friction = 0.5f;
+    float m_new_physics_restitution = 0.1f;
 };

@@ -60,6 +60,14 @@ struct BoundsComponent
 // boxes are pass-through ghost volumes that only raise OnTriggerEnter/Exit
 // events on the script side. Defaults to disabled so only explicitly-colliding
 // entities participate.
+//
+// Phase 36 physics authoring: `layers` is a bitmask of which collision layers
+// the collider belongs to (bit i = the i-th row of the scene's CollisionMatrix;
+// bit 0 = "Default" is set by default). Two bodies interact during the step
+// only when the matrix allows any layer of one to collide with any layer of
+// the other — toggle the pairs in the Collision Matrix panel. `physics_material`
+// names a .pmat asset (assets/physics/) resolved by the PhysicsMaterialLibrary;
+// empty means the library's Default material (friction 0.5, restitution 0.1).
 struct ColliderComponent
 {
     enum class Type { Solid, Trigger };
@@ -67,6 +75,8 @@ struct ColliderComponent
     bool enabled = false;
     Vec3 center{ 0.0f, 0.0f, 0.0f };
     Vec3 extents{ 0.5f, 0.5f, 0.5f };
+    unsigned int layers = 1u;        // membership bitmask (bit 0 = Default layer)
+    std::string physics_material;    // .pmat asset key, or empty = Default
 };
 
 // Gameplay script reference. An empty `path` means no script; any other value

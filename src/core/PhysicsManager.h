@@ -12,7 +12,9 @@ struct Entity;
 // world-space AABB of each enabled ColliderComponent and tests all pairs
 // (broad-phase O(n^2), fine for the small scenes this engine targets).
 //
-// Two behaviors come out of the overlap test:
+// A pair is only considered when the scene's CollisionMatrix allows any of the
+// two colliders' layers to interact (Phase 36); otherwise the bodies pass
+// through each other untouched. Two behaviors then come out of the overlap:
 //   - Solid vs Solid: penetration is prevented by separating the second body
 //     of the pair (the higher entity id) along the minimum-penetration axis,
 //     and both bodies fire OnCollisionEnter/Exit.

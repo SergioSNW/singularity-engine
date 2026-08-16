@@ -36,6 +36,8 @@ class SceneManager;
 class MeshLibrary;
 class MaterialLibrary;
 class TextureLibrary;
+class PhysicsMaterialLibrary;
+class CollisionMatrixPanel;
 class GizmoController;
 class ScriptEngine;
 class PhysicsManager;
@@ -265,6 +267,7 @@ private:
     MeshLibrary *m_mesh_library;
     MaterialLibrary *m_material_library;
     TextureLibrary *m_texture_library;
+    PhysicsMaterialLibrary *m_physics_material_library;
     GizmoController *m_gizmo;
     ScriptEngine *m_script_engine;
     PhysicsManager *m_physics;
@@ -280,6 +283,7 @@ private:
     MaterialPanel *m_material_panel;
     LandscapePanel *m_landscape_panel;
     TimelinePanel *m_timeline_panel;
+    CollisionMatrixPanel *m_collision_matrix_panel;
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
@@ -312,6 +316,7 @@ private:
     bool m_inspector_was_visible;
     bool m_material_panel_was_visible;
     bool m_history_panel_was_visible;
+    bool m_collision_matrix_panel_was_visible;
 
     // Editor grid-snapping configuration (Phase 18): steps for the translate/
     // rotate/scale gizmos, plus the persistent snap toggle. Wire

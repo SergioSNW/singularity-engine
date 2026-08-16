@@ -42,7 +42,9 @@
 //                        clock.
 //
 // Tab groups conserve screen real estate: several windows docked into one node
-// render as a single tabbed window, with the last-docked window focused.
+// render as a single tabbed window, with the last-docked window focused. The
+// Collision Matrix panel (Phase 36) docks first inside the shared tab groups,
+// so it is one click away in every workspace without stealing focus.
 //
 // A user-captured custom layout is persisted to editor_layout.json (with the
 // active workspace name) and restored on the next launch.

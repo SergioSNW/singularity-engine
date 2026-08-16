@@ -30,6 +30,7 @@ static const char *kHistoryWindow = "History";
 static const char *kViewportLayoutWindow = "Viewport Layout";
 static const char *kLandscapeWindow = "Landscape";
 static const char *kTimelineWindow = "Timeline";
+static const char *kCollisionMatrixWindow = "Collision Matrix";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -86,8 +87,10 @@ void WorkspaceManager::RebuildLayout()
 
     // Helper for the bottom "Development Zone" tab group: Material Editor,
     // Console and Content Browser share one tabbed region (Material Editor
-    // docked first so the Content Browser stays the active tab).
+    // docked first so the Content Browser stays the active tab). The Collision
+    // Matrix (Phase 36) is docked first of all so it sits behind every tab.
     auto dock_dev_zone = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, node);
         ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
         ImGui::DockBuilderDockWindow(kConsoleWindow, node);
         ImGui::DockBuilderDockWindow(kHistoryWindow, node);
@@ -149,6 +152,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kSettingsWindow, mat_bottom);
             ImGui::DockBuilderDockWindow(kInspectorWindow, mat_bottom);
             ImGui::DockBuilderDockWindow(kContentBrowserWindow, mat_bottom);
+            ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, mat_bottom);
 
             // Bottom zone: Console is the active tab over the stats.
             ImGui::DockBuilderDockWindow(kStatsWindow, bottom);

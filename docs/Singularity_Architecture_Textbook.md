@@ -13,6 +13,7 @@
 9. [Phase 33 — True Workspace Layouts, Tabbed Mini-IDE & Theme](#9-phase-33--true-workspace-layouts-tabbed-mini-ide--theme)
 10. [Phase 34 — Landscape & Topology Design Suite](#10-phase-34--landscape--topology-design-suite)
 11. [Phase 35 — Animation & Timeline Foundation](#11-phase-35--animation--timeline-foundation)
+12. [Phase 36 — Physics Materials & Collision Layer Matrix](#12-phase-36--physics-materials--collision-layer-matrix)
 
 ---
 
@@ -911,3 +912,165 @@ translation units (`src/core/Animation.cpp`, `src/editor/TimelinePanel.cpp`) in
 the explicit CMake source list. The editor smoke run stays alive with the
 sequencing workspace, timeline panel, bridge and playback wiring, an empty log,
 and no stray file edits on disk.
+
+## 12. Phase 36 — Physics Materials & Collision Layer Matrix
+
+Phase 36 turns physics from a single uniform interaction into a **tunable
+material-and-layer system**. Up to now every overlapping collider pair resolved
+identically: solid bodies blocked each other, triggers fired events, and there
+was no way to say "projectiles ignore each other" or "this surface is bouncy".
+Two additions close that gap. A **physics material** (.pmat asset) gives each
+collider an authored friction/restitution pair. A **collision layer matrix**
+gives each collider a membership bitmask over 16 named layers, and the physics
+step only resolves pairs whose layers the matrix allows to interact. Both are
+authorable from the editor, serialize with the scene, and (for the material) ride
+the undo system.
+
+### 12.1 The Physics Material (`src/core/PhysicsMaterial.{h,cpp}`)
+
+A `PhysicsMaterial` is deliberately small — three fields, all of which appear in
+the `.pmat` file:
+
+```json
+{
+  "name": "Bouncy Rubber",
+  "friction": 0.35,
+  "restitution": 0.9
+}
+```
+
+`friction` (0..1) is tangential grip: 0 is ice, 1 is maximum traction.
+`restitution` (0..1) is bounciness: 0 is perfectly inelastic, 1 perfectly
+elastic. Both are **authored data**, not solver inputs: the Phase 36 resolver is
+still kinematic and script-driven, so the step does not yet consume friction or
+restitution. They exist now so scene content is authored with them before a
+future velocity-based solver arrives, and the **combination contract** is fixed
+up front in `CombinePhysicsMaterials` (the rule every future solver must obey):
+
+- `restitution = max(a.restitution, b.restitution)` — bounciness is dominated
+  by the more elastic body.
+- `friction = sqrt(a.friction * b.friction)` — the geometric mean, so a
+  slippery surface always wins against a grippy one but the result never
+  exceeds either input. `Default<->Default` is exactly the Default material
+  (0.5 / 0.1).
+
+The file format is the engine's own `json::Value` serializer
+(`PhysicsMaterialToJson`/`PhysicsMaterialFromJson`), so assets round-trip
+byte-for-byte and stay hand-editable. `PhysicsMaterialLibrary` mirrors
+`MaterialLibrary`: a cache keyed by caller path, a `Load` that resolves a bare
+filename against `assets/physics/` and parses on first touch, an always-present
+`"__default__"` entry (friction 0.5, restitution 0.1), and `Create`/`Save` that
+write through the same JSON path (creating the directory on demand) while
+refreshing every cached copy of the asset. A collider with an empty
+`physics_material` string uses the library default; the Inspector's combo
+presents "Default" plus every `.pmat` currently in `assets/physics/`.
+
+### 12.2 The Collision Layer Matrix (`src/core/CollisionMatrix.h`)
+
+The matrix is a fixed **16×16** symmetric grid over named layers:
+
+```cpp
+struct CollisionMatrix {
+    std::uint16_t rows[16];       // rows[i] = bitmask of layers i collides with
+    std::string  names[16];
+};
+```
+
+Layer 0 is "Default", with sensible authored names for the rest (Player,
+Environment, Projectile, Enemy, Pickup, Water, Vehicle, … up to "Custom"). Every
+`ColliderComponent` carries a **membership bitmask** — `unsigned int layers`
+(default `1u`, meaning the Default layer alone) — and one body may belong to
+several layers at once. `SetPair(a, b, on)` flips both symmetric entries (and,
+unlike some engines, the **diagonal is user-controllable** — uncheck it so
+projectiles pass through each other). `LayersInteract(a_mask, b_mask)` is the
+per-pair query:
+
+```text
+LayersInteract(maskA, maskB)  ->  exists i in maskA, j in maskB with Collides(i, j)
+```
+
+A fresh matrix starts **all-on**, and every collider defaults to the Default
+layer, so scenes that never touch layers behave byte-for-byte as before Phase 36
+(backward compatible by construction). The matrix is **scene state**, not an
+entity property: it lives on the `Scene`, ships in the scene file's
+`"collision_matrix"` root block (one `layer_i` object per layer, `{ name,
+mask }`), and — like the theme — has **no undo transaction**; the physics step
+reads it every frame, so changes apply instantly.
+
+### 12.3 The Physics Step (`src/core/PhysicsManager.cpp`)
+
+`Step` iterates body pairs as before, and after the broad-phase AABB overlap
+test inserts the Phase 36 gate:
+
+```cpp
+if (!scene.collision_matrix.LayersInteract(
+        a.entity->collider.layers, b.entity->collider.layers))
+    continue;
+```
+
+A rejected pair is skipped **entirely**: no solid separation and no trigger
+events — the pair behaves as pure pass-through. This makes layer disabling a
+cheap, complete off-switch rather than a filtering quirk; the pair never enters
+the trigger/solid bookkeeping, so it can't fire stale overlap callbacks either.
+
+### 12.4 The Collision Matrix Panel (`src/editor/CollisionMatrixPanel.{h,cpp}`)
+
+The panel is a 17-column table (a layer-label column plus one column per layer).
+Row labels are **inline-editable** — typing writes through to the matrix on
+Enter / widget-release, and the buffer re-syncs from the matrix while idle, so a
+scene load or "Reset All Pairs" always shows the fresh names. Pair cells are
+symmetric checkboxes (toggling `(i, j)` flips the `(j, i)` entry too), with
+tooltips naming the two layers (and "self-collision" on the diagonal). "Reset
+All Pairs" re-enables every pair including the diagonal. The panel edits the
+`Scene`'s matrix directly, so nothing has to invalidate caches or re-bake
+anything — the next physics step reads the new bits. Like the other shared
+editor panels it docks **first** inside the Development Zone and the
+Shading & Assets right-rail tab groups, so it is one tab away in every
+workspace without stealing focus, and joins the **View menu** and the Command
+Palette ("Toggle Collision Matrix", View group).
+
+### 12.5 The Inspector (`src/editor/InspectorPanel.{h,cpp}`)
+
+The Collider section grows three Phase 36 controls:
+
+- **Layers** — a combo popup of the 16 matrix layer names with checkboxes for
+  membership (the preview joins the enabled names, "None" when empty); the
+  bitmask commits through `CommitEdit("Edit Collider Layers", …)` as a single
+  undo step.
+- **Physics Material** — a combo of "Default" plus every `assets/physics/.pmat`
+  (with a resolved Friction/Restitution readout under it), committing through
+  `CommitEdit("Assign Physics Material", …)`. The readout is null-guarded: if
+  the library is missing the panel simply degrades.
+- **New Physics Material** — an inline Friction/Restitution slider pair plus a
+  filename box; "Create" writes the `.pmat` (appending the extension when
+  omitted) via `PhysicsMaterialLibrary::Create` and assigns it to the collider
+  in the same transaction.
+
+The Collider Reset also restores `layers = 1u` and clears the material string,
+and `CommandHistory` snapshots both new fields, so layer/material edits undo and
+redo cleanly like any other property change.
+
+### 12.6 Serialization and Wiring
+
+`SceneSerializer` writes each collider's `"layers"` (unsigned) and
+`"physics_material"` (string) fields and a root `"collision_matrix"` block
+(`layer_i: { name, mask }`); on load the block restores names and pair bitmasks
+(missing block → the fresh all-on defaults). `Application` owns a single
+`PhysicsMaterialLibrary` created beside the other libraries, passes it to the
+Inspector, owns the `CollisionMatrixPanel`, registers its palette command and
+View-menu toggle, and folds it into the play-mode panel save/restore. 
+`CMakeLists.txt` gains `src/core/PhysicsMaterial.cpp` and
+`src/editor/CollisionMatrixPanel.cpp` and bumps the version to `0.36.0`.
+
+### 12.7 Testability and Verification
+
+The matrix math (symmetry of `SetPair`, diagonal control, `LayersInteract` over
+multi-layer masks, all-on defaults, `ResetAll`) and the combination rules
+(restitution = max, geometric-mean friction, Default identity) were verified
+with a standalone harness — the g++ scratch toolchain on this machine crashes in
+the linker on `<filesystem>` (a toolchain defect, not an engine one), so the
+scratch test covered the pure-math headers while the `.pmat`/filesystem paths
+are exercised through the real MSVC build. The engine rebuilds clean with the
+two new translation units in the explicit CMake source list. The editor smoke
+run stays alive with the Collision Matrix panel, layer/material wiring, an empty
+log, and no stray file edits on disk.

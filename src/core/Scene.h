@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CollisionMatrix.h"
 #include "Entity.h"
 
 #include <memory>
@@ -39,6 +40,11 @@ public:
     // World matrix = parent's world matrix * local transform matrix, or just
     // the local transform matrix for a root entity.
     Mat4 ComputeWorldMatrix(const Entity &entity) const;
+
+    // Phase 36: the scene-wide collision layer matrix (which layers interact).
+    // Scene state, serialized with the scene file and edited by the Collision
+    // Matrix panel; the physics step reads it every frame.
+    CollisionMatrix collision_matrix;
 
 private:
     std::vector<std::unique_ptr<Entity>> m_entities;

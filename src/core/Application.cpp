@@ -20,6 +20,7 @@
 #include "CameraManager.h"
 #include "Mesh.h"
 #include "Material.h"
+#include "PhysicsMaterial.h"
 #include "Texture.h"
 #include "EngineMath.h"
 #include "script/ScriptEngine.h"
@@ -32,6 +33,7 @@
 #include "editor/ProfilerPanel.h"
 #include "editor/LandscapePanel.h"
 #include "editor/TimelinePanel.h"
+#include "editor/CollisionMatrixPanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -73,6 +75,7 @@ Application::Application()
     , m_scene(nullptr)
     , m_scene_manager(nullptr)
     , m_mesh_library(nullptr)
+    , m_physics_material_library(nullptr)
     , m_gizmo(nullptr)
     , m_script_engine(nullptr)
     , m_physics(nullptr)
@@ -88,6 +91,7 @@ Application::Application()
     , m_history_panel(nullptr)
     , m_landscape_panel(nullptr)
     , m_timeline_panel(nullptr)
+    , m_collision_matrix_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -1600,6 +1604,8 @@ void Application::SavePlayModePanelState()
     m_inspector_was_visible = m_inspector_panel ? m_inspector_panel->IsVisible() : false;
     m_material_panel_was_visible = m_material_panel ? m_material_panel->IsVisible() : false;
     m_history_panel_was_visible = m_history_panel ? m_history_panel->IsVisible() : false;
+    m_collision_matrix_panel_was_visible =
+        m_collision_matrix_panel ? m_collision_matrix_panel->IsVisible() : false;
 
     if (m_script_editor)
         m_script_editor->SetVisible(false);
@@ -1613,6 +1619,8 @@ void Application::SavePlayModePanelState()
         m_material_panel->SetVisible(false);
     if (m_history_panel)
         m_history_panel->SetVisible(false);
+    if (m_collision_matrix_panel)
+        m_collision_matrix_panel->SetVisible(false);
 }
 
 void Application::RestorePlayModePanelState()
@@ -1633,6 +1641,8 @@ void Application::RestorePlayModePanelState()
         m_material_panel->SetVisible(m_material_panel_was_visible);
     if (m_history_panel)
         m_history_panel->SetVisible(m_history_panel_was_visible);
+    if (m_collision_matrix_panel)
+        m_collision_matrix_panel->SetVisible(m_collision_matrix_panel_was_visible);
 }
 
 void Application::DuplicateSelection()
@@ -2694,6 +2704,9 @@ bool Application::Init(int width, int height, const char *title)
     m_mesh_library = new MeshLibrary();
     m_material_library = new MaterialLibrary();
     m_texture_library = new TextureLibrary();
+    // Phase 36 physics materials: the .pmat asset cache (assets/physics/),
+    // shared by the Inspector's material combo and any collider resolution.
+    m_physics_material_library = new PhysicsMaterialLibrary();
     // Textures upload through the engine renderer, so the library must know it
     // before the first Load(). Set right after renderer creation.
     m_texture_library->SetRenderer(m_window->GetNativeRenderer());
@@ -2938,7 +2951,7 @@ bool Application::Init(int width, int height, const char *title)
                                            [this](int w, int h) -> void * {
         RecreateCameraPreview(w, h);
         return (void *)m_camera_preview;
-    }, &m_timeline_bridge);
+    }, &m_timeline_bridge, m_physics_material_library);
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -2983,6 +2996,12 @@ bool Application::Init(int width, int height, const char *title)
     // fires transport / keyframe actions back through the bridge.
     m_timeline_panel = new TimelinePanel(m_scene, m_selection, &m_timeline_bridge);
     m_panels.push_back(std::shared_ptr<TimelinePanel>(m_timeline_panel));
+
+    // Phase 36 collision layer matrix: the scene-wide layer-pair grid. It
+    // edits the Scene's matrix directly (global scene state, serialized with
+    // the scene file) so the physics step sees the changes immediately.
+    m_collision_matrix_panel = new CollisionMatrixPanel(m_scene);
+    m_panels.push_back(std::shared_ptr<CollisionMatrixPanel>(m_collision_matrix_panel));
 
     // The sequencing workspace hides the viewport; apply the side effects of
     // whatever workspace the persisted layout restored.
@@ -3142,6 +3161,14 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Toggle Material Editor", "View", "", [this]() {
         if (m_material_panel)
             m_material_panel->ToggleVisible();
+    } });
+
+    // Collision Matrix panel (Phase 36): the scene-wide layer-pair grid. The
+    // panel edits the Scene's CollisionMatrix directly (a global scene setting,
+    // like the theme); the palette command and the View menu toggle it.
+    cp.Register({ "Toggle Collision Matrix", "View", "", [this]() {
+        if (m_collision_matrix_panel)
+            m_collision_matrix_panel->ToggleVisible();
     } });
 
     // History panel (Phase 22): read-only undo/redo stacks with Undo/Redo/
@@ -3582,6 +3609,13 @@ void Application::Run()
                             m_history_panel->ToggleVisible();
                     }
 
+                    if (m_collision_matrix_panel)
+                    {
+                        if (ImGui::MenuItem("Collision Matrix", nullptr,
+                                            m_collision_matrix_panel->IsVisible()))
+                            m_collision_matrix_panel->ToggleVisible();
+                    }
+
                     if (m_profiler_panel)
                     {
                         if (ImGui::MenuItem("Profiler", nullptr,
@@ -3907,6 +3941,7 @@ void Application::Shutdown()
     m_viewport_layout_panel = nullptr;
     m_landscape_panel = nullptr;
     m_timeline_panel = nullptr;
+    m_collision_matrix_panel = nullptr;
     m_profiler_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further
@@ -3959,6 +3994,9 @@ void Application::Shutdown()
 
     delete m_material_library;
     m_material_library = nullptr;
+
+    delete m_physics_material_library;
+    m_physics_material_library = nullptr;
 
     delete m_selection;
     m_selection = nullptr;
