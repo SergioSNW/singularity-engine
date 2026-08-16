@@ -227,10 +227,10 @@ void EnvironmentFX::RebuildSky(SDL_Renderer *renderer, const EnvironmentSettings
             g = std::max(0.0f, std::min(1.0f, g));
             b = std::max(0.0f, std::min(1.0f, b));
             m_sky_pixels[(size_t)j * w + i] =
-                0xFF000000u |
-                ((uint32_t)(r * 255.0f) << 16) |
-                ((uint32_t)(g * 255.0f) << 8) |
-                (uint32_t)(b * 255.0f);
+                ((uint32_t)(r * 255.0f) << 24) |
+                ((uint32_t)(g * 255.0f) << 16) |
+                ((uint32_t)(b * 255.0f) << 8) |
+                0xFFu;
         }
     }
 
@@ -238,7 +238,12 @@ void EnvironmentFX::RebuildSky(SDL_Renderer *renderer, const EnvironmentSettings
     int pitch = 0;
     if (SDL_LockTexture(m_sky, nullptr, &pixels, &pitch) == 0)
     {
-        std::memcpy(pixels, m_sky_pixels.data(), (size_t)count * 4);
+        if (pitch == w * 4)
+            std::memcpy(pixels, m_sky_pixels.data(), (size_t)count * 4);
+        else
+            for (int j = 0; j < h; ++j)
+                std::memcpy((uint8_t *)pixels + (size_t)j * pitch,
+                            &m_sky_pixels[(size_t)j * w], (size_t)w * 4);
         SDL_UnlockTexture(m_sky);
     }
 }
@@ -438,9 +443,9 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
                 for (int xx = x0; xx <= x1; ++xx)
                 {
                     const uint32_t p = row[xx];
-                    r += (p >> 16) & 0xFF;
-                    g += (p >> 8) & 0xFF;
-                    b += p & 0xFF;
+                    r += (p >> 24) & 0xFF;
+                    g += (p >> 16) & 0xFF;
+                    b += (p >> 8) & 0xFF;
                     ++n;
                 }
             }
@@ -493,7 +498,8 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
             const uint32_t r = m_lut[ri];
             const uint32_t g = m_lut[gi];
             const uint32_t b = m_lut[bi];
-            m_out[(size_t)j * ww + i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+            m_out[(size_t)j * ww + i] =
+                ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 0xFFu;
         }
     }
 
@@ -501,7 +507,12 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
     int pitch = 0;
     if (SDL_LockTexture(m_work, nullptr, &pixels, &pitch) != 0)
         return false;
-    std::memcpy(pixels, m_out.data(), (size_t)ww * wh * 4);
+    if (pitch == ww * 4)
+        std::memcpy(pixels, m_out.data(), (size_t)ww * wh * 4);
+    else
+        for (int j = 0; j < wh; ++j)
+            std::memcpy((uint8_t *)pixels + (size_t)j * pitch,
+                        &m_out[(size_t)j * ww], (size_t)ww * 4);
     SDL_UnlockTexture(m_work);
 
     // Blit the graded working-res image back over the region (linear scaling).
