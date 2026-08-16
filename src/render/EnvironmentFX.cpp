@@ -30,7 +30,10 @@ inline uint64_t HashFloat(uint64_t seed, float v)
 
 inline float SmoothStep(float edge0, float edge1, float x)
 {
-    float t = (x - edge0) / (edge1 - edge0);
+    const float d = edge1 - edge0;
+    if (d <= 0.0f)
+        return (x >= edge1) ? 1.0f : 0.0f;
+    float t = (x - edge0) / d;
     t = std::max(0.0f, std::min(1.0f, t));
     return t * t * (3.0f - 2.0f * t);
 }
@@ -484,9 +487,12 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
 
             float out[3];
             env::PostProcess(lin, bloom, pp, out);
-            const uint32_t r = m_lut[std::min(4095, (int)(out[0] * 4095.0f))];
-            const uint32_t g = m_lut[std::min(4095, (int)(out[1] * 4095.0f))];
-            const uint32_t b = m_lut[std::min(4095, (int)(out[2] * 4095.0f))];
+            const int ri = std::isfinite(out[0]) ? std::clamp((int)(out[0] * 4095.0f + 0.5f), 0, 4095) : 0;
+            const int gi = std::isfinite(out[1]) ? std::clamp((int)(out[1] * 4095.0f + 0.5f), 0, 4095) : 0;
+            const int bi = std::isfinite(out[2]) ? std::clamp((int)(out[2] * 4095.0f + 0.5f), 0, 4095) : 0;
+            const uint32_t r = m_lut[ri];
+            const uint32_t g = m_lut[gi];
+            const uint32_t b = m_lut[bi];
             m_out[(size_t)j * ww + i] = 0xFF000000u | (r << 16) | (g << 8) | b;
         }
     }

@@ -700,9 +700,9 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             }
         }
 
-        t.r = (Uint8)std::min(255.0f, fr);
-        t.g = (Uint8)std::min(255.0f, fg);
-        t.b = (Uint8)std::min(255.0f, fb);
+        t.r = std::isfinite(fr) ? (Uint8)std::min(255.0f, std::max(0.0f, fr)) : 0;
+        t.g = std::isfinite(fg) ? (Uint8)std::min(255.0f, std::max(0.0f, fg)) : 0;
+        t.b = std::isfinite(fb) ? (Uint8)std::min(255.0f, std::max(0.0f, fb)) : 0;
         t.texture = texture;
         if (textured)
         {

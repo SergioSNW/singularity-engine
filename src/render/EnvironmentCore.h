@@ -45,7 +45,10 @@ struct PostParams
 
 inline void Clamp01(float &v)
 {
-    v = std::max(0.0f, std::min(1.0f, v));
+    if (!std::isfinite(v))
+        v = 0.0f;
+    else
+        v = std::max(0.0f, std::min(1.0f, v));
 }
 
 // Full per-pixel post chain. `in` is the scene-linear pixel, `bloom` the
