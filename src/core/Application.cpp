@@ -790,6 +790,12 @@ void Application::RenderViewportTarget()
     if (!m_viewport_target || !m_viewport)
         return;
 
+    // Skip the full CPU 3D scene render when the viewport panel is hidden
+    // (e.g. Scripting or Sequencing workspace).  The expensive rasterizer and
+    // post-processing pipeline would produce a texture that nobody displays.
+    if (!m_viewport->IsVisible())
+        return;
+
     SDL_Renderer *renderer = m_window->GetNativeRenderer();
 
     // If the GPU can no longer bind this texture (lost after minimize/restore),
@@ -3471,9 +3477,9 @@ bool Application::Init(int width, int height, const char *title)
     });
     m_panels.push_back(std::shared_ptr<EnvironmentPanel>(m_environment_panel));
 
-    // The sequencing workspace hides the viewport; apply the side effects of
-    // whatever workspace the persisted layout restored.
-    SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
+    // NOTE: SyncWorkspaceSideEffects is deferred to after all panels are
+    // created (see below) so that every panel pointer is valid when visibility
+    // is enforced.
 
     // Live theme customizer + grid snapping config + viewport navigation
     // tuning: owns no state itself — it edits Application's token set (and
@@ -3738,6 +3744,12 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Redo", "Edit", "Ctrl+Y", [this]() {
         if (m_history) m_history->Redo();
     } });
+
+    // Apply the workspace panel visibility profile now that every panel pointer
+    // is valid.  This was deferred from the earlier call site (before the
+    // content browser, console, material, material preview, history and profiler
+    // panels were created) so that SetVisible() can reach every panel.
+    SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
 
     // Flush anything that printed during startup (SDL/ImGui chatter, test
     // output) so the first rendered frame already shows it.
@@ -4262,6 +4274,12 @@ void Application::Run()
         Uint32 win_flags = SDL_GetWindowFlags(m_window->GetNativeWindow());
         const bool minimized = (win_flags & SDL_WINDOW_MINIMIZED) != 0;
 
+        // Skip viewport target recreation when the viewport panel is hidden
+        // (Scripting/Sequencing).  Width and height are stale zeros because
+        // OnImGuiRender early-returns, which would trigger a pointless
+        // RecreateViewportTarget(0,0) every frame.
+        const bool vp_visible = m_viewport && m_viewport->IsVisible();
+
         // The viewport render target is supersampled to the window's *physical*
         // pixel size, not the ImGui logical size. On a high-DPI display the
         // renderer output is a multiple of the logical window size
@@ -4280,8 +4298,8 @@ void Application::Run()
 
         // Recreate the off-screen target when it is missing, its size is stale,
         // or a window event invalidated its GPU resources. Never recreate while
-        // minimized: the GPU may refuse to build targets for a hidden window.
-        if (!minimized &&
+        // minimized or when the viewport panel is hidden (no visible output).
+        if (!minimized && vp_visible &&
             (m_recreate_viewport || !m_viewport_target ||
              target_w != m_viewport_target_w || target_h != m_viewport_target_h))
         {
