@@ -20,9 +20,11 @@ struct SDL_Texture;
 #include "core/EditorCamera.h"
 #include "core/Landscape.h"
 #include "core/Environment.h"
+#include "core/Material.h"
 #include "render/EnvironmentFX.h"
 
 class EnvironmentPanel;
+class MaterialPreviewPanel;
 
 struct SDL_Texture;
 struct Mat4;
@@ -131,6 +133,18 @@ private:
     // off-screen target each editor frame; the Inspector draws it live.
     void RecreateCameraPreview(int width, int height);
     void RenderCameraPreview();
+
+    // Phase 38 material preview: render the active material's test mesh (UV
+    // sphere or cylinder) into an off-screen target each frame under the
+    // environment lighting; the Material Preview panel draws it live and its
+    // orbit state drives the framing.
+    void RecreateMaterialPreview(int width, int height);
+    void RenderMaterialPreview();
+
+    // Resolve the PBR shading scalars that shade `entity`: the assigned .mat
+    // asset's metallic/roughness/ao/albedo-multiplier, or the defaults when
+    // the entity has no material asset.
+    MaterialShading ResolveEntityShading(const Entity &entity) const;
 
     // Phase 25 free-fly editor camera: the pose the editor renders the
     // viewport through, independent of the scene's gameplay camera entities.
@@ -289,6 +303,7 @@ private:
     TimelinePanel *m_timeline_panel;
     CollisionMatrixPanel *m_collision_matrix_panel;
     EnvironmentPanel *m_environment_panel;      // Phase 37: sky/fog/post UI
+    MaterialPreviewPanel *m_material_preview_panel;  // Phase 38: preview viewport
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
@@ -298,6 +313,9 @@ private:
     SDL_Texture *m_camera_preview;   // Inspector live camera preview target
     int m_camera_preview_w;
     int m_camera_preview_h;
+    SDL_Texture *m_material_preview; // Phase 38: material preview target
+    int m_material_preview_w;
+    int m_material_preview_h;
     float m_camera_scroll;
     float m_ui_scale;
     float m_applied_ui_scale;
@@ -323,6 +341,7 @@ private:
     bool m_history_panel_was_visible;
     bool m_collision_matrix_panel_was_visible;
     bool m_environment_panel_was_visible;
+    bool m_material_preview_panel_was_visible;
 
     // Phase 37 environment stack: the global settings (sky/fog/post) that the
     // EnvironmentFX pass consumes every frame. m_fx owns all of its SDL

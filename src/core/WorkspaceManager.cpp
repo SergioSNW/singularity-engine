@@ -32,6 +32,7 @@ static const char *kLandscapeWindow = "Landscape";
 static const char *kTimelineWindow = "Timeline";
 static const char *kCollisionMatrixWindow = "Collision Matrix";
 static const char *kEnvironmentWindow = "Environment & Shading";
+static const char *kMaterialPreviewWindow = "Material Preview";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -89,8 +90,10 @@ void WorkspaceManager::RebuildLayout()
     // Helper for the bottom "Development Zone" tab group: Material Editor,
     // Console and Content Browser share one tabbed region (Material Editor
     // docked first so the Content Browser stays the active tab). The Collision
-    // Matrix (Phase 36) is docked first of all so it sits behind every tab.
+    // Matrix (Phase 36) and the Material Preview (Phase 38) are docked first of
+    // all so they sit behind every tab.
     auto dock_dev_zone = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, node);
         ImGui::DockBuilderDockWindow(kEnvironmentWindow, node);
         ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, node);
         ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
@@ -137,17 +140,23 @@ void WorkspaceManager::RebuildLayout()
             // Shading & Assets workspace: the Material Editor owns the right
             // rail as the primary material-authoring zone, with the Inspector
             // + Editor Settings + Content Browser tabbed beneath it, and a
-            // bottom Console + Stats tab group. The viewport is maximized for
-            // inspecting shaded geometry.
+            // bottom Console + Stats tab group. The center column splits into
+            // the main viewport (top) and the dedicated Material Preview
+            // viewport (bottom strip) so shaded geometry previews alongside
+            // the scene under the same environment lighting.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.68f, &top, &bottom);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.16f, &left, &center);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, &right, &center);
+
+            ImGuiID vp_top, vp_bottom;
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.62f, &vp_top, &vp_bottom);
 
             ImGuiID mat_top, mat_bottom;
             ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.58f, &mat_top, &mat_bottom);
 
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
-            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            ImGui::DockBuilderDockWindow(kViewportWindow, vp_top);
+            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, vp_bottom);
             // Phase 37: the Environment & Shading panel docks *behind* the
             // Material Editor in the primary zone (last-docked wins focus).
             ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_top);

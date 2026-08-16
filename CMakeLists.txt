@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.37.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.38.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -137,6 +137,7 @@ target_sources(singularity-engine PRIVATE
   src/editor/TimelinePanel.cpp
   src/editor/CollisionMatrixPanel.cpp
   src/editor/EnvironmentPanel.cpp
+  src/editor/MaterialPreviewPanel.cpp
   src/editor/ProfilerPanel.cpp
   src/editor/Theme.cpp
   third_party/ImGuiColorTextEdit/TextEditor.cpp

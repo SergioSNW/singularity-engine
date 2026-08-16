@@ -15,6 +15,7 @@
 11. [Phase 35 — Animation & Timeline Foundation](#11-phase-35--animation--timeline-foundation)
 12. [Phase 36 — Physics Materials & Collision Layer Matrix](#12-phase-36--physics-materials--collision-layer-matrix)
 13. [Phase 37 — Post-Processing & Environment Lighting Stack](#13-phase-37--post-processing--environment-lighting-stack)
+14. [Phase 38 — Dedicated Material Authoring & Shading Mode](#14-phase-38--dedicated-material-authoring--shading-mode)
 
 ---
 
@@ -1211,4 +1212,149 @@ it avoids the toolchain's known linker defect, while the `.env` asset paths and
 the SDL passes run through the real MSVC build. The engine rebuilds clean with
 the three new translation units, and the editor smoke run stays alive with the
 sky, fog and post passes active, an empty log, and no stray file edits on disk.
+
+## 14. Phase 38 — Dedicated Material Authoring & Shading Mode
+
+Phase 38 turns the `.mat` asset from a color tint plus a single texture slot
+into a structured, authorable PBR material, and gives the editor a dedicated
+place to see it: a **Material Preview viewport** that renders a test mesh under
+the live environment lighting, reacting to every slider tick the moment it
+happens.
+
+### 14.1 The material schema (`src/core/Material.{h,cpp}`)
+
+The `Material` struct now mirrors the channels a real PBR pipeline expects:
+
+- **Albedo** — the RGBA tint (`color`), the albedo map (`texture`, resolved
+  under `assets/textures/`), and `albedo_multiplier` (0–2) that scales the
+  final albedo in the shade loop.
+- **Normal** — `normal_texture` + `normal_strength`. Explicitly a **slot only**:
+  the software rasterizer shades per-triangle from face normals, so this pair
+  serializes and validates but has no CPU shading effect (documented in the
+  struct so a future per-pixel pipeline consumes it unchanged).
+- **Metallic / Roughness / AO** — each is a scalar (`metallic` 0–1, `roughness`
+  0–1, `ao` 0–1) plus an optional **texture-map slot** (`*_texture`) and a
+  **channel multiplier** (`*_multiplier`, 0–2). The map slots are likewise
+  consumed by the scalar values in the software renderer but ready for a
+  texture pipeline.
+
+The `.mat` JSON round-trip writes and reads every field with defaults that keep
+legacy files byte-compatible: an old file simply loads `metallic=0`,
+`roughness=0.5`, `ao=1`, all multipliers at 1, and the pre-v0.38 `shininess`
+knob stays serialized (superseded by `roughness`, never deleted).
+
+`MaterialShading` is the renderer-facing view of a material: just the four
+scalars the shade loop needs (`metallic`, `roughness`, `ao`,
+`albedo_multiplier`), produced by `MaterialShading::FromMaterial`. `Application`
+resolves it per entity through `ResolveEntityShading`, mirroring
+`ResolveEntityTexture`'s material resolution (a `.mat` path on the entity wins;
+no asset → neutral defaults).
+
+### 14.2 The shading core (`src/render/MaterialCore.h`)
+
+A pure, dependency-free header keeps the metallic/roughness math unit-testable:
+
+- `pbr::SpecularPower(roughness)` — `1 + 256·(1−r)²`: a mirror (r→0) gets a
+  257-power highlight, a matte surface (r→1) falls to power 1.
+- `pbr::DielectricF0(metallic, albedo)` — `0.04 + metallic·(albedo−0.04)`:
+  dielectrics reflect ~4% at normal incidence, metals reflect their albedo.
+- `pbr::AmbientFloor(ambient, ao)` — the AO-dimmed ambient floor.
+- `pbr::BlinnPhong(ndh, power)` and `pbr::SpecularWeight(roughness)`.
+
+These are exercised by a standalone g++ harness in the scratch toolchain — the
+file deliberately has no `<filesystem>`/SDL so it sidesteps the known linker
+defect.
+
+### 14.3 Software PBR shading (`src/core/Application.cpp`)
+
+`EmitEntityTris` takes a `const MaterialShading &` and, per light, builds:
+
+```
+ambient = pbr::AmbientFloor(l.ambient, ao)
+diffuse = max(0, n·(−l.dir)) · l.intensity
+factor  = ambient + (1 − ambient)·diffuse·shadow
+spec    = pbr::BlinnPhong(n·h, pbr::SpecularPower(roughness)) · intensity
+          · pbr::SpecularWeight(roughness)
+          · DielectricF0(metallic, albedo_channel)
+```
+
+The albedo multiplier scales `color×255` before the `Uint8` base tint is
+derived, so it applies to textured and flat surfaces alike. The view and
+half-angle vectors are guarded against degenerate lengths (camera on the
+centroid, light exactly behind the view). `roughness=1` zeroes the specular
+term entirely, keeping old scenes visually close to their pre-v0.38 flat-shaded
+look while adding a subtle sheen at the new defaults.
+
+`RenderScenePass`'s light-gathering loop is factored into `GatherSceneLights`,
+which the preview reuses with a key-light fallback.
+
+### 14.4 Live authoring (`MaterialLibrary::LiveUpdate`)
+
+Edits in the Material Editor must appear instantly in both the scene and the
+preview. `MaterialLibrary::LiveUpdate(filename, material)` mirrors `Save`'s key
+bookkeeping (the bare-filename and `assets/materials/`-prefixed cache entries)
+but stays **in memory** — every slider tick writes the working copy into the
+cache, the next frame's `RenderScenePass` shades with it, and the user
+explicitly commits with **Save Material**. This is the difference between an
+edit-then-save workflow and a live material authoring session.
+
+### 14.5 The Material Editor rework (`src/editor/MaterialPanel.{h,cpp}`)
+
+The two-pane editor keeps its asset list, but the property pane is reorganized
+into collapsible **Albedo / Normal / Metallic / Roughness / Ambient Occlusion**
+sections. Each channel exposes its scalar slider, its texture-slot combo (None
++ every `assets/textures/` asset), and its multiplier. Every control marks the
+working copy dirty and calls `PushLive` → `LiveUpdate`, so the scene re-shades
+on the next frame without touching the file; **Save Material** persists and
+**Revert** reloads the file copy.
+
+The bottom inline "New Material" box is replaced by a **New Material…** button
+that opens a modal **wizard** — file name, albedo tint, metallic, roughness —
+which calls `MaterialLibrary::Create` and selects the new asset. The wizard is
+also reachable from the Command Palette (**Create New Material**, Create group),
+which first shows the panel.
+
+### 14.6 The Material Preview viewport (`MaterialPreviewPanel` + Application)
+
+The preview is the phase's centerpiece: a procedural **UV sphere** or
+**cylinder** (generated once as function-local statics in the Application, each
+with a full UV set so albedo maps wrap correctly) rendered into an off-screen
+RGBA8888 target every frame:
+
+1. An **orbit pose** is built from the panel's yaw/pitch/distance (looking at
+   the origin; `CameraBasis`-consistent framing).
+2. The **environment stack** runs first: `EnvironmentFX::DrawSky` behind the
+   geometry, per-triangle height fog inside `EmitEntityTris`, and the full
+   `PostProcess` chain (bloom + grade + ACES + gamma LUT) on top — the exact
+   lighting the scene viewport uses.
+3. **Lights** come from `GatherSceneLights` with a key-light fallback so the
+   preview is always readable even in an unlit scene.
+4. The **active material** is the Material Editor's selection read through the
+   (live) library cache, so every slider edit is visible the next frame.
+
+The panel draws the texture through the same `std::function<void*(int,int)>`
+provider pattern as the Inspector's camera preview, and overlays a transparent
+drag/zoom layer: drag orbits, the mouse wheel dollies (clamped 1–8), an
+**Auto-rotate** toggle spins the framing at 25°/s, and **Reset** returns to the
+default. For thermal efficiency the Application skips the software render
+entirely when the window is a docked-inactive tab (`FrameActive()`), and the
+panel is folded into the play-mode hide/restore so the game view stays clean.
+
+### 14.7 Workspace & wiring
+
+The Shading & Assets workspace splits its center column: the main viewport on
+top and the **Material Preview** strip beneath it, both under the same
+environment lighting — the scene on the left, the authored material on the
+right, reacting in lockstep. "Material Preview" also docks as a back-tab in the
+Development Zone of every workspace, "Toggle Material Preview" joins the View
+menu and Command Palette, and the new source joins `CMakeLists.txt` with the
+version bumped to `0.38.0`.
+
+### 14.8 Verification
+
+The pure math is harness-verified on the g++ scratch toolchain; the `.mat`
+JSON, the library `LiveUpdate`, the panel/wizard UI, the preview render pass
+and the workspace docking run through the real MSVC build — a clean rebuild, an
+editor smoke run that stays alive with the PBR panel, wizard, preview viewport
+and scene shading active, an empty log, and no stray file edits on disk.
 

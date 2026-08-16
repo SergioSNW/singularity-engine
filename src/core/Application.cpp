@@ -35,8 +35,10 @@
 #include "editor/TimelinePanel.h"
 #include "editor/CollisionMatrixPanel.h"
 #include "editor/EnvironmentPanel.h"
+#include "editor/MaterialPreviewPanel.h"
 #include "render/EnvironmentFX.h"
 #include "render/EnvironmentCore.h"
+#include "render/MaterialCore.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -111,6 +113,7 @@ Application::Application()
     , m_timeline_panel(nullptr)
     , m_collision_matrix_panel(nullptr)
     , m_environment_panel(nullptr)
+    , m_material_preview_panel(nullptr)
     , m_environment_asset_path("assets/environment/default.env")
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
@@ -118,6 +121,9 @@ Application::Application()
     , m_camera_preview(nullptr)
     , m_camera_preview_w(0)
     , m_camera_preview_h(0)
+    , m_material_preview(nullptr)
+    , m_material_preview_w(0)
+    , m_material_preview_h(0)
     , m_camera_scroll(0.0f)
     , m_ui_scale(1.0f)
     , m_applied_ui_scale(1.0f)
@@ -138,6 +144,7 @@ Application::Application()
     , m_inspector_was_visible(true)
     , m_material_panel_was_visible(true)
     , m_history_panel_was_visible(true)
+    , m_material_preview_panel_was_visible(true)
 {
 }
 
@@ -434,12 +441,142 @@ static float DirectionalShadowFactor(const RenderLight &light, const Vec3 &centr
     return 1.0f;
 }
 
+// Gather the scene's active directional lights. With none active the preview
+// falls back to a key light so the test mesh is always readable.
+static std::vector<RenderLight> GatherSceneLights(Scene *scene)
+{
+    std::vector<RenderLight> lights;
+    if (!scene)
+        return lights;
+    for (auto &entity_ptr : scene->GetEntities())
+    {
+        const Entity &e = *entity_ptr;
+        if (!e.light.active)
+            continue;
+        RenderLight l;
+        Vec3 dir = Vec3Normalize({ e.light.direction[0],
+                                   e.light.direction[1],
+                                   e.light.direction[2] });
+        if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+            dir = { 0.0f, -1.0f, 0.0f };
+        l.dir = dir;
+        l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
+        l.intensity = e.light.intensity;
+        l.ambient = e.light.ambient;
+        l.shadow_strength = e.light.shadow_strength;
+        l.shadow_bias = e.light.shadow_bias;
+        l.shadow_distance = e.light.shadow_distance;
+        lights.push_back(l);
+    }
+    return lights;
+}
+
+// Procedural test meshes for the Material Preview (Phase 38): a UV sphere and
+// a cylinder, each a triangle list with a full UV set so textured materials
+// preview correctly. Generated once (function-local statics) and reused every
+// frame; the preview panel picks which one to show.
+static Mesh BuildPreviewSphere()
+{
+    Mesh m;
+    const int rings = 16;    // latitude subdivisions (poles to equator)
+    const int slices = 24;   // longitude subdivisions around the sphere
+    for (int r = 0; r < rings; ++r)
+    {
+        const float y0 = (float)r / rings;
+        const float y1 = (float)(r + 1) / rings;
+        const float theta0 = y0 * 3.14159265f;
+        const float theta1 = y1 * 3.14159265f;
+        const float sy0 = std::sin(theta0), cy0 = std::cos(theta0);
+        const float sy1 = std::sin(theta1), cy1 = std::cos(theta1);
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 6.2831853f;
+            const float p1 = (float)(s + 1) / slices * 6.2831853f;
+            const float cx0 = std::cos(p0), sx0 = std::sin(p0);
+            const float cx1 = std::cos(p1), sx1 = std::sin(p1);
+            const Vec3 a{ sy0 * cx0, cy0, sy0 * sx0 };
+            const Vec3 b{ sy0 * cx1, cy0, sy0 * sx1 };
+            const Vec3 c{ sy1 * cx1, cy1, sy1 * sx1 };
+            const Vec3 d{ sy1 * cx0, cy1, sy1 * sx0 };
+            m.positions.push_back(a); m.positions.push_back(b); m.positions.push_back(c);
+            m.positions.push_back(a); m.positions.push_back(c); m.positions.push_back(d);
+            const float u0 = (float)s / slices;
+            const float u1 = (float)(s + 1) / slices;
+            const float v0 = 1.0f - y0;  // UV space: top of the map = +Y pole
+            const float v1 = 1.0f - y1;
+            const Vec2 ta{ u0, v0 }, tb{ u1, v0 }, tc{ u1, v1 }, td{ u0, v1 };
+            m.uvs.push_back(ta); m.uvs.push_back(tb); m.uvs.push_back(tc);
+            m.uvs.push_back(ta); m.uvs.push_back(tc); m.uvs.push_back(td);
+        }
+    }
+    m.bounds_min = { -1.0f, -1.0f, -1.0f };
+    m.bounds_max = { 1.0f, 1.0f, 1.0f };
+    return m;
+}
+
+static Mesh BuildPreviewCylinder()
+{
+    Mesh m;
+    const int slices = 28;
+    const float half = 1.0f;
+    // Side wall: one quad per slice, wrapping around the Y axis.
+    for (int s = 0; s < slices; ++s)
+    {
+        const float p0 = (float)s / slices * 6.2831853f;
+        const float p1 = (float)(s + 1) / slices * 6.2831853f;
+        const float cx0 = std::cos(p0), sx0 = std::sin(p0);
+        const float cx1 = std::cos(p1), sx1 = std::sin(p1);
+        const float u0 = (float)s / slices, u1 = (float)(s + 1) / slices;
+        const Vec3 a{ cx0, half, sx0 };
+        const Vec3 b{ cx1, half, sx1 };
+        const Vec3 c{ cx1, -half, sx1 };
+        const Vec3 d{ cx0, -half, sx0 };
+        m.positions.push_back(a); m.positions.push_back(b); m.positions.push_back(c);
+        m.positions.push_back(a); m.positions.push_back(c); m.positions.push_back(d);
+        const Vec2 ta{ u0, 0.0f }, tb{ u1, 0.0f }, tc{ u1, 1.0f }, td{ u0, 1.0f };
+        m.uvs.push_back(ta); m.uvs.push_back(tb); m.uvs.push_back(tc);
+        m.uvs.push_back(ta); m.uvs.push_back(tc); m.uvs.push_back(td);
+    }
+    // Top cap (normal +Y) and bottom cap (normal -Y), UV-projected from the
+    // side ring so an albedo map wraps over the caps plausibly.
+    for (int side = 0; side < 2; ++side)
+    {
+        const float y = side == 0 ? half : -half;
+        const Vec3 center{ 0.0f, y, 0.0f };
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 6.2831853f;
+            const float p1 = (float)(s + 1) / slices * 6.2831853f;
+            const Vec3 a{ std::cos(p0), y, std::sin(p0) };
+            const Vec3 b{ std::cos(p1), y, std::sin(p1) };
+            if (side == 0)
+            {
+                m.positions.push_back(center); m.positions.push_back(b); m.positions.push_back(a);
+                m.uvs.push_back({ 0.5f, 0.5f }); m.uvs.push_back({ 1.0f, 0.0f });
+                m.uvs.push_back({ 0.0f, 0.0f });
+            }
+            else
+            {
+                m.positions.push_back(center); m.positions.push_back(a); m.positions.push_back(b);
+                m.uvs.push_back({ 0.5f, 0.5f }); m.uvs.push_back({ 0.0f, 0.0f });
+                m.uvs.push_back({ 1.0f, 0.0f });
+            }
+        }
+    }
+    m.bounds_min = { -1.0f, -1.0f, -1.0f };
+    m.bounds_max = { 1.0f, 1.0f, 1.0f };
+    return m;
+}
+
 // Project + shade one mesh into screen-space FillTri entries. `color` is the
 // RGBA albedo tint (already resolved from the entity's material asset when
 // assigned); `uvs` (parallel to positions) and `texture` are used together to
 // apply the diffuse map, otherwise flat normal shading is emitted. `lights`
 // drive the shading (diffuse + ambient + directional shadow); with no active
-// light the surface keeps its flat albedo.
+// light the surface keeps its flat albedo. `shading` carries the material's
+// PBR scalars: albedo_multiplier scales the albedo, ao dims the ambient floor,
+// and metallic/roughness drive a cheap Blinn-Phong specular term (roughness
+// 1 kills the highlight entirely).
 static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            const Mat4 &world, const Mat4 &view_proj, float near_p,
                            int w, int h, const float color[4],
@@ -447,11 +584,15 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            const std::vector<RenderLight> &lights,
                            const std::vector<WorldAABB> &occluders,
                            const Entity *self, const Vec3 &cam_pos,
-                           const EnvironmentSettings &env)
+                           const EnvironmentSettings &env,
+                           const MaterialShading &shading)
 {
-    Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
-    Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
-    Uint8 base_b = (Uint8)std::min(255.0f, color[2] * 255.0f);
+    const float alb_r = std::min(255.0f, color[0] * 255.0f * shading.albedo_multiplier);
+    const float alb_g = std::min(255.0f, color[1] * 255.0f * shading.albedo_multiplier);
+    const float alb_b = std::min(255.0f, color[2] * 255.0f * shading.albedo_multiplier);
+    Uint8 base_r = (Uint8)alb_r;
+    Uint8 base_g = (Uint8)alb_g;
+    Uint8 base_b = (Uint8)alb_b;
 
     const bool textured = texture != nullptr;
     const std::vector<Vec3> &pos = mesh.positions;
@@ -469,8 +610,10 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             continue;
 
         // Directional shading: diffuse from the world-space face normal, an
-        // ambient floor, and a ray-cast directional shadow. Every active light
-        // contributes additively; the shadow term only applies to lit faces.
+        // ambient floor, a ray-cast directional shadow, and a Blinn-Phong
+        // specular term whose strength and tint come from the material's
+        // metallic/roughness channels. Every active light contributes
+        // additively; the shadow term only applies to lit faces.
         Vec3 e1 = Vec3Sub(b, a);
         Vec3 e2 = Vec3Sub(c, a);
         Vec3 n = Vec3Normalize(Vec3Cross(e1, e2));
@@ -479,6 +622,20 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
         float shade_r = 1.0f, shade_g = 1.0f, shade_b = 1.0f;
         if (!lights.empty())
         {
+            const float ao = std::clamp(shading.ao, 0.0f, 1.0f);
+            const float spec_power = pbr::SpecularPower(shading.roughness);
+            const float spec_weight = pbr::SpecularWeight(shading.roughness);
+            const float f0_r = pbr::DielectricF0(shading.metallic, alb_r / 255.0f);
+            const float f0_g = pbr::DielectricF0(shading.metallic, alb_g / 255.0f);
+            const float f0_b = pbr::DielectricF0(shading.metallic, alb_b / 255.0f);
+
+            // View vector for the half-angle term; guarded against a camera
+            // sitting exactly on the centroid.
+            Vec3 to_cam = Vec3Sub(cam_pos, centroid);
+            const float to_cam_len = Vec3Length(to_cam);
+            Vec3 v = (to_cam_len > 1e-5f) ? Vec3Scale(to_cam, 1.0f / to_cam_len)
+                                          : Vec3{ 0.0f, 0.0f, 1.0f };
+
             shade_r = shade_g = shade_b = 0.0f;
             for (const RenderLight &l : lights)
             {
@@ -486,10 +643,28 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                 float shadow = 1.0f;
                 if (diffuse > 0.0f && l.shadow_strength > 0.0f && !occluders.empty())
                     shadow = DirectionalShadowFactor(l, centroid, n, occluders, self);
-                float factor = l.ambient + (1.0f - l.ambient) * diffuse * shadow;
-                shade_r += factor * l.color.x;
-                shade_g += factor * l.color.y;
-                shade_b += factor * l.color.z;
+                const float ambient = pbr::AmbientFloor(l.ambient, ao);
+                float factor = ambient + (1.0f - ambient) * diffuse * shadow;
+
+                float spec_r = 0.0f, spec_g = 0.0f, spec_b = 0.0f;
+                if (spec_weight > 0.0f)
+                {
+                    Vec3 h = Vec3Add(Vec3Scale(l.dir, -1.0f), v);
+                    const float h_len = Vec3Length(h);
+                    if (h_len > 1e-5f)
+                    {
+                        h = Vec3Scale(h, 1.0f / h_len);
+                        const float spec = pbr::BlinnPhong(Vec3Dot(n, h), spec_power) *
+                                           l.intensity * spec_weight;
+                        spec_r = spec * f0_r;
+                        spec_g = spec * f0_g;
+                        spec_b = spec * f0_b;
+                    }
+                }
+
+                shade_r += factor * l.color.x + spec_r * l.color.x;
+                shade_g += factor * l.color.y + spec_g * l.color.y;
+                shade_b += factor * l.color.z + spec_b * l.color.z;
             }
         }
 
@@ -758,30 +933,8 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
 
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
-    std::vector<RenderLight> lights;
-    if (use_lighting)
-    {
-        for (auto &entity_ptr : m_scene->GetEntities())
-        {
-            const Entity &e = *entity_ptr;
-            if (!e.light.active)
-                continue;
-            RenderLight l;
-            Vec3 dir = Vec3Normalize({ e.light.direction[0],
-                                       e.light.direction[1],
-                                       e.light.direction[2] });
-            if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-                dir = { 0.0f, -1.0f, 0.0f };
-            l.dir = dir;
-            l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
-            l.intensity = e.light.intensity;
-            l.ambient = e.light.ambient;
-            l.shadow_strength = e.light.shadow_strength;
-            l.shadow_bias = e.light.shadow_bias;
-            l.shadow_distance = e.light.shadow_distance;
-            lights.push_back(l);
-        }
-    }
+    std::vector<RenderLight> lights =
+        use_lighting ? GatherSceneLights(m_scene) : std::vector<RenderLight>();
 
     // World AABBs of the visible mesh-bearing entities, used as
     // directional-shadow blockers for the ray cast in EmitEntityTris.
@@ -830,9 +983,10 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             const float *tint = nullptr;
             const std::vector<Vec2> *uvs = nullptr;
             SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
+            MaterialShading shading = ResolveEntityShading(entity);
             EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
                            tint, texture, uvs, lights, occluders, &entity,
-                           cam_pos, m_environment);
+                           cam_pos, m_environment, shading);
         }
         DrawTriangles(renderer, tris, w, h, &draw_calls);
     }
@@ -1254,6 +1408,133 @@ void Application::RenderCameraPreview()
     SDL_SetRenderTarget(renderer, nullptr);
 }
 
+// (Re)create the Material Preview target at the requested size (called by the
+// preview panel each frame, like the Inspector's camera preview).
+void Application::RecreateMaterialPreview(int width, int height)
+{
+    if (m_material_preview && m_material_preview_w == width &&
+        m_material_preview_h == height)
+        return;
+    if (m_material_preview)
+    {
+        SDL_DestroyTexture(m_material_preview);
+        m_material_preview = nullptr;
+    }
+    SDL_Renderer *renderer = m_window ? m_window->GetNativeRenderer() : nullptr;
+    if (!renderer || width <= 0 || height <= 0)
+        return;
+    m_material_preview = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                           SDL_TEXTUREACCESS_TARGET, width, height);
+    m_material_preview_w = width;
+    m_material_preview_h = height;
+}
+
+// Render the Material Preview viewport: the active material's test mesh lit by
+// the environment settings (sky + fog + post) and the scene's directional
+// lights. Runs each editor frame into the off-screen target; the preview panel
+// draws it live and its orbit state drives the framing.
+void Application::RenderMaterialPreview()
+{
+    if (!m_material_preview || !m_scene || !m_material_library ||
+        !m_material_preview_panel || !m_material_preview_panel->IsVisible() ||
+        !m_material_preview_panel->FrameActive())
+        return;
+
+    SDL_Renderer *renderer = m_window->GetNativeRenderer();
+    if (SDL_SetRenderTarget(renderer, m_material_preview) != 0)
+        return;
+
+    SDL_SetRenderDrawColor(renderer, 18, 18, 24, 255);
+    SDL_RenderClear(renderer);
+
+    const int w = m_material_preview_w;
+    const int h = m_material_preview_h;
+
+    // Orbit pose: look at the origin from the panel's yaw/pitch/distance.
+    float yaw, pitch, dist;
+    m_material_preview_panel->GetOrbit(yaw, pitch, dist);
+    EditorCamera pose;
+    {
+        const float py = pitch * 3.14159265f / 180.0f;
+        const float sy = yaw * 3.14159265f / 180.0f;
+        const Vec3 fwd{ -std::cos(py) * std::sin(sy),
+                        std::sin(py),
+                        -std::cos(py) * std::cos(sy) };
+        pose.position = Vec3Scale(fwd, -dist);
+        pose.yaw = yaw;
+        pose.pitch = pitch;
+        pose.fov = 45.0f;
+    }
+    const Vec3 cam_pos = pose.position;
+    const float near_p = 0.05f;
+    const float far_p = 100.0f;
+    const float aspect = (float)w / (float)h;
+    Mat4 view_proj;
+    if (!BuildViewProjFromPose(pose, near_p, far_p, aspect, view_proj))
+    {
+        SDL_SetRenderTarget(renderer, nullptr);
+        return;
+    }
+
+    // Sky from the active environment settings (cached pass, like the viewport).
+    if (m_environment.sky_enabled)
+    {
+        Vec3 fwd, right, up;
+        CameraBasis(pose, fwd, right, up);
+        m_fx.DrawSky(renderer, m_environment, &pose.position.x,
+                     &fwd.x, &right.x, &up.x, pose.fov, 0, 0, w, h);
+    }
+
+    // Active material: the working copy the Material Editor pushed live (the
+    // default material when nothing is selected).
+    const Material *mat = nullptr;
+    if (m_material_panel && !m_material_panel->Selected().empty())
+        mat = m_material_library->Get(m_material_panel->Selected());
+    const Material *fallback = m_material_library->GetDefault();
+    const float *tint = mat ? mat->color : fallback->color;
+    MaterialShading shading = mat ? MaterialShading::FromMaterial(*mat) : MaterialShading();
+
+    SDL_Texture *texture = nullptr;
+    if (mat && !mat->texture.empty() && m_texture_library)
+    {
+        std::string error;
+        texture = m_texture_library->GetTexture(mat->texture, &error);
+    }
+
+    // Scene lights; fall back to a key light so the preview is always readable.
+    std::vector<RenderLight> lights = GatherSceneLights(m_scene);
+    if (lights.empty())
+    {
+        RenderLight key;
+        key.dir = Vec3Normalize({ 0.6f, -1.0f, 0.4f });
+        key.intensity = 1.0f;
+        key.ambient = 0.3f;
+        lights.push_back(key);
+    }
+
+    static const Mesh kPreviewSphere = BuildPreviewSphere();
+    static const Mesh kPreviewCylinder = BuildPreviewCylinder();
+    const Mesh &mesh = (m_material_preview_panel->MeshIndex() == 1)
+        ? kPreviewCylinder
+        : kPreviewSphere;
+    const std::vector<Vec2> *uvs = nullptr;
+    if (texture && mesh.uvs.size() == mesh.positions.size())
+        uvs = &mesh.uvs;
+
+    static const Mat4 kIdentity = Mat4Identity();
+    std::vector<FillTri> tris;
+    EmitEntityTris(tris, mesh, kIdentity, view_proj, near_p, w, h,
+                   tint, texture, uvs, lights, {}, nullptr, cam_pos,
+                   m_environment, shading);
+    DrawTriangles(renderer, tris, w, h, &m_draw_calls);
+
+    // Post-processing (bloom + grade + ACES + gamma LUT) like the viewport.
+    if (m_environment.post_enabled)
+        m_fx.PostProcess(renderer, m_material_preview, 0, 0, w, h, m_environment);
+
+    SDL_SetRenderTarget(renderer, nullptr);
+}
+
 // Read the active gameplay camera entity's pose (position from its world
 // matrix, orientation/fov from its CameraComponent). Falls back to a sensible
 // default pose when the scene has no camera entity; returns whether a camera
@@ -1383,6 +1664,17 @@ SDL_Texture *Application::ResolveEntityTexture(const Entity &entity)
     const std::vector<Vec2> *uvs = nullptr;
     static const Mesh kEmptyMesh;  // mesh UVs never match an empty mesh
     return ResolveEntityTexture(entity, kEmptyMesh, tint, uvs);
+}
+
+// Resolve the PBR shading scalars for `entity`: the assigned .mat asset's
+// metallic/roughness/ao/albedo-multiplier (mirroring ResolveEntityTexture's
+// material resolution), or the neutral defaults for a bare entity.
+MaterialShading Application::ResolveEntityShading(const Entity &entity) const
+{
+    const Material *mat = nullptr;
+    if (!entity.material.material_path.empty() && m_material_library)
+        mat = m_material_library->Load(entity.material.material_path);
+    return mat ? MaterialShading::FromMaterial(*mat) : MaterialShading();
 }
 
 void Application::SaveScene()
@@ -1679,6 +1971,8 @@ void Application::SavePlayModePanelState()
         m_collision_matrix_panel ? m_collision_matrix_panel->IsVisible() : false;
     m_environment_panel_was_visible =
         m_environment_panel ? m_environment_panel->IsVisible() : false;
+    m_material_preview_panel_was_visible =
+        m_material_preview_panel ? m_material_preview_panel->IsVisible() : false;
 
     if (m_script_editor)
         m_script_editor->SetVisible(false);
@@ -1696,6 +1990,8 @@ void Application::SavePlayModePanelState()
         m_collision_matrix_panel->SetVisible(false);
     if (m_environment_panel)
         m_environment_panel->SetVisible(false);
+    if (m_material_preview_panel)
+        m_material_preview_panel->SetVisible(false);
 }
 
 void Application::RestorePlayModePanelState()
@@ -1720,6 +2016,8 @@ void Application::RestorePlayModePanelState()
         m_collision_matrix_panel->SetVisible(m_collision_matrix_panel_was_visible);
     if (m_environment_panel)
         m_environment_panel->SetVisible(m_environment_panel_was_visible);
+    if (m_material_preview_panel)
+        m_material_preview_panel->SetVisible(m_material_preview_panel_was_visible);
 }
 
 void Application::DuplicateSelection()
@@ -3257,13 +3555,35 @@ bool Application::Init(int width, int height, const char *title)
     } });
 
     // Material Editor: dedicated dockable authoring panel over assets/materials/
-    // (diffuse tint, texture slot + live preview, shininess, create/save). The
-    // primary zone of the Shading & Assets workspace; a tab elsewhere.
+    // (Phase 38 PBR channels: albedo/normal/metallic/roughness/AO slots and
+    // multipliers + the Create New Material wizard). The primary zone of the
+    // Shading & Assets workspace; a tab elsewhere.
     m_material_panel = new MaterialPanel(m_material_library, m_texture_library);
     m_panels.push_back(std::shared_ptr<MaterialPanel>(m_material_panel));
     cp.Register({ "Toggle Material Editor", "View", "", [this]() {
         if (m_material_panel)
             m_material_panel->ToggleVisible();
+    } });
+    cp.Register({ "Create New Material", "Create", "", [this]() {
+        if (m_material_panel)
+        {
+            m_material_panel->SetVisible(true);
+            m_material_panel->OpenCreateWizard();
+        }
+    } });
+
+    // Material Preview (Phase 38): the dedicated interactive viewport over the
+    // active material (test mesh lit by the environment settings). It needs the
+    // Material Editor to author against, so it is created here next to it.
+    m_material_preview_panel = new MaterialPreviewPanel(
+        [this](int w, int h) -> void * {
+            RecreateMaterialPreview(w, h);
+            return (void *)m_material_preview;
+        });
+    m_panels.push_back(std::shared_ptr<MaterialPreviewPanel>(m_material_preview_panel));
+    cp.Register({ "Toggle Material Preview", "View", "", [this]() {
+        if (m_material_preview_panel)
+            m_material_preview_panel->ToggleVisible();
     } });
 
     // Collision Matrix panel (Phase 36): the scene-wide layer-pair grid. The
@@ -3733,6 +4053,13 @@ void Application::Run()
                             m_environment_panel->ToggleVisible();
                     }
 
+                    if (m_material_preview_panel)
+                    {
+                        if (ImGui::MenuItem("Material Preview", nullptr,
+                                            m_material_preview_panel->IsVisible()))
+                            m_material_preview_panel->ToggleVisible();
+                    }
+
                     if (m_profiler_panel)
                     {
                         if (ImGui::MenuItem("Profiler", nullptr,
@@ -4001,11 +4328,13 @@ void Application::Run()
             m_profiler.BeginStage(Profiler::Render);
             RenderViewportTarget();
             RenderCameraPreview();
+            RenderMaterialPreview();
             m_profiler.EndStage(Profiler::Render);
         }
         else
         {
             RenderCameraPreview();
+            RenderMaterialPreview();
         }
 
         // Inspector camera preview: render the selected camera entity into the
@@ -4077,6 +4406,12 @@ void Application::Shutdown()
     {
         SDL_DestroyTexture(m_camera_preview);
         m_camera_preview = nullptr;
+    }
+
+    if (m_material_preview)
+    {
+        SDL_DestroyTexture(m_material_preview);
+        m_material_preview = nullptr;
     }
 
     delete m_gizmo;

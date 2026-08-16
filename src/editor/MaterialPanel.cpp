@@ -91,31 +91,14 @@ void MaterialPanel::Select(const std::string &filename)
     m_status.clear();
 }
 
-void MaterialPanel::CreateNew()
+// Reflect the working copy into the MaterialLibrary cache without touching the
+// file, so the scene and the Material Preview re-shade on the very next frame.
+void MaterialPanel::PushLive()
 {
-    if (!m_material_library)
+    if (!m_material_library || m_selected.empty())
         return;
-    std::string name = m_new_name;
-    if (name.empty())
-        return;
-    if (name.size() < 4 || name.substr(name.size() - 4) != ".mat")
-        name += ".mat";
-
-    Material mat;
-    mat.color[0] = 1.0f;
-    mat.color[1] = 1.0f;
-    mat.color[2] = 1.0f;
-    mat.color[3] = 1.0f;
-
-    std::string error;
-    if (!m_material_library->Create(name, mat, &error))
-    {
-        m_status = "Create failed: " + error;
-        return;
-    }
-    m_new_name[0] = '\0';
-    Select(name);
-    m_status = "Created " + name;
+    m_edit.name = m_name_buffer;
+    m_material_library->LiveUpdate(m_selected, m_edit);
 }
 
 void MaterialPanel::SaveEdit()
@@ -131,6 +114,72 @@ void MaterialPanel::SaveEdit()
     }
     m_dirty = false;
     m_status = "Saved " + m_selected;
+}
+
+void MaterialPanel::OpenCreateWizard()
+{
+    m_wizard_open = true;
+    m_wizard_name[0] = '\0';
+    m_wizard_color[0] = 1.0f;
+    m_wizard_color[1] = 1.0f;
+    m_wizard_color[2] = 1.0f;
+    m_wizard_color[3] = 1.0f;
+    m_wizard_metallic = 0.0f;
+    m_wizard_roughness = 0.5f;
+}
+
+void MaterialPanel::CreateFromWizard()
+{
+    if (!m_material_library)
+        return;
+    std::string name = m_wizard_name;
+    if (name.empty())
+        return;
+    if (name.size() < 4 || name.substr(name.size() - 4) != ".mat")
+        name += ".mat";
+
+    Material mat;
+    for (int i = 0; i < 4; ++i)
+        mat.color[i] = m_wizard_color[i];
+    mat.metallic = m_wizard_metallic;
+    mat.roughness = m_wizard_roughness;
+
+    std::string error;
+    if (!m_material_library->Create(name, mat, &error))
+    {
+        m_status = "Create failed: " + error;
+        return;
+    }
+    m_wizard_name[0] = '\0';
+    ImGui::CloseCurrentPopup();
+    Select(name);
+    m_status = "Created " + name;
+}
+
+// A texture-map slot for one PBR channel: "None" or a file from the texture
+// asset list. Changes dirty the working copy and push it live immediately.
+void MaterialPanel::DrawTextureSlot(const char *label, std::string &slot)
+{
+    const char *preview = slot.empty() ? "None" : slot.c_str();
+    if (!ImGui::BeginCombo(label, preview))
+        return;
+    if (ImGui::Selectable("None", slot.empty()))
+    {
+        slot.clear();
+        m_dirty = true;
+        PushLive();
+    }
+    for (const std::string &path : ListTextureAssets())
+    {
+        const bool selected = (slot == path);
+        if (ImGui::Selectable(path.c_str(), selected))
+        {
+            slot = path;
+            m_dirty = true;
+            PushLive();
+        }
+    }
+    ImGui::EndCombo();
 }
 
 void MaterialPanel::OnImGuiRender(float dt)
@@ -171,7 +220,7 @@ void MaterialPanel::OnImGuiRender(float dt)
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_x - tw) * 0.5f);
         ImGui::TextDisabled("%s", title);
 
-        const char *hint = "Select a .mat from the list or create a new one below.";
+        const char *hint = "Select a .mat from the list or create a new one.";
         const float hw = ImGui::CalcTextSize(hint).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_x - hw) * 0.5f);
         ImGui::TextDisabled("%s", hint);
@@ -179,40 +228,32 @@ void MaterialPanel::OnImGuiRender(float dt)
     else
     {
         if (ImGui::InputText("Name", m_name_buffer, sizeof(m_name_buffer)))
+        {
             m_dirty = true;
+            PushLive();
+        }
         ImGui::TextDisabled("File: %s", m_selected.c_str());
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
+        // --- Albedo -------------------------------------------------------
+        ImGui::TextUnformatted("Albedo");
         if (ImGui::ColorEdit4("Diffuse Tint", m_edit.color))
+        {
             m_dirty = true;
+            PushLive();
+        }
         ImGui::TextDisabled("Multiplies the texture; white = un-tinted");
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        const char *tex_preview = m_edit.texture.empty() ? "None" : m_edit.texture.c_str();
-        if (ImGui::BeginCombo("Texture", tex_preview))
+        if (ImGui::SliderFloat("Albedo Multiplier", &m_edit.albedo_multiplier,
+                               0.0f, 2.0f, "%.2f"))
         {
-            if (ImGui::Selectable("None", m_edit.texture.empty()))
-            {
-                m_edit.texture.clear();
-                m_dirty = true;
-            }
-            for (const std::string &path : ListTextureAssets())
-            {
-                bool selected = (m_edit.texture == path);
-                if (ImGui::Selectable(path.c_str(), selected))
-                {
-                    m_edit.texture = path;
-                    m_dirty = true;
-                }
-            }
-            ImGui::EndCombo();
+            m_dirty = true;
+            PushLive();
         }
+        DrawTextureSlot("Albedo Map", m_edit.texture);
 
         if (!m_edit.texture.empty())
         {
@@ -242,13 +283,82 @@ void MaterialPanel::OnImGuiRender(float dt)
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (ImGui::SliderFloat("Shininess", &m_edit.shininess, 0.0f, 1.0f, "%.2f"))
-            m_dirty = true;
+        // --- Normal (slot-only in the software rasterizer) ----------------
+        if (ImGui::CollapsingHeader("Normal", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawTextureSlot("Normal Map", m_edit.normal_texture);
+            if (ImGui::SliderFloat("Normal Strength", &m_edit.normal_strength,
+                                   0.0f, 2.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            ImGui::TextDisabled("Slot only: the CPU rasterizer shades flat");
+            ImGui::Spacing();
+        }
 
+        // --- Metallic -----------------------------------------------------
+        if (ImGui::CollapsingHeader("Metallic", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if (ImGui::SliderFloat("Metallic", &m_edit.metallic, 0.0f, 1.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            DrawTextureSlot("Metallic Map", m_edit.metallic_texture);
+            if (ImGui::SliderFloat("Metallic Multiplier", &m_edit.metallic_multiplier,
+                                   0.0f, 2.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            ImGui::Spacing();
+        }
+
+        // --- Roughness ----------------------------------------------------
+        if (ImGui::CollapsingHeader("Roughness", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if (ImGui::SliderFloat("Roughness", &m_edit.roughness, 0.0f, 1.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            DrawTextureSlot("Roughness Map", m_edit.roughness_texture);
+            if (ImGui::SliderFloat("Roughness Multiplier", &m_edit.roughness_multiplier,
+                                   0.0f, 2.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            ImGui::TextDisabled("Inverse specular power; 0 = mirror");
+            ImGui::Spacing();
+        }
+
+        // --- Ambient Occlusion -------------------------------------------
+        if (ImGui::CollapsingHeader("Ambient Occlusion", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if (ImGui::SliderFloat("AO", &m_edit.ao, 0.0f, 1.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            DrawTextureSlot("AO Map", m_edit.ao_texture);
+            if (ImGui::SliderFloat("AO Multiplier", &m_edit.ao_multiplier,
+                                   0.0f, 2.0f, "%.2f"))
+            {
+                m_dirty = true;
+                PushLive();
+            }
+            ImGui::TextDisabled("Scales the ambient light floor");
+            ImGui::Spacing();
+        }
+
+        ImGui::Separator();
         ImGui::Spacing();
         if (m_dirty)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.30f, 1.0f), "Unsaved changes");
+            ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.30f, 1.0f),
+                               "Unsaved changes (live preview active)");
             Theme::PushPrimaryButtonColor();
             if (ImGui::Button("Save Material"))
                 SaveEdit();
@@ -263,18 +373,45 @@ void MaterialPanel::OnImGuiRender(float dt)
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextUnformatted("New Material");
-    ImGui::InputText("File Name", m_new_name, sizeof(m_new_name));
     Theme::PushPrimaryButtonColor();
-    if (ImGui::Button("Create") && m_new_name[0] != '\0')
-        CreateNew();
+    if (ImGui::Button("New Material..."))
+        OpenCreateWizard();
     Theme::PopPrimaryButtonColor();
     ImGui::SameLine();
-    ImGui::TextDisabled("Creates a white .mat in assets/materials/");
+    ImGui::TextDisabled("Opens the material authoring wizard");
 
     if (!m_status.empty())
         ImGui::TextDisabled("%s", m_status.c_str());
 
     ImGui::EndChild();
+
+    // --- Create New Material wizard modal --------------------------------
+    if (m_wizard_open)
+    {
+        ImGui::OpenPopup("Create New Material");
+        m_wizard_open = false;
+    }
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Create New Material", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::InputText("File Name", m_wizard_name, sizeof(m_wizard_name));
+        ImGui::TextDisabled("Saved as .mat in assets/materials/");
+        ImGui::Spacing();
+        ImGui::ColorEdit4("Albedo Tint", m_wizard_color);
+        ImGui::SliderFloat("Metallic", &m_wizard_metallic, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Roughness", &m_wizard_roughness, 0.0f, 1.0f, "%.2f");
+        ImGui::Spacing();
+        Theme::PushPrimaryButtonColor();
+        if (ImGui::Button("Create") && m_wizard_name[0] != '\0')
+            CreateFromWizard();
+        Theme::PopPrimaryButtonColor();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
     ImGui::End();
 }
