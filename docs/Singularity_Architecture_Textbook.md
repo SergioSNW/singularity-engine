@@ -14,6 +14,7 @@
 10. [Phase 34 — Landscape & Topology Design Suite](#10-phase-34--landscape--topology-design-suite)
 11. [Phase 35 — Animation & Timeline Foundation](#11-phase-35--animation--timeline-foundation)
 12. [Phase 36 — Physics Materials & Collision Layer Matrix](#12-phase-36--physics-materials--collision-layer-matrix)
+13. [Phase 37 — Post-Processing & Environment Lighting Stack](#13-phase-37--post-processing--environment-lighting-stack)
 
 ---
 
@@ -1074,3 +1075,140 @@ are exercised through the real MSVC build. The engine rebuilds clean with the
 two new translation units in the explicit CMake source list. The editor smoke
 run stays alive with the Collision Matrix panel, layer/material wiring, an empty
 log, and no stray file edits on disk.
+
+---
+
+## 13. Phase 37 — Post-Processing & Environment Lighting Stack
+
+The viewport output is no longer raw rasterized color: a full **environment
+lighting stack** now sits between the painter's algorithm and the pixels the
+user sees. The stack is global editor state (like the theme — deliberately **not**
+part of the undo history), lives in a single serializable `EnvironmentSettings`
+struct, and is split across three independent passes that Application wires
+together each frame:
+
+| Block | Where | Cost model |
+|---|---|---|
+| **Sky** (procedural skybox) | `EnvironmentFX::DrawSky` | cached texture, rebuilt only on pose/settings/region change |
+| **Fog** (exponential height fog) | `env::HeightFog` in `EmitEntityTris` | per-triangle color blend, ~free |
+| **Post** (bloom → grade → ACES → gamma) | `EnvironmentFX::PostProcess` | CPU loop at `working = region × post_scale` |
+
+### 13.1 Why a CPU stack (and where it fits)
+
+The engine has no GPU shaders — everything is CPU software rasterization into an
+RGBA8888 `SDL_TEXTUREACCESS_TARGET` texture, blitted to screen by the SDL2
+renderer (with 2× supersampling for AA, `kViewportSupersample`). A hardware
+post/fog stack would need an OpenGL/Shader pipeline that does not exist, so both
+features are implemented the way the rest of the engine is: **arithmetic on
+buffers the engine already has**. The fog runs during triangle emission, where
+the per-tri centroid and world Y are already computed. The sky and post runs are
+texture-sized CPU passes over the same RGBA8888 buffer the rasterizer fills —
+no new render path, no new dependency, and every cost scales linearly with the
+working resolution the user can dial down (`post_scale`).
+
+### 13.2 The settings asset (`src/core/Environment.{h,cpp}`)
+
+`EnvironmentSettings` is a plain data struct with three blocks. **Sky** — the two
+gradient stops (zenith `sky_color_top`, horizon `sky_color_horizon`), the sun
+(color/intensity/glow radius/disk radius + `sky_sun_yaw`/`sky_sun_pitch` world
+direction, and a `sky_star_intensity` knob). **Fog** — `fog_color`, `fog_density`,
+`fog_height_falloff`, `fog_start`. **Post** — `post_scale`, the bloom trio
+(threshold/strength/radius), exposure/gamma/saturation/contrast/temperature, and
+the ACES toggle. Serialization mirrors the Phase 36 `.pmat` pattern exactly
+(`json::Value`, `WritePretty`, per-key defaults on read) as `assets/environment/
+default.env` with a `"type": "environment"` discriminator. Application owns the
+single instance, writes the file with defaults on first launch, and reports
+parse/save errors to the console. Edits apply **next frame** (the render reads
+`m_environment` live) and never enter the undo stack — same philosophy as the
+theme and viewport overlay settings.
+
+### 13.3 Sky: procedural skybox with per-pose caching
+
+`EnvironmentFX::DrawSky(renderer, env, cam_pos, fwd, right, up, fov, x, y, w, h)`
+renders one region of the current render target. The camera basis comes from a
+file-local `CameraBasis(pose)` helper that mirrors the view construction in
+`BuildViewProjFromPose` (RotX(-pitch)·RotY(-yaw)): `forward = -Z` view axis,
+`right`/`up` complete the right-handed frame. For each pixel the view ray is
+`normalize(fwd + right·(px·tan(fov/2)·aspect) − up·(py·tan(fov/2)))`, then:
+
+- **Gradient** — `env::SkyGradient`: blend horizon→top by `pow(up_component, 0.5)`;
+  below the horizon the sky falls to 0.85× the horizon color (earth shadow).
+- **Stars** — `env::SkyStars`: a deterministic integer-cell hash
+  (`StarHash(x·2048, y·2048, z·2048)`) with a sparse threshold, so the pattern is
+  stable while the camera moves without any RNG state.
+- **Sun** — the sun direction is projected once into screen space
+  (`(s_rgt/s_fwd)/(tan(fov/2)·aspect)`, etc.); per pixel the disk and glow are
+  pure-arithmetic smoothstep falloffs on the screen-space distance
+  (`1 − SmoothStep(...)`), added as `sun_color × intensity × (disk + 0.45·glow)`.
+
+The texture is only rebuilt when `SignatureFromSettings` (FNV over the camera
+basis + settings floats + region size) changes — while flying, the sky rebuilds
+every frame (unavoidable, it is a function of the view), but when the view is
+still it is one `SDL_RenderCopy` per frame. The Inspector camera preview reuses
+the same cached pass with its own pose.
+
+### 13.4 Fog: per-triangle exponential height fog
+
+`env::HeightFog(density, height_falloff, fog_start, dist, cam_y, world_y)`
+returns `1 − exp(−density·(dist − fog_start)·exp(−height_falloff·(world_y − cam_y)))`,
+clamped to [0,1], 0 before `fog_start`. The sign convention matters: a triangle
+**below** the camera (`world_y < cam_y`) sees `extinction > 1` and saturates to
+full fog quickly, while a summit (`world_y > cam_y`) stays clear — valleys fill
+with haze, hilltops stay crisp. `EmitEntityTris` now receives the camera position
+(threaded through `RenderScenePass`, whose call sites pass `pose.position`) and
+blends each triangle's shaded tint toward `fog_color` in **tint space**: for
+textured triangles this still fogs correctly, because SDL multiplies the vertex
+tint by the texture sample, so the fog-colored tint darkens and shifts the
+textured surface too (a documented approximation — the fog is per-triangle, not
+per-pixel).
+
+### 13.5 Post: a CPU bloom + color-grade chain
+
+`EnvironmentFX::PostProcess` runs after the scene pass but **before** the editor
+overlay, so selection bounds and the gizmo stay crisp and ungraded. Pipeline:
+
+1. `SDL_RenderReadPixels` of the region → box downsample to
+   `working = region × post_scale` as linear RGB floats (`m_lin`).
+2. **Bloom** — a bright pass (`lum − threshold`, clamped, normalized by lum)
+   box-downsampled to half working res, separable gaussian blur (precomputed
+   weights, `m_tmp` ping-pong), kept at half res and sampled **nearest** during
+   the apply loop.
+3. **Grade** — per-pixel `env::PostProcess`: add `strength × bloom` (pre-exposure,
+   so highlights survive tone mapping), then exposure → temperature lerp → satur
+   ation (luma mix) → contrast (0.5 pivot).
+4. **Tone map + gamma** — ACES (Narkowicz fit) then `x^(1/γ)` collapsed into a
+   **12-bit LUT** (`m_lut[4096]`, rebuilt only when γ/tonemap change), so the
+   per-pixel loop is one table lookup per channel — no `powf`/`expf` anywhere in
+   the hot path.
+5. `SDL_UpdateTexture` on a streaming work texture, `SDL_RenderCopy` scaled back
+   over the region (the SDL2 renderer's linear filtering does the upscale).
+
+Post is **opt-in**: when `post_enabled` is false the pass returns without doing
+work, keeping the editor at its previous idle cost; the working scale is the
+thermal knob (0.5 → quarter the pixels of the supersampled target).
+
+### 13.6 Workspace integration
+
+The new **Environment & Shading panel** (`src/editor/EnvironmentPanel.{h,cpp}`)
+edits the live settings through collapsible Sky / Fog / Post-Processing sections,
+has Reload/Save against the `.env` asset with a console + inline error readout,
+and a **Material Editor** shortcut that focuses the docked MaterialPanel. In the
+**Shading & Assets** workspace it docks into the primary zone *behind* the
+Material Editor (DockBuilder focuses the last-docked window, so order = active
+tab) and again into the mat_bottom tab group; it is also first in the shared
+Development Zone tab groups. `WorkspaceManager` gains `kEnvironmentWindow`; the
+panel joins the View menu, the Command Palette (View group), and the play-mode
+save/restore like every other panel.
+
+### 13.7 Testability and Verification
+
+The pure math (`env::Aces` monotonicity/bounds, `env::HeightFog` start-distance
+gating and valley/summit asymmetry, `env::SunDirection` unit length,
+`env::SkyGradient` stop behavior, `env::StarHash` determinism/sparseness, and
+the full `env::PostProcess` chain) is verified by a standalone harness on the
+g++ scratch toolchain — the file intentionally has **no** `<filesystem>`/SDL so
+it avoids the toolchain's known linker defect, while the `.env` asset paths and
+the SDL passes run through the real MSVC build. The engine rebuilds clean with
+the three new translation units, and the editor smoke run stays alive with the
+sky, fog and post passes active, an empty log, and no stray file edits on disk.
+

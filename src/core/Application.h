@@ -19,6 +19,10 @@ struct SDL_Texture;
 #include "editor/GizmoController.h"
 #include "core/EditorCamera.h"
 #include "core/Landscape.h"
+#include "core/Environment.h"
+#include "render/EnvironmentFX.h"
+
+class EnvironmentPanel;
 
 struct SDL_Texture;
 struct Mat4;
@@ -112,7 +116,7 @@ private:
     // primitives + geometry batches) for the Profiler's resource readout.
     void RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
                          float near_p, int w, int h, Entity *skip_entity,
-                         int &draw_calls);
+                         const Vec3 &cam_pos, int &draw_calls);
     void RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
                              const EditorCamera &pose, float near_p, int w, int h,
                              int &draw_calls);
@@ -284,6 +288,7 @@ private:
     LandscapePanel *m_landscape_panel;
     TimelinePanel *m_timeline_panel;
     CollisionMatrixPanel *m_collision_matrix_panel;
+    EnvironmentPanel *m_environment_panel;      // Phase 37: sky/fog/post UI
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
@@ -317,6 +322,14 @@ private:
     bool m_material_panel_was_visible;
     bool m_history_panel_was_visible;
     bool m_collision_matrix_panel_was_visible;
+    bool m_environment_panel_was_visible;
+
+    // Phase 37 environment stack: the global settings (sky/fog/post) that the
+    // EnvironmentFX pass consumes every frame. m_fx owns all of its SDL
+    // textures/buffers and caches the sky + LUT across frames.
+    EnvironmentSettings m_environment;
+    EnvironmentFX m_fx;
+    std::string m_environment_asset_path;
 
     // Editor grid-snapping configuration (Phase 18): steps for the translate/
     // rotate/scale gizmos, plus the persistent snap toggle. Wire

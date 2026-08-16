@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.36.0-alpha — Physics Materials & Collision Layer Matrix
+v0.37.0-alpha — Post-Processing & Environment Lighting Stack
 
 ## Dependencies
 

@@ -34,6 +34,9 @@
 #include "editor/LandscapePanel.h"
 #include "editor/TimelinePanel.h"
 #include "editor/CollisionMatrixPanel.h"
+#include "editor/EnvironmentPanel.h"
+#include "render/EnvironmentFX.h"
+#include "render/EnvironmentCore.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -66,6 +69,21 @@ static const float kStatusBarHeight = 24.0f;
 // gizmo's dpi_scale so screen-constant metrics keep their on-screen size.
 static const float kViewportSupersample = 2.0f;
 
+// World-space camera basis from an EditorCamera pose (degrees). Matches the
+// view construction in BuildViewProjFromPose (RotX(-pitch) * RotY(-yaw)):
+// forward is the -Z view axis, right/up complete the right-handed frame.
+static void CameraBasis(const EditorCamera &pose, Vec3 &fwd, Vec3 &right, Vec3 &up)
+{
+    const float r = 3.14159265358979323846f / 180.0f;
+    const float cy = std::cosf(pose.yaw * r);
+    const float sy = std::sinf(pose.yaw * r);
+    const float cp = std::cosf(pose.pitch * r);
+    const float sp = std::sinf(pose.pitch * r);
+    fwd   = { -cp * sy,  sp, -cp * cy };
+    right = {  cy,      0.0f, -sy };
+    up    = {  sy * sp, cp,  cy * sp };
+}
+
 Application::Application()
     : m_window(nullptr)
     , m_running(false)
@@ -92,6 +110,8 @@ Application::Application()
     , m_landscape_panel(nullptr)
     , m_timeline_panel(nullptr)
     , m_collision_matrix_panel(nullptr)
+    , m_environment_panel(nullptr)
+    , m_environment_asset_path("assets/environment/default.env")
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -426,7 +446,8 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            SDL_Texture *texture, const std::vector<Vec2> *uvs,
                            const std::vector<RenderLight> &lights,
                            const std::vector<WorldAABB> &occluders,
-                           const Entity *self)
+                           const Entity *self, const Vec3 &cam_pos,
+                           const EnvironmentSettings &env)
 {
     Uint8 base_r = (Uint8)std::min(255.0f, color[0] * 255.0f);
     Uint8 base_g = (Uint8)std::min(255.0f, color[1] * 255.0f);
@@ -478,9 +499,30 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
         t.x1 = bx; t.y1 = by;
         t.x2 = cx; t.y2 = cy;
         t.u0 = t.v0 = t.u1 = t.v1 = t.u2 = t.v2 = 0.0f;
-        t.r = (Uint8)std::min(255.0f, base_r * shade_r);
-        t.g = (Uint8)std::min(255.0f, base_g * shade_g);
-        t.b = (Uint8)std::min(255.0f, base_b * shade_b);
+        float fr = base_r * shade_r;
+        float fg = base_g * shade_g;
+        float fb = base_b * shade_b;
+
+        // Phase 37 exponential height fog: blend the shaded color toward the
+        // fog color by a per-triangle factor (density grows below the camera,
+        // decays above it). Applied in tint space so textured surfaces fog too
+        // (SDL multiplies the vertex tint by the texture sample).
+        if (env.fog_enabled)
+        {
+            const float dist = Vec3Length(Vec3Sub(centroid, cam_pos));
+            const float fog = env::HeightFog(env.fog_density, env.fog_height_falloff,
+                                             env.fog_start, dist, cam_pos.y, centroid.y);
+            if (fog > 0.0f)
+            {
+                fr += (env.fog_color[0] * 255.0f - fr) * fog;
+                fg += (env.fog_color[1] * 255.0f - fg) * fog;
+                fb += (env.fog_color[2] * 255.0f - fb) * fog;
+            }
+        }
+
+        t.r = (Uint8)std::min(255.0f, fr);
+        t.g = (Uint8)std::min(255.0f, fg);
+        t.b = (Uint8)std::min(255.0f, fb);
         t.texture = texture;
         if (textured)
         {
@@ -659,9 +701,28 @@ void Application::RenderViewportTarget()
             if (!BuildViewProjFromPose(pose, near_p, far_p, aspect, view_proj))
                 continue;
 
+            // Phase 37 procedural sky behind the geometry (per-region, cached
+            // across frames by the FX pass keyed on pose + settings).
+            if (m_environment.sky_enabled)
+            {
+                Vec3 fwd, right, up;
+                CameraBasis(pose, fwd, right, up);
+                m_fx.DrawSky(renderer, m_environment, &pose.position.x,
+                             &fwd.x, &right.x, &up.x, pose.fov,
+                             rx, ry, rw, rh);
+            }
+
             const bool is_primary = ((int)idx == primary_idx);
             Entity *skip = is_primary ? GetPrimarySkipEntity() : nullptr;
-            RenderScenePass(renderer, view_proj, near_p, rw, rh, skip, m_draw_calls);
+            RenderScenePass(renderer, view_proj, near_p, rw, rh, skip,
+                            pose.position, m_draw_calls);
+
+            // Phase 37 post-processing (bloom, tone map, color grade) runs on
+            // the graded pixels but *before* the editor overlay, so selection
+            // bounds and the gizmo stay crisp and ungraded.
+            if (m_environment.post_enabled)
+                m_fx.PostProcess(renderer, m_viewport_target, rx, ry, rw, rh,
+                                 m_environment);
 
             if (is_primary && m_state == EngineState::Editor && m_gizmo)
                 RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh,
@@ -679,7 +740,7 @@ void Application::RenderViewportTarget()
 // Inspector camera preview.
 void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
                                   float near_p, int w, int h, Entity *skip_entity,
-                                  int &draw_calls)
+                                  const Vec3 &cam_pos, int &draw_calls)
 {
     if (!m_scene)
         return;
@@ -770,7 +831,8 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             const std::vector<Vec2> *uvs = nullptr;
             SDL_Texture *texture = ResolveEntityTexture(entity, *mesh, tint, uvs);
             EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
-                           tint, texture, uvs, lights, occluders, &entity);
+                           tint, texture, uvs, lights, occluders, &entity,
+                           cam_pos, m_environment);
         }
         DrawTriangles(renderer, tris, w, h, &draw_calls);
     }
@@ -1174,9 +1236,18 @@ void Application::RenderCameraPreview()
         if (BuildViewProjFromPose(pose, preview_cam->camera.near_plane,
                                   preview_cam->camera.far_plane, aspect, view_proj))
         {
-            // The previewed camera is skipped so it never sees itself.
+            // The previewed camera is skipped so it never sees itself. The sky
+            // reuses the same cached pass (no post — the preview is a probe,
+            // not the output image).
+            if (m_environment.sky_enabled)
+            {
+                Vec3 fwd, right, up;
+                CameraBasis(pose, fwd, right, up);
+                m_fx.DrawSky(renderer, m_environment, &pose.position.x,
+                             &fwd.x, &right.x, &up.x, pose.fov, 0, 0, w, h);
+            }
             RenderScenePass(renderer, view_proj, preview_cam->camera.near_plane,
-                            w, h, preview_cam, m_draw_calls);
+                            w, h, preview_cam, pose.position, m_draw_calls);
         }
     }
 
@@ -1606,6 +1677,8 @@ void Application::SavePlayModePanelState()
     m_history_panel_was_visible = m_history_panel ? m_history_panel->IsVisible() : false;
     m_collision_matrix_panel_was_visible =
         m_collision_matrix_panel ? m_collision_matrix_panel->IsVisible() : false;
+    m_environment_panel_was_visible =
+        m_environment_panel ? m_environment_panel->IsVisible() : false;
 
     if (m_script_editor)
         m_script_editor->SetVisible(false);
@@ -1621,6 +1694,8 @@ void Application::SavePlayModePanelState()
         m_history_panel->SetVisible(false);
     if (m_collision_matrix_panel)
         m_collision_matrix_panel->SetVisible(false);
+    if (m_environment_panel)
+        m_environment_panel->SetVisible(false);
 }
 
 void Application::RestorePlayModePanelState()
@@ -1643,6 +1718,8 @@ void Application::RestorePlayModePanelState()
         m_history_panel->SetVisible(m_history_panel_was_visible);
     if (m_collision_matrix_panel)
         m_collision_matrix_panel->SetVisible(m_collision_matrix_panel_was_visible);
+    if (m_environment_panel)
+        m_environment_panel->SetVisible(m_environment_panel_was_visible);
 }
 
 void Application::DuplicateSelection()
@@ -2707,6 +2784,21 @@ bool Application::Init(int width, int height, const char *title)
     // Phase 36 physics materials: the .pmat asset cache (assets/physics/),
     // shared by the Inspector's material combo and any collider resolution.
     m_physics_material_library = new PhysicsMaterialLibrary();
+
+    // Phase 37 environment stack: the global sky/fog/post settings asset
+    // (assets/environment/default.env). A missing file is written with the
+    // defaults on first launch so the panel always has a save target; a broken
+    // file keeps the defaults and reports the parse error on the console.
+    std::string env_error;
+    if (std::filesystem::exists(m_environment_asset_path))
+    {
+        if (!LoadEnvironmentAsset(m_environment_asset_path, m_environment, &env_error))
+            ConsoleInfo("[env] " + env_error);
+    }
+    else if (!SaveEnvironmentAsset(m_environment_asset_path, m_environment, &env_error))
+    {
+        ConsoleInfo("[env] " + env_error);
+    }
     // Textures upload through the engine renderer, so the library must know it
     // before the first Load(). Set right after renderer creation.
     m_texture_library->SetRenderer(m_window->GetNativeRenderer());
@@ -3003,6 +3095,17 @@ bool Application::Init(int width, int height, const char *title)
     m_collision_matrix_panel = new CollisionMatrixPanel(m_scene);
     m_panels.push_back(std::shared_ptr<CollisionMatrixPanel>(m_collision_matrix_panel));
 
+    // Phase 37 environment & shading: edits the global EnvironmentSettings in
+    // place (live, no undo — like the theme). "Material Editor" jumps to the
+    // docked MaterialPanel in the same workspace.
+    m_environment_panel = new EnvironmentPanel(&m_environment);
+    m_environment_panel->SetAssetPath(m_environment_asset_path);
+    m_environment_panel->SetOpenMaterialEditorCallback([this]() {
+        if (m_material_panel)
+            m_material_panel->SetVisible(true);
+    });
+    m_panels.push_back(std::shared_ptr<EnvironmentPanel>(m_environment_panel));
+
     // The sequencing workspace hides the viewport; apply the side effects of
     // whatever workspace the persisted layout restored.
     SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
@@ -3169,6 +3272,13 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Toggle Collision Matrix", "View", "", [this]() {
         if (m_collision_matrix_panel)
             m_collision_matrix_panel->ToggleVisible();
+    } });
+
+    // Environment & Shading (Phase 37): the global sky/fog/post editor. The
+    // palette command and the View menu toggle it.
+    cp.Register({ "Toggle Environment & Shading", "View", "", [this]() {
+        if (m_environment_panel)
+            m_environment_panel->ToggleVisible();
     } });
 
     // History panel (Phase 22): read-only undo/redo stacks with Undo/Redo/
@@ -3616,6 +3726,13 @@ void Application::Run()
                             m_collision_matrix_panel->ToggleVisible();
                     }
 
+                    if (m_environment_panel)
+                    {
+                        if (ImGui::MenuItem("Environment & Shading", nullptr,
+                                            m_environment_panel->IsVisible()))
+                            m_environment_panel->ToggleVisible();
+                    }
+
                     if (m_profiler_panel)
                     {
                         if (ImGui::MenuItem("Profiler", nullptr,
@@ -3942,7 +4059,9 @@ void Application::Shutdown()
     m_landscape_panel = nullptr;
     m_timeline_panel = nullptr;
     m_collision_matrix_panel = nullptr;
+    m_environment_panel = nullptr;
     m_profiler_panel = nullptr;
+    m_fx.Destroy();
 
     // Tear the console pipes down before the window/SDL go away so no further
     // stdout traffic can target a closed pipe.

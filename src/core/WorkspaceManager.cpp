@@ -31,6 +31,7 @@ static const char *kViewportLayoutWindow = "Viewport Layout";
 static const char *kLandscapeWindow = "Landscape";
 static const char *kTimelineWindow = "Timeline";
 static const char *kCollisionMatrixWindow = "Collision Matrix";
+static const char *kEnvironmentWindow = "Environment & Shading";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -90,6 +91,7 @@ void WorkspaceManager::RebuildLayout()
     // docked first so the Content Browser stays the active tab). The Collision
     // Matrix (Phase 36) is docked first of all so it sits behind every tab.
     auto dock_dev_zone = [](ImGuiID node) {
+        ImGui::DockBuilderDockWindow(kEnvironmentWindow, node);
         ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, node);
         ImGui::DockBuilderDockWindow(kMaterialEditorWindow, node);
         ImGui::DockBuilderDockWindow(kConsoleWindow, node);
@@ -146,6 +148,9 @@ void WorkspaceManager::RebuildLayout()
 
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            // Phase 37: the Environment & Shading panel docks *behind* the
+            // Material Editor in the primary zone (last-docked wins focus).
+            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_top);
             ImGui::DockBuilderDockWindow(kMaterialEditorWindow, mat_top);
 
             // Asset-focused right-rail group: Content Browser is the active tab.
@@ -153,6 +158,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kInspectorWindow, mat_bottom);
             ImGui::DockBuilderDockWindow(kContentBrowserWindow, mat_bottom);
             ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, mat_bottom);
+            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_bottom);
 
             // Bottom zone: Console is the active tab over the stats.
             ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
