@@ -275,7 +275,8 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
     const float extent = 20.0f;
 
     // Minor grid lines on the y=0 (XZ) plane; the axis lines are drawn below.
-    SDL_SetRenderDrawColor(renderer, 45, 45, 55, 255);
+    // Softened to a subtle, non-intrusive tint so geometry is never overpowered.
+    SDL_SetRenderDrawColor(renderer, 38, 38, 48, 180);
     for (int k = -(int)extent; k <= (int)extent; ++k)
     {
         if (k == 0)
@@ -288,12 +289,12 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                           draw_calls);
     }
 
-    // Highlighted world axes: X = red, Z = blue.
-    SDL_SetRenderDrawColor(renderer, 220, 70, 70, 255);
+    // Highlighted world axes: X = red, Z = blue. Softened for professional look.
+    SDL_SetRenderDrawColor(renderer, 180, 60, 60, 200);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
                       { -extent, 0.0f, 0.0f }, { extent, 0.0f, 0.0f },
                       draw_calls);
-    SDL_SetRenderDrawColor(renderer, 70, 110, 230, 255);
+    SDL_SetRenderDrawColor(renderer, 60, 90, 200, 200);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
                       { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent },
                       draw_calls);

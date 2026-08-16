@@ -50,12 +50,12 @@ static ImVec4 Over(const ImVec4 &bg, const ImVec4 &fg)
 const Colors &DefaultColors()
 {
     static const Colors defaults = {
-        {0.106f, 0.114f, 0.137f, 1.0f},   // window_bg 0x1B1D23
-        {0.122f, 0.129f, 0.157f, 1.0f},   // child_bg  0x1F2128
-        {0.133f, 0.145f, 0.173f, 1.0f},   // popup_bg  0x22252C
-        {0.141f, 0.153f, 0.180f, 1.0f},   // frame_bg  0x24272E
-        {0.788f, 0.804f, 0.839f, 1.0f},   // text      0xC9CDD6
-        {0.302f, 0.553f, 1.000f, 1.0f},   // accent    0x4D8DFF
+        {0.102f, 0.106f, 0.125f, 1.0f},   // window_bg 0x191B20  (cool slate)
+        {0.118f, 0.122f, 0.141f, 1.0f},   // child_bg  0x1E1F24
+        {0.133f, 0.137f, 0.157f, 1.0f},   // popup_bg  0x222328
+        {0.149f, 0.153f, 0.173f, 1.0f},   // frame_bg  0x26272C
+        {0.800f, 0.820f, 0.860f, 1.0f},   // text      0xCCD1DB
+        {0.267f, 0.502f, 0.961f, 1.0f},   // accent    0x4480F5  (cool blue)
     };
     return defaults;
 }

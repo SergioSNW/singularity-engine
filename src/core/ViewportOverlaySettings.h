@@ -18,11 +18,13 @@ struct ViewportOverlaySettings
 {
     ViewportRenderMode render_mode = ViewportRenderMode::Lit;
 
-    // Overlay visibility toggles (all on by default except the stats HUD).
+    // Overlay visibility toggles — a clean, professional viewport keeps the
+    // grid visible but hides heavy diagnostic overlays by default so 3D
+    // geometry is never visually overpowered.
     bool grid = true;          // ground-plane grid
-    bool colliders = true;     // physics collider volumes
+    bool colliders = false;    // physics collider volumes (off by default)
     bool light_gizmos = true;  // directional-light indicators
-    bool bounds = true;        // selection/hover bounds boxes
+    bool bounds = false;       // selection/hover bounds boxes (off by default)
     bool gizmo = true;         // transform gizmo handles
     bool hud = false;          // on-viewport FPS + camera stats overlay
 

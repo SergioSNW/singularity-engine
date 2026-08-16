@@ -459,7 +459,7 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
         }
     }
 
-    // Bloom: half-res bright pass + gaussian blur (sample nearest on apply).
+    // Bloom: half-res bright pass + gaussian blur (bilinear sampling on apply).
     const int bw = std::max(1, (ww + 1) / 2);
     const int bh = std::max(1, (wh + 1) / 2);
     if (env.post_bloom_enabled)
@@ -477,17 +477,35 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
 
     for (int j = 0; j < wh; ++j)
     {
-        const int bj = std::max(0, std::min(bh - 1, j / 2));
+        // Bilinear sampling of the half-res bloom buffer: compute fractional
+        // position and blend the 4 nearest texels for smooth bloom falloff.
+        const float bfy = std::min((float)j * 0.5f, (float)(bh - 1));
+        const int by0 = std::max(0, std::min(bh - 2, (int)bfy));
+        const int by1 = by0 + 1;
+        const float fy = bfy - (float)by0;
+
         for (int i = 0; i < ww; ++i)
         {
             const float *lin = &m_lin[((size_t)j * ww + i) * 3];
             float bloom[3] = { 0.0f, 0.0f, 0.0f };
             if (env.post_bloom_enabled)
             {
-                const float *b = &m_bloom[((size_t)bj * bw + std::max(0, std::min(bw - 1, i / 2))) * 3];
-                bloom[0] = b[0];
-                bloom[1] = b[1];
-                bloom[2] = b[2];
+                const float bfx = std::min((float)i * 0.5f, (float)(bw - 1));
+                const int bx0 = std::max(0, std::min(bw - 2, (int)bfx));
+                const int bx1 = bx0 + 1;
+                const float fx = bfx - (float)bx0;
+
+                const float *p00 = &m_bloom[((size_t)by0 * bw + bx0) * 3];
+                const float *p10 = &m_bloom[((size_t)by0 * bw + bx1) * 3];
+                const float *p01 = &m_bloom[((size_t)by1 * bw + bx0) * 3];
+                const float *p11 = &m_bloom[((size_t)by1 * bw + bx1) * 3];
+                const float w00 = (1.0f - fx) * (1.0f - fy);
+                const float w10 = fx * (1.0f - fy);
+                const float w01 = (1.0f - fx) * fy;
+                const float w11 = fx * fy;
+                for (int c = 0; c < 3; ++c)
+                    bloom[c] = p00[c] * w00 + p10[c] * w10 +
+                               p01[c] * w01 + p11[c] * w11;
             }
 
             float out[3];

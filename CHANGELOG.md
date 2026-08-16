@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.40.0-alpha] — 2026-08-21
+
+### Added
+
+- **Professional dark-slate ImGui theme** (`Theme::ConfigureStyle`): replaced the warm-charcoal base palette with a cooler dark-slate scheme (inspired by UE / DCC tools). Refined six user-editable tokens — `window_bg`, `child_bg`, `popup_bg`, `frame_bg`, `text`, `accent` — now derive a cohesive indigo-blue accent. All derived colors (hover, active, tints, tabs, scrollbars, docking) update automatically when the accent token is edited live.
+- **Bilinear bloom sampling** (`EnvironmentFX::PostProcess`): the half-res bloom buffer is now sampled with bilinear interpolation instead of nearest-neighbor integer division, producing a smooth, filmic glow without hard block boundaries.
+- **Presentation layer guidelines** (`docs/Singularity_Architecture_Textbook.md`): added Phase 40 section covering the visual polish sprint: theme system, viewport overlay defaults, bloom rendering, and renderer null-safety.
+
+### Changed
+
+- **Viewport overlay defaults** (`ViewportOverlaySettings`): `colliders` and `bounds` are now `false` by default so the 3D geometry is not visually overpowered by diagnostic overlays. Grid remains visible; light gizmos and transform gizmo remain on.
+- **Softer ground grid** (`Application::RenderGroundGrid`): minor grid lines reduced from solid `(45,45,55)` to semi-transparent `(38,38,48,180)`, and world axes softened to `(180,60,60,200)` / `(60,90,200,200)` for a clean, non-intrusive look.
+- **Reduced bloom blowout** (continuation of hotfix): bloom strength lowered to `0.2`, threshold raised to `0.92`, sun intensity reduced to `0.9` — the sky and lighting are no longer washed out.
+- **SDL_RenderReadPixels bypass** (continuation of hotfix): post-processing readback is skipped entirely in Unlit / Wireframe modes and when bloom is off with all grade params at neutral defaults, eliminating ~55 ms/frame in lightweight editing modes.
+- **Renderer null-safety guards** (`Application.cpp`): added `!renderer` checks to `DrawProjectedLine`, `DrawWorldAABB`, `RenderGroundGrid`, `FlushTriBatch`, `RenderMeshWireframe`, `DrawTriangles`, `RenderScenePass`, `RenderEditorOverlay`; `!entity_ptr` checks in all entity iteration loops.
+
+### Fixed
+
+- **Bloom block-boundary artifacts**: nearest-neighbor sampling of the half-res bloom buffer produced visible block boundaries on gradients and sky. Bilinear interpolation eliminates these artifacts.
+- **Washed-out white sky / over-exposure**: the bloom strength (0.7) and sun intensity (1.2) caused sky and sun pixels to smear bright white across the entire viewport via gaussian blur. Values tuned to produce a subtle, filmic glow.
+
+### Verified
+
+- Clean MSVC rebuild succeeds (benign `LNK4044 /static` + `M_PI` warnings only). Smoke test: process stable for ~56 seconds, diagnostics file produced, 17-18 FPS in Lit mode (PostProcess active), Unlit/Wireframe modes bypass the ~55 ms readback.
+
 ## [0.39.0-alpha] — 2026-08-20
 
 ### Added

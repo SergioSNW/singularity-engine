@@ -1,6 +1,6 @@
 # Singularity Engine
 
-> **Current version:** v0.39.0-alpha — Mode-based Panel Isolation & Crash Fix: the five workspace modes (**Level Design**, **Landscape**, **Shading & Assets**, **Sequencing**, **Scripting**) now enforce strict per-mode panel visibility — each mode shows only its required panels and hides all others, preventing cross-contamination (e.g. Timeline floating in Landscape, Landscape in Scripting). A mid-frame `DockBuilderRemoveNode` crash when switching workspaces is fixed by deferring the dock-tree rebuild to the next `DrawDockspace()` call, before any panel is submitted. The startup segfault from uninitialized panel pointers (`m_material_panel`, `m_viewport_layout_panel`, `m_profiler_panel`) is fixed by completing the constructor initializer list. The stale `m_code_window_node` return from `ApplyWorkspace()` when rebuild is deferred is fixed by returning 0 (floating) to avoid giving callers a dock-node ID that will be destroyed in the next `RebuildLayout()`.
+> **Current version:** v0.40.0-alpha — Visual & UI Polish Sprint: professional dark-slate ImGui theme, cleaner viewport defaults, bilinear bloom sampling, and null-safety hardening across the render pipeline.
 > [CHANGELOG](../CHANGELOG.md)
 
 ## Architecture and Technical Feasibility Document

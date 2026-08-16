@@ -1455,3 +1455,96 @@ for 14 seconds with an empty log and no stray file edits on disk, and exits
 cleanly on SIGTERM. The five workspace profiles are verified by switching
 between all modes and confirming that each shows only its required panels.
 
+---
+
+## Phase 40 — Visual & UI Polish Sprint
+
+Phase 40 elevates the engine's look and feel to professional standards. The work
+spans four areas: a custom ImGui dark-slate theme, cleaner viewport defaults,
+bilinear bloom sampling, and renderer null-safety hardening.
+
+### 16.1 Custom Professional ImGui Theme
+
+The editor's visual identity is defined in `Theme::ConfigureStyle()`
+(`src/editor/Theme.cpp`). Six user-editable color tokens — `window_bg`,
+`child_bg`, `popup_bg`, `frame_bg`, `text`, `accent` — drive every derived
+color in the style through `Lerp` / `Darken` / `Lighten` / `Over` helpers. This
+means a live edit to the accent token re-skins selection highlights, active tabs,
+scrollbar grabs, and focus rings together, instead of leaving orphaned stock
+colors behind.
+
+The default palette was upgraded from warm charcoal to a cooler dark-slate scheme
+inspired by professional DCC tools and Unreal Engine:
+
+| Token | Old | New | Description |
+|-------|-----|-----|-------------|
+| `window_bg` | `#1B1D23` | `#191B20` | Cool slate window surface |
+| `child_bg` | `#1F2128` | `#1E1F24` | Panel recesses |
+| `popup_bg` | `#22252C` | `#222328` | Dropdown menus |
+| `frame_bg` | `#24272E` | `#26272C` | Input frames, buttons |
+| `text` | `#C9CDD6` | `#CCD1DB` | Slightly brighter primary text |
+| `accent` | `#4D8DFF` | `#4480F5` | Cooler indigo-blue accent |
+
+Style metrics (rounding, padding, spacing) were already tuned in Phase 37 and
+remain unchanged. The palette persists to `editor_theme.json` via
+`Theme::SaveThemeToFile()` and is restored on startup, so custom color schemes
+survive restarts.
+
+### 16.2 Clean Viewport Defaults
+
+The viewport overlay system (`ViewportOverlaySettings`) controls what diagnostic
+aids are drawn over the 3D scene. The defaults were tuned so that a fresh scene
+opens with a clean, professional look that doesn't visually overpower geometry:
+
+| Overlay | Old Default | New Default | Rationale |
+|---------|-------------|-------------|-----------|
+| `grid` | `true` | `true` | Essential for spatial orientation |
+| `colliders` | `true` | `false` | Heavy volumes; enable on demand |
+| `light_gizmos` | `true` | `true` | Lightweight; useful for lighting |
+| `bounds` | `true` | `false` | Enable when selecting entities |
+| `gizmo` | `true` | `true` | Required for transform editing |
+
+The ground-grid line colors were softened from solid `(45, 45, 55)` to
+semi-transparent `(38, 38, 48, 180)`, and the world axes from saturated
+`(220, 70, 70)` / `(70, 110, 230)` to muted `(180, 60, 60, 200)` /
+`(60, 90, 200, 200)` with reduced alpha.
+
+### 16.3 Bilinear Bloom Sampling
+
+The post-processing bloom pass reads from a half-resolution bright-pass buffer.
+Previously, the buffer was sampled using nearest-neighbor integer division
+(`i / 2`, `j / 2`), which produced visible block boundaries on gradients and
+smooth sky surfaces.
+
+The sampling was upgraded to bilinear interpolation: for each working-resolution
+pixel, the fractional position in the half-res buffer is computed, the four
+nearest texels are fetched, and the result is blended by the sub-pixel weights
+`(1-fx)*(1-fy)`, `fx*(1-fy)`, `(1-fx)*fy`, `fx*fy`. This produces a smooth,
+filmic glow with no hard boundaries.
+
+Note: the engine's 3D geometry already uses GPU-side bilinear texture filtering
+via `SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear)` set at texture upload
+in `Texture.cpp`. The bloom upgrade brings the post-processing pipeline to the
+same quality level.
+
+### 16.4 Renderer Null-Safety
+
+Every rendering function that receives an `SDL_Renderer*` was audited and given
+an early-return null guard. Entity iteration loops in `RenderScenePass` and
+`RenderEditorOverlay` now check `!entity_ptr` before dereferencing, preventing
+crashes from any race or stale state. This was part of the Mode-switch crash
+hardening carried over from the hotfix cycle.
+
+### 16.5 Verification
+
+Clean MSVC rebuild succeeds (benign `LNK4044 /static` + `M_PI` warnings only).
+Smoke test: process stable for ~56 seconds, diagnostics file produced. Lit mode
+runs at 17-18 FPS (PostProcess active). Unlit / Wireframe modes bypass the
+~55 ms `SDL_RenderReadPixels` readback, pushing effective frame time well under
+30 ms.
+
+*End of textbook section covering versions v0.1.0-alpha through the architecture
+refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
+advanced content browser & thumbnail generator, and the v0.40.0-alpha visual &
+UI polish sprint.*
+
