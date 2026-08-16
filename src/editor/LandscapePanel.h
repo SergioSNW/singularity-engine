@@ -23,9 +23,14 @@ public:
                    std::function<void()> on_create_landscape);
     void OnImGuiRender(float dt) override;
 
+    void SetVisible(bool visible) { m_visible = visible; }
+    bool IsVisible() const { return m_visible; }
+    void ToggleVisible() { m_visible = !m_visible; }
+
 private:
     Scene *m_scene;
     SelectionState *m_selection;
     LandscapeBrushSettings *m_brush;
     std::function<void()> m_on_create_landscape;
+    bool m_visible = true;
 };

@@ -18,6 +18,8 @@ TimelinePanel::TimelinePanel(Scene *scene, SelectionState *selection,
 void TimelinePanel::OnImGuiRender(float dt)
 {
     (void)dt;
+    if (!m_visible)
+        return;
     if (!m_bridge || !m_bridge->state)
         return;
 

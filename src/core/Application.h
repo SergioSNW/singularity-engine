@@ -54,6 +54,8 @@ class SettingsPanel;
 class ContentBrowserPanel;
 class ConsolePanel;
 class InspectorPanel;
+class SceneHierarchyPanel;
+class StatsPanel;
 class MaterialPanel;
 class ViewportLayoutPanel;
 class LandscapePanel;
@@ -297,6 +299,8 @@ private:
     ContentBrowserPanel *m_content_browser;
     ConsolePanel *m_console_panel;
     InspectorPanel *m_inspector_panel;
+    SceneHierarchyPanel *m_hierarchy_panel;
+    StatsPanel *m_stats_panel;
     ViewportLayoutPanel *m_viewport_layout_panel;
     MaterialPanel *m_material_panel;
     LandscapePanel *m_landscape_panel;

@@ -20,6 +20,8 @@ LandscapePanel::LandscapePanel(Scene *scene, SelectionState *selection,
 void LandscapePanel::OnImGuiRender(float dt)
 {
     (void)dt;
+    if (!m_visible)
+        return;
     ImGui::Begin("Landscape");
 
     if (!m_scene)

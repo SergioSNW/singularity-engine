@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.39.0-alpha] — 2026-08-20
+
+### Added
+
+- **Mode-based panel isolation** (`Application::SyncWorkspaceSideEffects`): every workspace mode now explicitly controls the visibility of every editor panel. The five profiles are:
+  - **Level Design**: Viewport, Hierarchy, Inspector, Content Browser.
+  - **Landscape**: Viewport, Landscape Panel, Inspector, Hierarchy.
+  - **Shading & Assets**: Material Preview, Material Editor, Environment Panel, Content Browser.
+  - **Sequencing**: Timeline Panel, Viewport, Inspector, Hierarchy.
+  - **Scripting**: Script Editor (tabbed mini-IDE), Console Panel, Content Browser.
+  All panels outside the active mode are hidden, preventing cross-workspace UI spillover. The function is the single source of truth for panel visibility — individual panels never override it.
+- **Visibility controls on editor panels** (`SceneHierarchyPanel`, `LandscapePanel`, `TimelinePanel`, `StatsPanel`): these panels now carry `m_visible`, `SetVisible(bool)`, `IsVisible()`, and `ToggleVisible()`, matching the existing contract on `ViewportPanel`, `InspectorPanel`, `ContentBrowserPanel`, `ScriptEditorPanel`, `ConsolePanel`, `MaterialPanel`, `MaterialPreviewPanel`, and `EnvironmentPanel`. Each panel's `OnImGuiRender` early-returns when invisible, skipping the `ImGui::Begin()`/`End()` pair entirely.
+
+### Fixed
+
+- **Mid-frame dock-tree crash**: `WorkspaceManager::ApplyWorkspace()` previously called `RebuildLayout()` synchronously from menu-bar callbacks during the ImGui frame. `DockBuilderRemoveNode()` would destroy dock nodes while earlier ImGui windows still referenced them, causing stale-pointer crashes. The rebuild is now deferred: `ApplyWorkspace()` sets `m_needs_rebuild = true` and `DrawDockspace()` consumes it at the top of the next frame, before any panel is submitted.
+- **Startup segfault (exit 139)**: `m_material_panel`, `m_viewport_layout_panel`, and `m_profiler_panel` were missing from the `Application` constructor initializer list. They contained garbage pointer values when `SyncWorkspaceSideEffects()` was called during `Init()`, and the null-guard dereferenced the garbage. All three are now initialized to `nullptr`.
+- **Stale `m_code_window_node` return**: when `ApplyWorkspace()` defers the rebuild, `m_code_window_node` still holds the previous layout's value. The caller (`ScriptEditorPanel::RequestDockCodeWindow`) would store this stale ID and attempt to dock to a node that gets destroyed in the next `RebuildLayout()`. Fixed by returning 0 (floating) when the rebuild is deferred.
+
+### Verified
+
+- Clean MSVC rebuild succeeds (only the benign `LNK4044 /static` warning); editor smoke run stays alive for 14 seconds with an empty log and no stray file edits on disk. Startup segfault confirmed fixed — process starts, runs, and exits cleanly on SIGTERM.
+
 ## [0.38.0-alpha] — 2026-08-20
 
 ### Added

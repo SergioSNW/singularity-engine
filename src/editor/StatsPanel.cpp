@@ -12,6 +12,9 @@ StatsPanel::StatsPanel(const Window *window)
 
 void StatsPanel::OnImGuiRender(float dt)
 {
+    if (!m_visible)
+        return;
+
     float fps = (dt > 0.0f) ? 1.0f / dt : 0.0f;
     char fps_buffer[64];
     snprintf(fps_buffer, sizeof(fps_buffer), "%.1f", fps);

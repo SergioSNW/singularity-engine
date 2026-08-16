@@ -313,11 +313,21 @@ unsigned int WorkspaceManager::ApplyWorkspace(Workspace ws)
 {
     m_workspace = ws;
     m_use_loaded_layout = false;
-    RebuildLayout();
-    m_dockspace_valid = true;
-    m_needs_rebuild = false;
+
+    // Defer the dock tree rebuild to the next DrawDockspace() call instead of
+    // calling RebuildLayout() synchronously here.  ApplyWorkspace() is invoked
+    // from menu-bar callbacks *during* the ImGui frame; calling
+    // DockBuilderRemoveNode() mid-frame while earlier ImGui windows still
+    // reference the old dock nodes causes crashes and stale-pointer corruption.
+    // DrawDockspace() runs at the top of the render loop before any panel is
+    // submitted, which is the safe point to tear down and re-create the tree.
+    m_needs_rebuild = true;
+
     SaveToFile();
-    return m_code_window_node;
+    // The rebuild hasn't run yet, so m_code_window_node still belongs to the
+    // *previous* layout.  Return 0 (floating) to avoid giving the caller a
+    // stale dock-node ID that will be destroyed when RebuildLayout() runs.
+    return 0;
 }
 
 unsigned int WorkspaceManager::ResetToWorkspaceDefault()

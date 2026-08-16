@@ -18,6 +18,10 @@ public:
     TimelinePanel(Scene *scene, SelectionState *selection, TimelineBridge *bridge);
     void OnImGuiRender(float dt) override;
 
+    void SetVisible(bool visible) { m_visible = visible; }
+    bool IsVisible() const { return m_visible; }
+    void ToggleVisible() { m_visible = !m_visible; }
+
 private:
     void DrawTransport();
     void DrawLane(const char *label, const AnimationTrack &track, AnimProperty prop);
@@ -26,4 +30,5 @@ private:
     Scene *m_scene;
     SelectionState *m_selection;
     TimelineBridge *m_bridge;
+    bool m_visible = true;
 };

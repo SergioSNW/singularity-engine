@@ -16,6 +16,7 @@
 12. [Phase 36 — Physics Materials & Collision Layer Matrix](#12-phase-36--physics-materials--collision-layer-matrix)
 13. [Phase 37 — Post-Processing & Environment Lighting Stack](#13-phase-37--post-processing--environment-lighting-stack)
 14. [Phase 38 — Dedicated Material Authoring & Shading Mode](#14-phase-38--dedicated-material-authoring--shading-mode)
+15. [Phase 39 — Mode-based Panel Isolation & Crash Fix](#15-phase-39--mode-based-panel-isolation--crash-fix)
 
 ---
 
@@ -1357,4 +1358,100 @@ JSON, the library `LiveUpdate`, the panel/wizard UI, the preview render pass
 and the workspace docking run through the real MSVC build — a clean rebuild, an
 editor smoke run that stays alive with the PBR panel, wizard, preview viewport
 and scene shading active, an empty log, and no stray file edits on disk.
+
+## 15. Phase 39 — Mode-based Panel Isolation & Crash Fix
+
+### 15.1 The Cross-Workspace UI Spillover Problem
+
+Before Phase 39, the five workspace modes (Level Design, Landscape, Shading &
+Assets, Sequencing, Scripting) controlled only the **dock layout** — which panels
+docked where. But every panel was always *rendered*, regardless of the active
+workspace. Switching to the Scripting workspace would still show the Landscape
+panel floating behind the IDE; switching to Shading & Assets would still render
+the Timeline. This cross-contamination made the workspace distinction feel
+illusory.
+
+### 15.2 Strict Per-Mode Panel Visibility
+
+The fix is a single source of truth: `Application::SyncWorkspaceSideEffects(Workspace)`.
+
+Every workspace mode now explicitly controls the visibility of every editor panel.
+The five profiles are:
+
+| Panel | Level Design | Landscape | Shading & Assets | Sequencing | Scripting |
+|---|---|---|---|---|---|
+| Viewport | ✓ | ✓ | — | ✓ | — |
+| Hierarchy | ✓ | ✓ | — | ✓ | — |
+| Inspector | ✓ | ✓ | — | ✓ | — |
+| Content Browser | ✓ | — | ✓ | — | ✓ |
+| Landscape Panel | — | ✓ | — | — | — |
+| Material Editor | — | — | ✓ | — | — |
+| Material Preview | — | — | ✓ | — | — |
+| Environment Panel | — | — | ✓ | — | — |
+| Timeline Panel | — | — | — | ✓ | — |
+| Script Editor | — | — | — | — | ✓ |
+| Console Panel | — | — | — | — | ✓ |
+
+Panels outside the active mode are hidden. The function is called on every
+workspace switch (from the menu bar, Command Palette, and workspace toolbar
+buttons) and during `Init()` to set the initial visibility based on the
+saved/default workspace. Individual panels never override this — the function
+is the single source of truth.
+
+### 15.3 Visibility Controls on Editor Panels
+
+Each panel that participates in mode-based isolation now carries `m_visible`,
+`SetVisible(bool)`, `IsVisible()`, and `ToggleVisible()`. These were already
+present on `ViewportPanel`, `InspectorPanel`, `ContentBrowserPanel`,
+`ScriptEditorPanel`, `ConsolePanel`, `MaterialPanel`, `MaterialPreviewPanel`,
+and `EnvironmentPanel`. Phase 39 adds them to `SceneHierarchyPanel`,
+`LandscapePanel`, `TimelinePanel`, and `StatsPanel`.
+
+Every panel's `OnImGuiRender` now early-returns when invisible, skipping the
+`ImGui::Begin()`/`End()` pair entirely. This avoids both the CPU cost of
+building the ImGui draw lists and the visual artifact of a floating window
+appearing outside the dock layout.
+
+### 15.4 The Mid-Frame Dock-Tree Crash
+
+The original `WorkspaceManager::ApplyWorkspace()` called `RebuildLayout()`
+synchronously from menu-bar callbacks. This function calls
+`DockBuilderRemoveNode()` to tear down the old dock tree and recreate it. But
+these callbacks execute *during* the ImGui frame — specifically inside
+`ImGui::BeginMainMenuBar()` — when earlier ImGui windows still reference the
+old dock nodes. Destroying those nodes mid-frame causes stale-pointer crashes.
+
+The fix defers the rebuild: `ApplyWorkspace()` now sets `m_needs_rebuild = true`
+and returns immediately. `DrawDockspace()` runs at the top of the render loop
+*before* any panel is submitted, which is the safe point to tear down and
+re-create the tree. This ensures no panel holds a reference to a destroyed dock
+node at the time of destruction.
+
+### 15.5 The Stale Code-Window Node Return
+
+When the rebuild is deferred, `m_code_window_node` still holds the value from
+the *previous* workspace's layout. The caller — `ScriptEditorPanel::RequestDockCodeWindow`
+— would store this stale ID and attempt to dock to a node that gets destroyed in
+the next `RebuildLayout()`. The fix is to return 0 (floating) when the rebuild
+is deferred, so the Script Editor docks to root for one frame. On the next
+workspace switch, `m_code_window_node` will have been set by the preceding
+`RebuildLayout()` and carries the correct value.
+
+### 15.6 The Startup Segfault
+
+Three panel pointers — `m_material_panel`, `m_viewport_layout_panel`, and
+`m_profiler_panel` — were missing from the `Application` constructor initializer
+list. They contained garbage pointer values when `SyncWorkspaceSideEffects()`
+was called during `Init()`. The null guard (`if (m_material_panel)`) evaluated
+the garbage as truthy, and the `SetVisible()` call dereferenced a wild pointer,
+producing a SIGSEGV (exit code 139) before the engine even rendered its first
+frame. The fix is to initialize all three to `nullptr`.
+
+### 15.7 Verification
+
+The pure crash fix is validated by a clean MSVC rebuild (only the benign
+`LNK4044 /static` warning) and an editor smoke run: the process starts, runs
+for 14 seconds with an empty log and no stray file edits on disk, and exits
+cleanly on SIGTERM. The five workspace profiles are verified by switching
+between all modes and confirming that each shows only its required panels.
 

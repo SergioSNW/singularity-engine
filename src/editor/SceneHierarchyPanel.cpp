@@ -427,6 +427,9 @@ void SceneHierarchyPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
+    if (!m_visible)
+        return;
+
     ImGui::Begin("Hierarchy", nullptr,
         ImGuiWindowFlags_NoCollapse);
 

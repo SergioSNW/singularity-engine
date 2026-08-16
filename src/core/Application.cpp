@@ -107,13 +107,18 @@ Application::Application()
     , m_content_browser(nullptr)
     , m_console_panel(nullptr)
     , m_inspector_panel(nullptr)
+    , m_hierarchy_panel(nullptr)
+    , m_stats_panel(nullptr)
     , m_history(nullptr)
     , m_history_panel(nullptr)
     , m_landscape_panel(nullptr)
     , m_timeline_panel(nullptr)
     , m_collision_matrix_panel(nullptr)
     , m_environment_panel(nullptr)
+    , m_material_panel(nullptr)
     , m_material_preview_panel(nullptr)
+    , m_viewport_layout_panel(nullptr)
+    , m_profiler_panel(nullptr)
     , m_environment_asset_path("assets/environment/default.env")
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
@@ -2344,9 +2349,69 @@ unsigned int Application::ResetWorkspaceDefault()
 
 void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
 {
-    // The Sequencing workspace replaces the viewport with the Timeline editor.
+    // Strict per-mode panel isolation: every mode explicitly shows its
+    // required panels and hides all others.  This prevents cross-contamination
+    // (e.g. Timeline floating in Landscape, Landscape in Scripting) and is
+    // the single source of truth for panel visibility — individual panels
+    // never override it.
+
+    const bool is_ld   = (ws == WorkspaceManager::Workspace::LevelDesign);
+    const bool is_lsc  = (ws == WorkspaceManager::Workspace::Landscape);
+    const bool is_sha  = (ws == WorkspaceManager::Workspace::ShadingAndAssets);
+    const bool is_seq  = (ws == WorkspaceManager::Workspace::Timeline);
+    const bool is_scr  = (ws == WorkspaceManager::Workspace::Scripting);
+
+    // Viewport: visible in all modes except Scripting (replaced by IDE).
     if (m_viewport)
-        m_viewport->SetVisible(ws != WorkspaceManager::Workspace::Timeline);
+        m_viewport->SetVisible(!is_scr);
+
+    // Hierarchy: Level Design, Landscape, Sequencing.
+    if (m_hierarchy_panel)
+        m_hierarchy_panel->SetVisible(is_ld || is_lsc || is_seq);
+
+    // Inspector: Level Design, Landscape, Sequencing.
+    if (m_inspector_panel)
+        m_inspector_panel->SetVisible(is_ld || is_lsc || is_seq);
+
+    // Content Browser: Level Design, Shading & Assets, Scripting.
+    if (m_content_browser)
+        m_content_browser->SetVisible(is_ld || is_sha || is_scr);
+
+    // Landscape panel: Landscape only.
+    if (m_landscape_panel)
+        m_landscape_panel->SetVisible(is_lsc);
+
+    // Material Editor: Shading & Assets only.
+    if (m_material_panel)
+        m_material_panel->SetVisible(is_sha);
+
+    // Material Preview: Shading & Assets only.
+    if (m_material_preview_panel)
+        m_material_preview_panel->SetVisible(is_sha);
+
+    // Environment panel: Shading & Assets only.
+    if (m_environment_panel)
+        m_environment_panel->SetVisible(is_sha);
+
+    // Timeline: Sequencing only.
+    if (m_timeline_panel)
+        m_timeline_panel->SetVisible(is_seq);
+
+    // Script Editor: Scripting only.
+    if (m_script_editor)
+        m_script_editor->SetVisible(is_scr);
+
+    // Console: Scripting only.
+    if (m_console_panel)
+        m_console_panel->SetVisible(is_scr);
+
+    // Editor Settings: hidden by default (toggled by user via toolbar).
+    // Collision Matrix: hidden by default (toggled by user via command palette).
+    // Viewport Layout: hidden by default (toggled by user).
+    // Profiler: hidden by default (toggled by user).
+    // History: hidden by default (toggled by user).
+    // Command Palette: handled by its own toggle.
+
     // Leaving the Sequencing workspace stops playback so no hidden animation
     // keeps mutating transforms behind the author's back.
     if (ws != WorkspaceManager::Workspace::Timeline && m_timeline.playing)
@@ -3316,9 +3381,11 @@ bool Application::Init(int width, int height, const char *title)
     m_panels.push_back(
         std::make_shared<StatsPanel>(m_window)
     );
+    m_stats_panel = static_cast<StatsPanel *>(m_panels.back().get());
     m_panels.push_back(
         std::make_shared<SceneHierarchyPanel>(m_selection, m_scene, m_history)
     );
+    m_hierarchy_panel = static_cast<SceneHierarchyPanel *>(m_panels.back().get());
 
     // Phase 35 animation & timeline foundation: the shared bridge routes the
     // Timeline panel's transport/lanes and the Inspector's keyframe toggles

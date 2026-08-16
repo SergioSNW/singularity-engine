@@ -17,6 +17,10 @@ public:
                         CommandHistory *history);
     void OnImGuiRender(float dt) override;
 
+    void SetVisible(bool visible) { m_visible = visible; }
+    bool IsVisible() const { return m_visible; }
+    void ToggleVisible() { m_visible = !m_visible; }
+
 private:
     void DrawEntityNode(Entity &entity, int &to_delete_id);
     void DrawRenameRow();
@@ -67,4 +71,6 @@ private:
     int m_rename_entity_id = -1;
     int m_rename_focus_id = -1;  // tracks the row that already grabbed focus
     char m_rename_buffer[128] = {};
+
+    bool m_visible = true;
 };
