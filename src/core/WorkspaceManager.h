@@ -33,6 +33,13 @@
 //                        viewport is center-stage for sculpting. The viewport
 //                        override replaces the transform gizmo with a projected
 //                        brush cursor that sculpts the heightfield.
+//   * Timeline         — an animation/sequencing workspace: the track-based
+//                        Timeline editor replaces the viewport center-stage, so
+//                        the selected entity's keyframe lanes are the primary
+//                        authoring surface. The Inspector's transform rows gain
+//                        keyframe toggles that record poses at the current
+//                        playhead, and playback drives the global timeline
+//                        clock.
 //
 // Tab groups conserve screen real estate: several windows docked into one node
 // render as a single tabbed window, with the last-docked window focused.
@@ -48,6 +55,7 @@ public:
         Scripting,
         ShadingAndAssets,
         Landscape,
+        Timeline,
     };
 
     // Human-readable workspace names, used by the menu-bar selector.

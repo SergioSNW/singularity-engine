@@ -20,6 +20,7 @@ struct Entity
     AudioComponent audio;  // sound effect reference (WAV/OGG) for the audio bridge
     DirectionalLightComponent light;  // directional light feeding the shading pipeline
     LandscapeComponent landscape;  // procedural heightfield terrain (Phase 34)
+    AnimationComponent animation;  // transform keyframe tracks (Phase 35)
 
     // Scene graph links. Entities are stored in the Scene by stable address
     // (std::unique_ptr), so these raw pointers stay valid until the entity is

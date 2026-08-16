@@ -66,6 +66,14 @@ struct EntitySnapshot
     float landscape_size = 40.0f;
     float landscape_base_height = 0.0f;
     std::vector<float> landscape_heights;
+
+    // Animation (Phase 35): the keyframe tracks ride the snapshot so setting or
+    // removing a key is undoable like any other property edit.
+    bool anim_loop = false;
+    float anim_duration = 0.0f;
+    std::vector<AnimationKeyframe> anim_position_keys;
+    std::vector<AnimationKeyframe> anim_rotation_keys;
+    std::vector<AnimationKeyframe> anim_scale_keys;
 };
 
 static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
@@ -109,6 +117,11 @@ static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
     out.landscape_size = e.landscape.size;
     out.landscape_base_height = e.landscape.base_height;
     out.landscape_heights = e.landscape.heights;
+    out.anim_loop = e.animation.loop;
+    out.anim_duration = e.animation.duration;
+    out.anim_position_keys = e.animation.position.keys;
+    out.anim_rotation_keys = e.animation.rotation.keys;
+    out.anim_scale_keys = e.animation.scale.keys;
 }
 
 static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
@@ -158,6 +171,11 @@ static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
     // it from the restored heights.
     e->landscape.mesh.reset();
     e->landscape.mesh_dirty = true;
+    e->animation.loop = snap.anim_loop;
+    e->animation.duration = snap.anim_duration;
+    e->animation.position.keys = snap.anim_position_keys;
+    e->animation.rotation.keys = snap.anim_rotation_keys;
+    e->animation.scale.keys = snap.anim_scale_keys;
 
     if ((e->parent ? e->parent->id : -1) != snap.parent_id)
         scene->SetParent(e->id, snap.parent_id);
@@ -408,7 +426,12 @@ void CommandHistory::EndEntityEdit()
                         m_edit_before->landscape_resolution == after.landscape_resolution &&
                         m_edit_before->landscape_size == after.landscape_size &&
                         m_edit_before->landscape_base_height == after.landscape_base_height &&
-                        m_edit_before->landscape_heights == after.landscape_heights;
+                        m_edit_before->landscape_heights == after.landscape_heights &&
+                        m_edit_before->anim_loop == after.anim_loop &&
+                        m_edit_before->anim_duration == after.anim_duration &&
+                        m_edit_before->anim_position_keys == after.anim_position_keys &&
+                        m_edit_before->anim_rotation_keys == after.anim_rotation_keys &&
+                        m_edit_before->anim_scale_keys == after.anim_scale_keys;
             if (!same)
             {
                 Push(std::make_unique<EntityStateCommand>(

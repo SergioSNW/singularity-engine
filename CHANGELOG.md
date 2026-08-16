@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.35.0-alpha] — 2026-08-17
+
+### Added
+
+- **Animation component** (`src/core/Animation.h`, `src/core/Components.h`, `src/core/Entity.h`): a new `AnimationComponent` with three transform-property tracks — `position`, `rotation`, `scale` — each an `AnimationTrack` (time-sorted `std::vector<AnimationKeyframe { time, value[3] }>`, Euler **degrees** for rotation), plus per-entity `loop` and `duration` (mirrors the longest key time). Empty tracks are inert, so the component rides every `Entity` with zero cost until keys are recorded.
+- **Anim core module** (`src/core/Animation.{h,cpp}`): `SetKeyframe`/`RemoveKeyframe`/`KeyAt` (time-epsilon match, sorted insert), `TrackDuration`, and the samplers — `SampleValue` (linear interpolation, clamped at the edges, `fmod`-wrapped when looping) and `SampleRotation` (spherical interpolation in quaternion space with shortest-arc handling and nlerp fallback). Rotation converts via a verified Euler→quat (`qx⊗qy⊗qz`, matching the renderer's Rx·Ry·Rz order) and its exact inverse; landing on a keyframe time reproduces that key's stored Euler **verbatim**, so recorded poses never re-express through the classic ±180° ambiguity. `Apply` writes a pose but only overwrites properties that carry keys.
+- **Sequencing workspace** (`src/core/WorkspaceManager.{h,cpp}`): a new `Workspace::Timeline` preset ("Sequencing") lays out the Hierarchy on the left, the **Timeline** panel center-stage (replacing the viewport, which the Application hides via a new `ViewportPanel` visibility flag), the Inspector + Editor Settings right rail, and the Development Zone + Stats bottom strip; round-trips through the layout save/load ("timeline" key).
+- **TimelinePanel** (`src/editor/TimelinePanel.{h,cpp}`): transport row (**Play/Pause**, **Stop**, a scrub slider over the global duration, a Duration drag and a Loop checkbox) plus one **lane** per transform property for the selected entity — keyframe diamonds at their times, a playhead line, a hover crosshair, **click-to-scrub**, **right-click a diamond to remove** the key, and a "+" record button per lane.
+- **Inspector keyframe toggles** (`src/editor/InspectorPanel.cpp`): each Transform row (Position/Rotation/Scale) gains a "●" record button that samples the property at the current playhead through the shared `TimelineBridge`; the dot glows amber while a key sits exactly at the playhead on that track.
+- **Playback + transport wiring** (`src/core/Application.{h,cpp}`): the Application owns `TimelineState` and the `TimelineBridge`; `ApplyTimeline(dt)` runs in the editor Update stage — advancing the clock while playing (wrap per Loop, clamp-and-stop at the end) and writing sampled poses to **every** animated entity, gated on a dirty flag so a paused timeline never stomps gizmo/Inspector edits. `PlayPauseTimeline`/`StopTimeline`/`ScrubTimeline` drive the transport; `SetTimelineKeyframe`/`RemoveTimelineKeyframe` record/remove keys in a single **undo transaction** ("Set Keyframe"/"Remove Keyframe") and stretch the global duration when a key lands past its edge. A new `ApplyWorkspace`/`ResetWorkspaceDefault` wrapper applies workspace **side effects** (viewport hidden in Sequencing, timeline playback stopped when leaving it); the gizmo interaction is additionally gated off while the timeline plays. "Switch to Sequencing Workspace" joins the **Command Palette** (Workspace) and the **Workspace menu**; "Play Timeline"/"Stop Timeline" join the palette's Transport group.
+- **Serialization & undo**: `SceneSerializer` round-trips an `"animation"` object (loop/duration + per-track `{ time, value:[x,y,z] }` key arrays, emitted only when keys exist, re-sorted + duration-recomputed on load); `CommandHistory` snapshots the animation fields so key record/remove undoes cleanly like any other property edit.
+- **Wiring & versioning**: `CMakeLists.txt` adds `src/core/Animation.cpp` and `src/editor/TimelinePanel.cpp` and bumps the project version to `0.35.0`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 35 chapter ("Animation & Timeline Foundation") covering the component, the sampling math (LERP/SLERP + Euler/quat convention), the Sequencing workspace, the timeline panel, and the playback/undo/serialization story.
+
+### Verified
+
+- Clean rebuild succeeds. Editor smoke run stays alive with the timeline panel, sequencing workspace, bridge and playback wiring, an empty log, and no stray file edits on disk.
+
 ## [0.34.0-alpha] — 2026-08-16
 
 ### Added

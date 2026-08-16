@@ -29,6 +29,7 @@ static const char *kMaterialEditorWindow = "Material Editor";
 static const char *kHistoryWindow = "History";
 static const char *kViewportLayoutWindow = "Viewport Layout";
 static const char *kLandscapeWindow = "Landscape";
+static const char *kTimelineWindow = "Timeline";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -38,6 +39,7 @@ const char *WorkspaceManager::WorkspaceName(Workspace ws)
         case Workspace::Scripting:       return "Scripting";
         case Workspace::ShadingAndAssets:return "Shading & Assets";
         case Workspace::Landscape:       return "Landscape Mode";
+        case Workspace::Timeline:        return "Sequencing";
     }
     return "Level Design";
 }
@@ -204,6 +206,30 @@ void WorkspaceManager::RebuildLayout()
             m_code_window_node = 0;
             break;
         }
+        case Workspace::Timeline:
+        {
+            // Sequencing workspace (Phase 35): the track-based Timeline editor
+            // replaces the viewport center-stage, so the animation timeline is
+            // the primary authoring surface. The Inspector stays on the right
+            // rail (its keyframe toggles pair with the lanes), the Hierarchy on
+            // the left, and the Development Zone + Stats along the bottom. The
+            // viewport is hidden by the Application while this workspace is
+            // active; the Script Editor stays free-floating.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.80f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
+
+            ImGuiID bottom_left, bottom_right;
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
+
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
+            ImGui::DockBuilderDockWindow(kTimelineWindow, center);
+            dock_right_rail(right);
+            dock_dev_zone(bottom_left);
+            ImGui::DockBuilderDockWindow(kStatsWindow, bottom_right);
+            m_code_window_node = 0;
+            break;
+        }
     }
 
     ImGui::DockBuilderFinish(m_dockspace_id);
@@ -305,6 +331,7 @@ void WorkspaceManager::SaveToFile() const
         ? "scripting"
         : (m_workspace == Workspace::ShadingAndAssets) ? "shading_assets"
         : (m_workspace == Workspace::Landscape) ? "landscape"
+        : (m_workspace == Workspace::Timeline) ? "timeline"
         : "level_design";
 
     json::Value root = json::Value::MakeObject();
@@ -345,6 +372,7 @@ void WorkspaceManager::LoadFromFile()
         ? Workspace::Scripting
         : (ws == "shading_assets") ? Workspace::ShadingAndAssets
         : (ws == "landscape") ? Workspace::Landscape
+        : (ws == "timeline") ? Workspace::Timeline
         : Workspace::LevelDesign;
 
     const std::string saved = root.String("saved_layout");

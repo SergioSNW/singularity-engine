@@ -1,7 +1,9 @@
 #include "SceneSerializer.h"
 
+#include "Animation.h"
 #include "Scene.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -44,6 +46,42 @@ void Vec4FromJson(float dst[4], const json::Value *node)
         if (node->array[i].IsNumber())
             dst[i] = (float)node->array[i].num;
 }
+
+// --- animation helpers (Phase 35) ---
+
+json::Value AnimationTrackToJson(const AnimationTrack &track)
+{
+    json::Value arr = json::Value::MakeArray();
+    for (const AnimationKeyframe &k : track.keys)
+    {
+        json::Value key = json::Value::MakeObject();
+        key.object.emplace_back("time", json::Value::MakeNumber(k.time));
+        key.object.emplace_back("value", Vec3ToJson(k.value));
+        arr.array.push_back(std::move(key));
+    }
+    return arr;
+}
+
+void AnimationTrackFromJson(AnimationTrack &track, const json::Value *node)
+{
+    track.keys.clear();
+    if (!node || !node->IsArray())
+        return;
+    for (const json::Value &k : node->array)
+    {
+        if (!k.IsObject())
+            continue;
+        AnimationKeyframe kf;
+        kf.time = (float)k.Number("time", 0.0);
+        Vec3FromJson(kf.value, k.Find("value"));
+        track.keys.push_back(kf);
+    }
+    std::sort(track.keys.begin(), track.keys.end(),
+              [](const AnimationKeyframe &a, const AnimationKeyframe &b) {
+                  return a.time < b.time;
+              });
+}
+
 
 // --- entity component (de)serialization, shared by scenes and prefabs ---
 
@@ -128,6 +166,22 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
         landscape.object.emplace_back("heights", std::move(heights));
     }
     ent.object.emplace_back("landscape", std::move(landscape));
+
+    // Animation (Phase 35): only emitted when the entity actually carries keys.
+    // Keyframes are serialized as { time, value:[x,y,z] } arrays per property.
+    if (!e.animation.position.IsEmpty() ||
+        !e.animation.rotation.IsEmpty() ||
+        !e.animation.scale.IsEmpty() ||
+        e.animation.loop)
+    {
+        json::Value animation = json::Value::MakeObject();
+        animation.object.emplace_back("loop", json::Value::MakeBool(e.animation.loop));
+        animation.object.emplace_back("duration", json::Value::MakeNumber(e.animation.duration));
+        animation.object.emplace_back("position", AnimationTrackToJson(e.animation.position));
+        animation.object.emplace_back("rotation", AnimationTrackToJson(e.animation.rotation));
+        animation.object.emplace_back("scale", AnimationTrackToJson(e.animation.scale));
+        ent.object.emplace_back("animation", std::move(animation));
+    }
 }
 
 // Read every component of `ent` into an already-created `e`.
@@ -214,6 +268,17 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
         // regenerates it from the restored heights.
         e.landscape.mesh.reset();
         e.landscape.mesh_dirty = true;
+    }
+
+    if (const json::Value *anm = ent.Find("animation"); anm && anm->IsObject())
+    {
+        e.animation.loop = anm->Bool("loop", e.animation.loop);
+        e.animation.duration = (float)anm->Number("duration", e.animation.duration);
+        AnimationTrackFromJson(e.animation.position, anm->Find("position"));
+        AnimationTrackFromJson(e.animation.rotation, anm->Find("rotation"));
+        AnimationTrackFromJson(e.animation.scale, anm->Find("scale"));
+        // The component's timeline extent always mirrors the longest key time.
+        e.animation.duration = Anim::TrackDuration(e.animation);
     }
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Animation.h"
 #include "EngineMath.h"
 #include "Mesh.h"
 

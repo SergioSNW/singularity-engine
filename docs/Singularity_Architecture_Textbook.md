@@ -12,6 +12,7 @@
 8. [Phase 32 — Integrated Lua Scripting IDE](#8-phase-32--integrated-lua-scripting-ide)
 9. [Phase 33 — True Workspace Layouts, Tabbed Mini-IDE & Theme](#9-phase-33--true-workspace-layouts-tabbed-mini-ide--theme)
 10. [Phase 34 — Landscape & Topology Design Suite](#10-phase-34--landscape--topology-design-suite)
+11. [Phase 35 — Animation & Timeline Foundation](#11-phase-35--animation--timeline-foundation)
 
 ---
 
@@ -801,3 +802,112 @@ The engine rebuilds clean with both new translation units (`src/core/Landscape.c
 `src/editor/LandscapePanel.cpp`) in the explicit CMake source list. The editor smoke
 run stays alive with the landscape workspace, panel, brush cursor and sculpt
 transaction wiring, an empty log, and no stray file edits on disk.
+
+---
+
+## 11. Phase 35 — Animation & Timeline Foundation
+
+Phase 35 gives the engine its first **keyframe animation** pipeline: a data-only
+`AnimationComponent` on `Entity`, a lean `Anim` sampling core, and a dedicated
+**Sequencing** workspace whose track-based `TimelinePanel` replaces the viewport
+as the authoring surface. Playback is driven by a single Application-owned global
+clock shared with the Inspector through a `TimelineBridge`.
+
+### 11.1 The Data Model (`src/core/Animation.h`)
+
+Everything animation lives in one dependency-free header (no SDL/ImGui):
+
+- **`AnimationKeyframe`** — `time` (seconds on the global clock) + `value[3]`
+  (position, Euler-rotation in **degrees**, or scale). `operator==` is inline so
+  key vectors compare by value in the undo diff.
+- **`AnimationTrack`** — a time-sorted `std::vector<AnimationKeyframe>`. Ordering
+  is maintained by `Anim::SetKeyframe`; the samplers assume ascending times.
+- **`AnimationComponent`** — the three property tracks plus `loop` and `duration`
+  (which mirrors `TrackDuration` = the longest key time across the tracks). It
+  rides every `Entity` (`Entity.h`) and is **inert while empty**, so the cost is
+  one object per entity, not one pipeline.
+- **`TimelineState`** — the Application-owned clock: `time`, `duration`,
+  `playing`, `loop`.
+- **`TimelineBridge`** — the editor contract. The TimelinePanel and the
+  Inspector's keyframe toggles read `state` and fire `on_play_pause` /
+  `on_stop` / `on_scrub` / `on_set_keyframe` / `on_remove_keyframe` back into
+  the Application, which owns the undo transactions and scene mutations.
+
+### 11.2 Sampling: LERP, SLERP and the Euler Convention
+
+`Anim::Apply` writes a pose and only overwrites properties that carry keys.
+
+- **Position/Scale** use `SampleValue`: linear interpolation between the
+  bracketing pair, first/last value held before the first and after the last
+  key, and `fmod`-wrapped time when the track loops.
+- **Rotation** uses `SampleRotation` — SLERP in quaternion space so orientations
+  rotate through the shortest arc. The convention is the crux: the renderer
+  applies Euler rotations as composite **Rx·Ry·Rz** (X, then Y, then Z), and the
+  matching unit quaternion is the half-angle product **q = qx ⊗ qy ⊗ qz**. The
+  engine stores its matrices transposed from the textbook standard, but that
+  cancels for interpolation: keys travel Euler → quat → SLERP → quat → Euler, so
+  only the **inverse pair** matters. `QuatToEuler` extracts
+  `y = asin(R02)`, `x = atan2(-R12, R22)`, `z = atan2(-R01, R00)` from the
+  standard matrix (gimbal lock folds yaw into roll). This was verified
+  numerically with a standalone g++ harness over 200k random Euler triples.
+- **Endpoint fidelity**: Euler angles are ambiguous (±180° representations of
+  the same orientation). Landing *exactly* on a keyframe time therefore
+  reproduces that key's stored Euler **verbatim**, so a pose recorded in the
+  Inspector is never re-expressed as a visually different angle set mid-scrub.
+
+### 11.3 The Sequencing Workspace (`src/core/WorkspaceManager.{h,cpp}`)
+
+`Workspace::Timeline` ("Sequencing", layout key `"timeline"`) replaces the
+center-stage viewport node with the **Timeline** window; the Hierarchy stays on
+the left, the Inspector + Editor Settings on the right rail (the Inspector's
+keyframe toggles pair with the lanes), and the Development Zone + Stats along
+the bottom. Because the viewport is no longer part of the layout, the
+Application **hides** it through a new `ViewportPanel` visibility flag
+(`SetVisible`/`IsVisible` + early return in `OnImGuiRender`) and routes every
+workspace switch through an `ApplyWorkspace` wrapper that applies the side
+effects — viewport visible outside Sequencing, timeline playback stopped when
+leaving it (and forced visible + re-synced around isolated play mode).
+
+### 11.4 The TimelinePanel (`src/editor/TimelinePanel.{h,cpp}`)
+
+The panel owns no scene state — it renders the shared clock and fires bridge
+callbacks:
+
+- **Transport**: Play/Pause toggle (restarts from 0 when parked at the end),
+  Stop (rewind), a scrub slider over `[0, duration]`, a Duration drag and a Loop
+  checkbox.
+- **Lanes**: one row per transform property for the selected entity — label +
+  key count + a "+" record button, then a strip drawn with the window draw list:
+  dim background, a playhead line at `time/duration`, keyframe diamonds per key,
+  and a hover crosshair. Left-click scrubs to the mouse time; right-clicking a
+  diamond removes that key (bridge → undoable `RemoveTimelineKeyframe`).
+- The playhead and scrub slider always reflect `TimelineState::time`, so the
+  Inspector toggles and the panel stay in lockstep.
+
+### 11.5 Playback, Recording and Undo (`src/core/Application.{h,cpp}`)
+
+- `ApplyTimeline(dt)` runs in the editor **Update** stage: while `playing` the
+  clock advances (wrap per Loop, otherwise clamp at `duration` and stop), and
+  the sampled pose is written to **every** entity carrying keys. It is gated on
+  `m_timeline_dirty` — set by play, scrub and record — so a paused timeline never
+  stomps gizmo/Inspector edits. The gizmo interaction block is additionally
+  gated off while the timeline plays or the viewport is hidden.
+- `SetTimelineKeyframe`/`RemoveTimelineKeyframe` read the selected entity's
+  current transform, mutate the track inside a single **"Set Keyframe"** /
+  **"Remove Keyframe"** undo transaction, refresh `animation.duration`, and
+  stretch the global `m_timeline.duration` when a key lands past its edge.
+- `CommandHistory::EntitySnapshot` captures the loop flag, duration and the
+  three key vectors (with the field-by-field diff comparison), so key edits undo
+  like any other property edit. `SceneSerializer` emits an `"animation"` object
+  only when keys exist (`{ loop, duration, position/rotation/scale: [{time,
+  value:[x,y,z]}, …] }`) and re-sorts + recomputes duration on load.
+
+### 11.6 Testability and Verification
+
+The sampling math (Euler↔quat round-trip, SLERP midpoints, endpoint fidelity)
+was verified with a standalone g++ harness before wiring, since no unit-test
+framework is part of the tree. The engine rebuilds clean with the two new
+translation units (`src/core/Animation.cpp`, `src/editor/TimelinePanel.cpp`) in
+the explicit CMake source list. The editor smoke run stays alive with the
+sequencing workspace, timeline panel, bridge and playback wiring, an empty log,
+and no stray file edits on disk.

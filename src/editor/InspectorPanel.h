@@ -10,6 +10,7 @@ class MaterialLibrary;
 class TextureLibrary;
 class CommandHistory;
 class AudioManager;
+struct TimelineBridge;
 
 class InspectorPanel : public EditorPanel
 {
@@ -17,7 +18,8 @@ public:
     InspectorPanel(SelectionState *selection, Scene *scene,
                    MaterialLibrary *material_library, TextureLibrary *texture_library,
                    CommandHistory *history, AudioManager *audio,
-                   const std::function<void *(int, int)> &camera_preview_provider);
+                   const std::function<void *(int, int)> &camera_preview_provider,
+                   TimelineBridge *timeline_bridge);
     void OnImGuiRender(float dt) override;
 
     bool IsVisible() const { return m_visible; }
@@ -45,6 +47,7 @@ private:
     // Recreates the Application-owned camera-preview texture at the requested
     // size and returns its ImTextureID (nullptr when no preview is available).
     std::function<void *(int, int)> m_camera_preview_provider;
+    TimelineBridge *m_timeline_bridge;  // nullable: keyframe toggles degrade
     int m_edit_entity = -1;
     char m_tag_buffer[256] = {};
     char m_mesh_buffer[256] = {};

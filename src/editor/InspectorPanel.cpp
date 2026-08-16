@@ -6,6 +6,7 @@
 #include "Material.h"
 #include "Texture.h"
 #include "AudioManager.h"
+#include "core/Animation.h"
 #include "core/CommandHistory.h"
 
 #include <imgui.h>
@@ -109,7 +110,8 @@ InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
                                MaterialLibrary *material_library,
                                TextureLibrary *texture_library,
                                CommandHistory *history, AudioManager *audio,
-                               const std::function<void *(int, int)> &camera_preview_provider)
+                               const std::function<void *(int, int)> &camera_preview_provider,
+                               TimelineBridge *timeline_bridge)
     : m_selection(selection)
     , m_scene(scene)
     , m_material_library(material_library)
@@ -117,6 +119,7 @@ InspectorPanel::InspectorPanel(SelectionState *selection, Scene *scene,
     , m_history(history)
     , m_audio(audio)
     , m_camera_preview_provider(camera_preview_provider)
+    , m_timeline_bridge(timeline_bridge)
 {
 }
 
@@ -232,10 +235,33 @@ void InspectorPanel::OnImGuiRender(float dt)
     }))
     {
         BeginEditSession("Edit Transform");
+        // Phase 35 keyframe toggle: records the property at the current
+        // timeline playhead through the Application-owned bridge. The dot is
+        // amber while a key sits at the playhead on this track.
+        auto kf_toggle = [this](AnimProperty prop, const AnimationTrack &track) {
+            if (!m_timeline_bridge || !m_timeline_bridge->on_set_keyframe)
+                return;
+            ImGui::PushID((int)prop);
+            const bool has_key = m_timeline_bridge->state &&
+                (Anim::KeyAt(track, m_timeline_bridge->state->time) != nullptr);
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                has_key ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f)
+                        : ImVec4(0.5f, 0.5f, 0.58f, 1.0f));
+            if (ImGui::Button("●"))
+                m_timeline_bridge->on_set_keyframe(prop);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Record keyframe at the current timeline time");
+            ImGui::SameLine();
+            ImGui::PopID();
+        };
+        kf_toggle(AnimProperty::Position, entity->animation.position);
         ImGui::DragFloat3("Position", entity->transform.position, 0.1f);
         EndEditSessionIfReleased();
+        kf_toggle(AnimProperty::Rotation, entity->animation.rotation);
         ImGui::DragFloat3("Rotation", entity->transform.rotation, 0.1f);
         EndEditSessionIfReleased();
+        kf_toggle(AnimProperty::Scale, entity->animation.scale);
         ImGui::DragFloat3("Scale",    entity->transform.scale,    0.1f);
         EndEditSessionIfReleased();
 

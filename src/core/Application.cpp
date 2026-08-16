@@ -31,6 +31,7 @@
 #include "editor/ViewportLayoutPanel.h"
 #include "editor/ProfilerPanel.h"
 #include "editor/LandscapePanel.h"
+#include "editor/TimelinePanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
@@ -86,6 +87,7 @@ Application::Application()
     , m_history(nullptr)
     , m_history_panel(nullptr)
     , m_landscape_panel(nullptr)
+    , m_timeline_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -1584,6 +1586,9 @@ void Application::ExitPlayMode()
     // editor UI deterministically comes back into view.
     m_viewport->SetIsolated(false);
     m_workspace_manager.RequestRebuild();
+    // Restore the workspace-appropriate chrome (e.g. hide the viewport again in
+    // the Sequencing workspace) that the isolated play view overrode.
+    SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
 }
 
 void Application::SavePlayModePanelState()
@@ -1806,6 +1811,161 @@ void Application::UpdateLandscapeBrush(const GizmoFrame &gf, float dt)
         if (m_history)
             m_history->EndEntityEdit();
     }
+}
+
+// --- Phase 35 animation & timeline foundation --------------------------------
+
+void Application::ApplyTimeline(float dt)
+{
+    if (m_state != EngineState::Editor || !m_scene)
+        return;
+
+    // Advance the global clock while playing: wrap around Loop, otherwise clamp
+    // at the end and stop the transport on the final pose.
+    if (m_timeline.playing)
+    {
+        m_timeline.time += dt;
+        if (m_timeline.duration > 0.0f)
+        {
+            if (m_timeline.loop)
+            {
+                m_timeline.time = std::fmod(m_timeline.time, m_timeline.duration);
+            }
+            else if (m_timeline.time >= m_timeline.duration)
+            {
+                m_timeline.time = m_timeline.duration;
+                m_timeline.playing = false;
+            }
+        }
+        m_timeline_dirty = true;
+    }
+    if (!m_timeline_dirty)
+        return;
+    m_timeline_dirty = false;
+
+    // Write the sampled pose for every entity carrying keyframes. Empty tracks
+    // leave the authored value untouched.
+    for (auto &entity_ptr : m_scene->GetEntities())
+    {
+        Entity &entity = *entity_ptr;
+        const AnimationComponent &anim = entity.animation;
+        if (anim.position.IsEmpty() && anim.rotation.IsEmpty() && anim.scale.IsEmpty())
+            continue;
+        Anim::Apply(anim, m_timeline.time, entity.transform.position,
+                    entity.transform.rotation, entity.transform.scale);
+    }
+}
+
+void Application::PlayPauseTimeline()
+{
+    m_timeline.playing = !m_timeline.playing;
+    if (m_timeline.playing)
+    {
+        if (m_timeline.time >= m_timeline.duration && m_timeline.duration > 0.0f)
+            m_timeline.time = 0.0f;  // restart when parked at the end
+        m_timeline_dirty = true;
+        m_scene_status = "Timeline playing";
+    }
+    else
+    {
+        m_scene_status = "Timeline paused";
+    }
+}
+
+void Application::StopTimeline()
+{
+    m_timeline.playing = false;
+    m_timeline.time = 0.0f;
+    m_timeline_dirty = true;
+}
+
+void Application::ScrubTimeline()
+{
+    // The panel already wrote the new playhead into m_timeline.time.
+    m_timeline_dirty = true;
+}
+
+Entity *Application::FindTimelineTarget() const
+{
+    if (!m_scene || !m_selection || m_selection->entity_id < 0)
+        return nullptr;
+    return m_scene->GetEntityById(m_selection->entity_id);
+}
+
+void Application::SetTimelineKeyframe(AnimProperty prop)
+{
+    Entity *entity = FindTimelineTarget();
+    if (!entity || !m_history)
+        return;
+
+    const float t = m_timeline.time;
+    m_history->BeginEntityEdit(entity->id, "Set Keyframe");
+    switch (prop)
+    {
+        case AnimProperty::Position:
+            Anim::SetKeyframe(entity->animation.position, t, entity->transform.position);
+            break;
+        case AnimProperty::Rotation:
+            Anim::SetKeyframe(entity->animation.rotation, t, entity->transform.rotation);
+            break;
+        case AnimProperty::Scale:
+            Anim::SetKeyframe(entity->animation.scale, t, entity->transform.scale);
+            break;
+    }
+    // The component's duration mirrors the longest key time; stretch the global
+    // timeline so a key recorded past its edge is never unreachable.
+    const float duration = Anim::TrackDuration(entity->animation);
+    entity->animation.duration = duration;
+    if (duration > m_timeline.duration)
+        m_timeline.duration = duration;
+    m_history->EndEntityEdit();
+
+    m_timeline_dirty = true;
+    m_scene_status = "Recorded keyframe at " + std::to_string(t) + "s";
+}
+
+void Application::RemoveTimelineKeyframe(AnimProperty prop, float time)
+{
+    Entity *entity = FindTimelineTarget();
+    if (!entity || !m_history)
+        return;
+
+    m_history->BeginEntityEdit(entity->id, "Remove Keyframe");
+    switch (prop)
+    {
+        case AnimProperty::Position: Anim::RemoveKeyframe(entity->animation.position, time); break;
+        case AnimProperty::Rotation: Anim::RemoveKeyframe(entity->animation.rotation, time); break;
+        case AnimProperty::Scale:    Anim::RemoveKeyframe(entity->animation.scale, time);    break;
+    }
+    entity->animation.duration = Anim::TrackDuration(entity->animation);
+    m_history->EndEntityEdit();
+
+    m_timeline_dirty = true;
+}
+
+unsigned int Application::ApplyWorkspace(WorkspaceManager::Workspace ws)
+{
+    const unsigned int node = m_workspace_manager.ApplyWorkspace(ws);
+    SyncWorkspaceSideEffects(ws);
+    return node;
+}
+
+unsigned int Application::ResetWorkspaceDefault()
+{
+    const unsigned int node = m_workspace_manager.ResetToWorkspaceDefault();
+    SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
+    return node;
+}
+
+void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
+{
+    // The Sequencing workspace replaces the viewport with the Timeline editor.
+    if (m_viewport)
+        m_viewport->SetVisible(ws != WorkspaceManager::Workspace::Timeline);
+    // Leaving the Sequencing workspace stops playback so no hidden animation
+    // keeps mutating transforms behind the author's back.
+    if (ws != WorkspaceManager::Workspace::Timeline && m_timeline.playing)
+        StopTimeline();
 }
 
 void Application::DeleteSelection()
@@ -2241,7 +2401,7 @@ void Application::DrawViewportContextMenu()
             if (CreateLandscape())
             {
                 m_script_editor->RequestDockCodeWindow(
-                    m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                    ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
             }
         }
         if (ImGui::MenuItem("Create Directional Light"))
@@ -2756,13 +2916,29 @@ bool Application::Init(int width, int height, const char *title)
     m_panels.push_back(
         std::make_shared<SceneHierarchyPanel>(m_selection, m_scene, m_history)
     );
+
+    // Phase 35 animation & timeline foundation: the shared bridge routes the
+    // Timeline panel's transport/lanes and the Inspector's keyframe toggles
+    // into Application-owned undoable actions. The bridge is a member, so its
+    // callbacks only need to capture `this`.
+    m_timeline_bridge.state = &m_timeline;
+    m_timeline_bridge.on_play_pause = [this]() { PlayPauseTimeline(); };
+    m_timeline_bridge.on_stop = [this]() { StopTimeline(); };
+    m_timeline_bridge.on_scrub = [this]() { ScrubTimeline(); };
+    m_timeline_bridge.on_set_keyframe = [this](AnimProperty prop) {
+        SetTimelineKeyframe(prop);
+    };
+    m_timeline_bridge.on_remove_keyframe = [this](AnimProperty prop, float time) {
+        RemoveTimelineKeyframe(prop, time);
+    };
+
     m_inspector_panel = new InspectorPanel(m_selection, m_scene,
                                            m_material_library, m_texture_library,
                                            m_history, m_audio,
                                            [this](int w, int h) -> void * {
         RecreateCameraPreview(w, h);
         return (void *)m_camera_preview;
-    });
+    }, &m_timeline_bridge);
     m_panels.push_back(std::shared_ptr<InspectorPanel>(m_inspector_panel));
     m_panels.push_back(std::shared_ptr<ViewportPanel>(m_viewport));
 
@@ -2792,8 +2968,7 @@ bool Application::Init(int width, int height, const char *title)
             // Re-apply the active workspace: rebuilds its canonical layout and
             // routes the mini-IDE window back into its dedicated dock node.
             m_script_editor->RequestDockCodeWindow(
-                m_workspace_manager.ApplyWorkspace(
-                    m_workspace_manager.GetWorkspace()));
+                ApplyWorkspace(m_workspace_manager.GetWorkspace()));
         });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
@@ -2803,6 +2978,15 @@ bool Application::Init(int width, int height, const char *title)
     m_landscape_panel = new LandscapePanel(m_scene, m_selection, &m_landscape_brush,
         [this]() { CreateLandscape(); });
     m_panels.push_back(std::shared_ptr<LandscapePanel>(m_landscape_panel));
+
+    // Phase 35: the track-based timeline editor. Reads the shared clock and
+    // fires transport / keyframe actions back through the bridge.
+    m_timeline_panel = new TimelinePanel(m_scene, m_selection, &m_timeline_bridge);
+    m_panels.push_back(std::shared_ptr<TimelinePanel>(m_timeline_panel));
+
+    // The sequencing workspace hides the viewport; apply the side effects of
+    // whatever workspace the persisted layout restored.
+    SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
 
     // Live theme customizer + grid snapping config + viewport navigation
     // tuning: owns no state itself — it edits Application's token set (and
@@ -2838,23 +3022,26 @@ bool Application::Init(int width, int height, const char *title)
     } });
     cp.Register({ "Switch to Level Design Workspace", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
+            ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
     } });
     cp.Register({ "Switch to Scripting Workspace", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
+            ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
     } });
     cp.Register({ "Switch to Shading & Assets Workspace", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+            ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
     } });
     cp.Register({ "Switch to Landscape Mode", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
-            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+            ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+    } });
+    cp.Register({ "Switch to Sequencing Workspace", "Workspace", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            ApplyWorkspace(WorkspaceManager::Workspace::Timeline));
     } });
     cp.Register({ "Reset View to Workspace Default", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            m_workspace_manager.ResetToWorkspaceDefault());
+        m_script_editor->RequestDockCodeWindow(ResetWorkspaceDefault());
         PushToast("Reset to workspace default");
     } });
     cp.Register({ "Save Current Layout as Default", "Workspace", "", [this]() {
@@ -2882,7 +3069,7 @@ bool Application::Init(int width, int height, const char *title)
         if (CreateLandscape())
         {
             m_script_editor->RequestDockCodeWindow(
-                m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
         }
     } });
     cp.Register({ "Create Octahedron", "Create", "", [this]() {
@@ -3262,28 +3449,35 @@ void Application::Run()
                             nullptr, current == WorkspaceManager::Workspace::LevelDesign))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
+                            ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Scripting),
                             nullptr, current == WorkspaceManager::Workspace::Scripting))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
+                            ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::ShadingAndAssets),
                             nullptr, current == WorkspaceManager::Workspace::ShadingAndAssets))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+                            ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Landscape),
                             nullptr, current == WorkspaceManager::Workspace::Landscape))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                            ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                    }
+                    if (ImGui::MenuItem(
+                            WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Timeline),
+                            nullptr, current == WorkspaceManager::Workspace::Timeline))
+                    {
+                        m_script_editor->RequestDockCodeWindow(
+                            ApplyWorkspace(WorkspaceManager::Workspace::Timeline));
                     }
                     ImGui::Spacing();
                     ImGui::TextDisabled("Layout");
@@ -3291,7 +3485,7 @@ void Application::Run()
                     if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ResetToWorkspaceDefault());
+                            ResetWorkspaceDefault());
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
                                         m_workspace_manager.HasSavedLayout()))
@@ -3445,7 +3639,7 @@ void Application::Run()
                     if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
                         m_script_editor->RequestDockCodeWindow(
-                            m_workspace_manager.ResetToWorkspaceDefault());
+                            ResetWorkspaceDefault());
                         PushToast("Reset to workspace default");
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default"))
@@ -3482,6 +3676,7 @@ void Application::Run()
             // console, inspector) was hidden on EnterPlayMode and is restored
             // on exit, so the play session is a clean, uninterrupted view.
             m_viewport->SetIsolated(true);
+            m_viewport->SetVisible(true);
             m_viewport->OnImGuiRender((float)dt);
         }
         else
@@ -3571,9 +3766,18 @@ void Application::Run()
             }
         }
 
+        // Phase 35 timeline playback: advances the global clock and writes the
+        // sampled pose onto every animated entity. Editor-only (the play
+        // session drives gameplay scripts instead) and gated on the dirty flag
+        // so a paused timeline never stomps gizmo / Inspector edits.
+        ApplyTimeline((float)dt);
+
         // Editor interaction: viewport picking + gizmo dragging. Skipped in
-        // play mode and while the RMB fly camera is active (cursor captured).
-        if (m_state == EngineState::Editor && !m_flying && m_gizmo && m_viewport)
+        // play mode, while the RMB fly camera is active (cursor captured),
+        // while the timeline is playing, or when the viewport is hidden by the
+        // Sequencing workspace.
+        if (m_state == EngineState::Editor && !m_flying && m_gizmo && m_viewport &&
+            !m_timeline.playing && m_viewport->IsVisible())
         {
             Vec3 cam_pos;
             float fov, pitch, yaw, near_p, far_p;
@@ -3700,6 +3904,7 @@ void Application::Shutdown()
     m_inspector_panel = nullptr;
     m_viewport_layout_panel = nullptr;
     m_landscape_panel = nullptr;
+    m_timeline_panel = nullptr;
     m_profiler_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further

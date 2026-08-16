@@ -29,6 +29,12 @@ public:
     // fills the whole window below the menu bar as a true game viewport.
     void SetIsolated(bool isolated) { m_isolated = isolated; }
 
+    // Workspace-driven visibility (Phase 35): the Sequencing workspace hides the
+    // viewport entirely and replaces it with the Timeline editor, so the whole
+    // window stops being submitted while hidden.
+    void SetVisible(bool visible) { m_visible = visible; }
+    bool IsVisible() const { return m_visible; }
+
     // Drag-drop handler for asset payloads dropped onto the 3D view: fires
     // with the payload type ("PREFAB"/"MESH"/"MATERIAL"/"TEXTURE") and its
     // null-terminated path string. Wired by the Application, which computes the
@@ -51,6 +57,7 @@ private:
     int m_viewport_height;
     bool m_hovered;
     bool m_isolated = false;
+    bool m_visible = true;
     ImVec2 m_image_min{0.0f, 0.0f};
     ImVec2 m_image_size{0.0f, 0.0f};
     SDL_Texture *m_texture;

@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.34.0-alpha — Landscape & Topology Design Suite
+v0.35.0-alpha — Animation & Timeline Foundation
 
 ## Dependencies
 

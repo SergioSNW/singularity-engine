@@ -15,6 +15,7 @@ struct SDL_Texture;
 #include "Json.h"
 #include "editor/Theme.h"
 #include "core/WorkspaceManager.h"
+#include "core/Animation.h"
 #include "editor/GizmoController.h"
 #include "core/EditorCamera.h"
 #include "core/Landscape.h"
@@ -48,6 +49,7 @@ class InspectorPanel;
 class MaterialPanel;
 class ViewportLayoutPanel;
 class LandscapePanel;
+class TimelinePanel;
 class CommandHistory;
 class HistoryPanel;
 class ProfilerPanel;
@@ -160,6 +162,39 @@ private:
     bool IsLandscapeSculptMode() const;
     void UpdateLandscapeBrush(const GizmoFrame &gf, float dt);
 
+    // Phase 35 animation & timeline foundation:
+    //   ApplyTimeline        - editor Update stage: advance the global clock
+    //                          (wrap/clamp per Loop) and write the sampled pose
+    //                          onto every entity carrying keyframes, but only
+    //                          while playing or right after a scrub/record so
+    //                          gizmo/Inspector edits are never stomped.
+    //   PlayPauseTimeline    - toggle the transport (restarts from 0 when the
+    //                          playhead sits at the end).
+    //   StopTimeline         - halt the transport and rewind to 0.
+    //   ScrubTimeline        - re-apply the pose at the moved playhead.
+    //   SetTimelineKeyframe  - record the selected entity's property value at
+    //                          the current playhead (undoable), extending the
+    //                          global duration when the key lands past it.
+    //   RemoveTimelineKeyframe - drop the key exactly at `time` (undoable) and
+    //                          refresh the entity's duration.
+    //   FindTimelineTarget   - the selected entity, or null.
+    //   ApplyWorkspace       - workspace switch wrapper: routes the Script
+    //                          Editor dock node AND applies workspace side
+    //                          effects (viewport visibility + timeline state).
+    //   ResetWorkspaceDefault- reset wrapper with the same side effects.
+    //   SyncWorkspaceSideEffects - hide the viewport in Sequencing and stop
+    //                          timeline playback when leaving it.
+    void ApplyTimeline(float dt);
+    void PlayPauseTimeline();
+    void StopTimeline();
+    void ScrubTimeline();
+    void SetTimelineKeyframe(AnimProperty prop);
+    void RemoveTimelineKeyframe(AnimProperty prop, float time);
+    Entity *FindTimelineTarget() const;
+    unsigned int ApplyWorkspace(WorkspaceManager::Workspace ws);
+    unsigned int ResetWorkspaceDefault();
+    void SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws);
+
     // Duplicate the selected entity (and its whole subtree) as a sibling under
     // its current parent, then select the clone. No-op without a selection.
     void DuplicateSelection();
@@ -244,6 +279,7 @@ private:
     ViewportLayoutPanel *m_viewport_layout_panel;
     MaterialPanel *m_material_panel;
     LandscapePanel *m_landscape_panel;
+    TimelinePanel *m_timeline_panel;
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
@@ -333,4 +369,12 @@ private:
     bool m_landscape_brush_valid = false;
     Vec3 m_landscape_brush_center{0.0f, 0.0f, 0.0f};
     bool m_landscape_sculpting = false;
+
+    // Phase 35 animation & timeline foundation: the Application-owned global
+    // timeline clock + the bridge the Timeline panel and the Inspector's
+    // keyframe toggles share. m_timeline_dirty is set after any scrub/record
+    // so ApplyTimeline re-writes poses even while paused.
+    TimelineState m_timeline;
+    TimelineBridge m_timeline_bridge;
+    bool m_timeline_dirty = false;
 };

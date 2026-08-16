@@ -86,18 +86,42 @@ float ComputeDpiScale(void *window, void *renderer)
     return std::max(1.0f, std::max(sx, sy));
 }
 
+// The default glyph ranges omit box-drawing / geometric shapes (0x2500–0x25FF,
+// e.g. the "●" keyframe toggle) and misc symbols (0x2600–0x26FF). Extend the
+// stock range list so those glyphs rasterize when a font provides them.
+static const ImWchar *GlyphRangesWithSymbols()
+{
+    static ImWchar ranges[64];
+    static bool built = false;
+    if (!built)
+    {
+        const ImWchar *def = ImGui::GetIO().Fonts->GetGlyphRangesDefault();
+        int n = 0;
+        while (n + 4 < 48 && def[n] != 0)
+        {
+            ranges[n] = def[n];
+            ++n;
+        }
+        ranges[n++] = 0x2500; ranges[n++] = 0x25FF;  // box drawing + geometric shapes
+        ranges[n++] = 0x2600; ranges[n++] = 0x26FF;  // misc symbols
+        ranges[n] = 0;
+        built = true;
+    }
+    return ranges;
+}
+
 static ImFont *LoadFont(const char *primary, const char *fallback,
                         const char *fallback2, float pixel_size)
 {
     ImGuiIO &io = ImGui::GetIO();
     if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            primary, pixel_size, nullptr, io.Fonts->GetGlyphRangesDefault()))
+            primary, pixel_size, nullptr, GlyphRangesWithSymbols()))
         return font;
     if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            fallback, pixel_size, nullptr, io.Fonts->GetGlyphRangesDefault()))
+            fallback, pixel_size, nullptr, GlyphRangesWithSymbols()))
         return font;
     if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            fallback2, pixel_size, nullptr, io.Fonts->GetGlyphRangesDefault()))
+            fallback2, pixel_size, nullptr, GlyphRangesWithSymbols()))
         return font;
     // Last resort: keep the built-in font so the editor still opens.
     return io.Fonts->AddFontDefault();

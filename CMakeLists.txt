@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(singularity-engine VERSION 0.34.0 LANGUAGES C CXX)
+project(singularity-engine VERSION 0.35.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -114,6 +114,7 @@ target_sources(singularity-engine PRIVATE
   src/core/CameraManager.cpp
   src/core/ToastManager.cpp
   src/core/Landscape.cpp
+  src/core/Animation.cpp
   src/render/ThumbnailCache.cpp
   src/script/ScriptEngine.cpp
   src/editor/StatsPanel.cpp
@@ -130,6 +131,7 @@ target_sources(singularity-engine PRIVATE
   src/editor/HistoryPanel.cpp
   src/editor/ViewportLayoutPanel.cpp
   src/editor/LandscapePanel.cpp
+  src/editor/TimelinePanel.cpp
   src/editor/ProfilerPanel.cpp
   src/editor/Theme.cpp
   third_party/ImGuiColorTextEdit/TextEditor.cpp

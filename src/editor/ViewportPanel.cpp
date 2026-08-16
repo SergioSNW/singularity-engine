@@ -14,6 +14,14 @@ void ViewportPanel::OnImGuiRender(float dt)
 {
     (void)dt;
 
+    // Hidden by the Sequencing workspace (Phase 35): skip the window entirely.
+    if (!m_visible)
+    {
+        m_hovered = false;
+        m_image_size = ImVec2(0.0f, 0.0f);
+        return;
+    }
+
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
 
     if (m_isolated)
