@@ -4,7 +4,7 @@ A minimal, thermally-efficient 2D game engine and editor written in C++20.
 
 ## Version
 
-v0.33.0-alpha — True Workspace Layouts, Tabbed Mini-IDE & Theme
+v0.34.0-alpha — Landscape & Topology Design Suite
 
 ## Dependencies
 

@@ -1,8 +1,11 @@
 #pragma once
 
 #include "EngineMath.h"
+#include "Mesh.h"
 
+#include <memory>
 #include <string>
+#include <vector>
 
 struct TransformComponent
 {
@@ -120,4 +123,24 @@ struct DirectionalLightComponent
     float shadow_strength = 0.6f;
     float shadow_bias = 0.05f;
     float shadow_distance = 30.0f;
+};
+
+// Procedural heightfield terrain (Phase 34). When `enabled`, the entity owns a
+// scalable grid of vertices: `heights` stores one height per vertex over a
+// (resolution+1) x (resolution+1) grid spanning `size` x `size` world units
+// centered on the entity origin (row-major, [row * stride + col]). The editor
+// sculpts `heights` live (Raise / Smooth / Flatten) through the Landscape
+// module, which mirrors them into `mesh` — a runtime-generated triangle soup +
+// sparse wireframe + bounds, rebuilt on demand via `mesh_dirty`. The mesh is
+// never serialized: on load the heights are restored and the mesh is
+// regenerated on the first render frame.
+struct LandscapeComponent
+{
+    bool enabled = false;
+    int resolution = 64;           // grid cells per side (vertices = +1)
+    float size = 40.0f;            // world units per side (x / z extent)
+    float base_height = 0.0f;      // starting height for every vertex
+    std::vector<float> heights;    // (resolution+1)^2 row-major; empty until initialized
+    std::shared_ptr<Mesh> mesh;    // generated geometry (null until built)
+    bool mesh_dirty = true;        // rebuild `mesh` from `heights`
 };

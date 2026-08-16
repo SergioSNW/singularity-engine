@@ -248,6 +248,10 @@ Vec3 WorldToLocalDir(const Entity &entity, const Scene &scene, const Vec3 &dir)
 
 const Mesh* ResolveMesh(const Entity &entity, MeshLibrary *lib)
 {
+    // Procedural landscapes carry their generated mesh directly; the renderer
+    // rebuilds it on demand, so the gizmo can hit-test it like any other mesh.
+    if (entity.landscape.enabled && entity.landscape.mesh)
+        return entity.landscape.mesh.get();
     if (!lib)
         return nullptr;
     if (entity.mesh.path.empty())

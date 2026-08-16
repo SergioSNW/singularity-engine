@@ -58,6 +58,14 @@ struct EntitySnapshot
     float light_shadow_strength = 0.6f;
     float light_shadow_bias = 0.05f;
     float light_shadow_distance = 30.0f;
+
+    // Procedural landscape (Phase 34): the height grid rides the undo snapshot
+    // so sculpt strokes are undoable like any other entity edit.
+    bool landscape_enabled = false;
+    int  landscape_resolution = 64;
+    float landscape_size = 40.0f;
+    float landscape_base_height = 0.0f;
+    std::vector<float> landscape_heights;
 };
 
 static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
@@ -96,6 +104,11 @@ static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
     out.light_shadow_strength = e.light.shadow_strength;
     out.light_shadow_bias = e.light.shadow_bias;
     out.light_shadow_distance = e.light.shadow_distance;
+    out.landscape_enabled = e.landscape.enabled;
+    out.landscape_resolution = e.landscape.resolution;
+    out.landscape_size = e.landscape.size;
+    out.landscape_base_height = e.landscape.base_height;
+    out.landscape_heights = e.landscape.heights;
 }
 
 static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
@@ -136,6 +149,15 @@ static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
     e->light.shadow_strength = snap.light_shadow_strength;
     e->light.shadow_bias = snap.light_shadow_bias;
     e->light.shadow_distance = snap.light_shadow_distance;
+    e->landscape.enabled = snap.landscape_enabled;
+    e->landscape.resolution = snap.landscape_resolution;
+    e->landscape.size = snap.landscape_size;
+    e->landscape.base_height = snap.landscape_base_height;
+    e->landscape.heights = snap.landscape_heights;
+    // Derived runtime mesh: drop it and let the next render frame regenerate
+    // it from the restored heights.
+    e->landscape.mesh.reset();
+    e->landscape.mesh_dirty = true;
 
     if ((e->parent ? e->parent->id : -1) != snap.parent_id)
         scene->SetParent(e->id, snap.parent_id);
@@ -381,7 +403,12 @@ void CommandHistory::EndEntityEdit()
                         m_edit_before->light_ambient == after.light_ambient &&
                         m_edit_before->light_shadow_strength == after.light_shadow_strength &&
                         m_edit_before->light_shadow_bias == after.light_shadow_bias &&
-                        m_edit_before->light_shadow_distance == after.light_shadow_distance;
+                        m_edit_before->light_shadow_distance == after.light_shadow_distance &&
+                        m_edit_before->landscape_enabled == after.landscape_enabled &&
+                        m_edit_before->landscape_resolution == after.landscape_resolution &&
+                        m_edit_before->landscape_size == after.landscape_size &&
+                        m_edit_before->landscape_base_height == after.landscape_base_height &&
+                        m_edit_before->landscape_heights == after.landscape_heights;
             if (!same)
             {
                 Push(std::make_unique<EntityStateCommand>(

@@ -112,6 +112,22 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     light.object.emplace_back("shadow_bias", json::Value::MakeNumber(e.light.shadow_bias));
     light.object.emplace_back("shadow_distance", json::Value::MakeNumber(e.light.shadow_distance));
     ent.object.emplace_back("light", std::move(light));
+
+    // Procedural landscape: the height grid is serialized; the runtime mesh is
+    // derived data and is regenerated on the next render frame.
+    json::Value landscape = json::Value::MakeObject();
+    landscape.object.emplace_back("enabled", json::Value::MakeBool(e.landscape.enabled));
+    if (e.landscape.enabled)
+    {
+        landscape.object.emplace_back("resolution", json::Value::MakeNumber(e.landscape.resolution));
+        landscape.object.emplace_back("size", json::Value::MakeNumber(e.landscape.size));
+        landscape.object.emplace_back("base_height", json::Value::MakeNumber(e.landscape.base_height));
+        json::Value heights = json::Value::MakeArray();
+        for (float h : e.landscape.heights)
+            heights.array.push_back(json::Value::MakeNumber(h));
+        landscape.object.emplace_back("heights", std::move(heights));
+    }
+    ent.object.emplace_back("landscape", std::move(landscape));
 }
 
 // Read every component of `ent` into an already-created `e`.
@@ -178,6 +194,26 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
         e.light.shadow_strength = (float)lgt->Number("shadow_strength", e.light.shadow_strength);
         e.light.shadow_bias = (float)lgt->Number("shadow_bias", e.light.shadow_bias);
         e.light.shadow_distance = (float)lgt->Number("shadow_distance", e.light.shadow_distance);
+    }
+
+    if (const json::Value *lsc = ent.Find("landscape"); lsc && lsc->IsObject())
+    {
+        e.landscape.enabled = lsc->Bool("enabled", false);
+        e.landscape.resolution = (int)lsc->Number("resolution", e.landscape.resolution);
+        e.landscape.size = (float)lsc->Number("size", e.landscape.size);
+        e.landscape.base_height = (float)lsc->Number("base_height", e.landscape.base_height);
+        e.landscape.heights.clear();
+        if (const json::Value *hs = lsc->Find("heights"); hs && hs->IsArray())
+        {
+            e.landscape.heights.reserve(hs->array.size());
+            for (const json::Value &v : hs->array)
+                if (v.IsNumber())
+                    e.landscape.heights.push_back((float)v.num);
+        }
+        // The runtime mesh is derived data: drop it so the first render frame
+        // regenerates it from the restored heights.
+        e.landscape.mesh.reset();
+        e.landscape.mesh_dirty = true;
     }
 }
 

@@ -17,6 +17,7 @@ struct SDL_Texture;
 #include "core/WorkspaceManager.h"
 #include "editor/GizmoController.h"
 #include "core/EditorCamera.h"
+#include "core/Landscape.h"
 
 struct SDL_Texture;
 struct Mat4;
@@ -46,6 +47,7 @@ class ConsolePanel;
 class InspectorPanel;
 class MaterialPanel;
 class ViewportLayoutPanel;
+class LandscapePanel;
 class CommandHistory;
 class HistoryPanel;
 class ProfilerPanel;
@@ -141,6 +143,23 @@ private:
     void EnterPlayMode();
     void ExitPlayMode();
 
+    // Phase 34 landscape & topology design:
+    //   ResolveEntityMesh    - the mesh that renders/picks an entity: a
+    //                          landscape's generated mesh when enabled, else
+    //                          the standard asset/builtin resolution.
+    //   CreateLandscape      - spawn a sculptable heightfield entity (undoable),
+    //                          select it and arm it as the brush target.
+    //   IsLandscapeSculptMode- true when the Landscape workspace is active and
+    //                          the brush has a live landscape target (the
+    //                          viewport override applies).
+    //   UpdateLandscapeBrush - the editor-interaction replacement for the
+    //                          gizmo: track the brush cursor on the terrain and
+    //                          apply paint strokes while LMB is held.
+    const Mesh *ResolveEntityMesh(const Entity &entity);
+    Entity *CreateLandscape();
+    bool IsLandscapeSculptMode() const;
+    void UpdateLandscapeBrush(const GizmoFrame &gf, float dt);
+
     // Duplicate the selected entity (and its whole subtree) as a sibling under
     // its current parent, then select the clone. No-op without a selection.
     void DuplicateSelection();
@@ -224,6 +243,7 @@ private:
     InspectorPanel *m_inspector_panel;
     ViewportLayoutPanel *m_viewport_layout_panel;
     MaterialPanel *m_material_panel;
+    LandscapePanel *m_landscape_panel;
     CommandHistory *m_history;       // global undo/redo stack (Phase 22)
     HistoryPanel *m_history_panel;   // read-only view over m_history
     ProfilerPanel *m_profiler_panel; // live performance telemetry UI (Phase 30)
@@ -304,4 +324,13 @@ private:
     bool m_viewport_rename_open = false;
     int m_viewport_rename_entity = -1;
     char m_viewport_rename_buffer[128] = {};
+
+    // Phase 34 landscape sculpting: the shared brush settings (edited by the
+    // Landscape panel), the last valid brush-cursor hit for the viewport
+    // overlay, and the in-stroke flag that brackets each paint stroke as one
+    // undo transaction.
+    LandscapeBrushSettings m_landscape_brush;
+    bool m_landscape_brush_valid = false;
+    Vec3 m_landscape_brush_center{0.0f, 0.0f, 0.0f};
+    bool m_landscape_sculpting = false;
 };

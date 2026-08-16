@@ -27,6 +27,12 @@
 //                        and a bottom Console + Stats tab group, maximizing the
 //                        viewport for inspecting shaded geometry. The Script
 //                        Editor stays free-floating here.
+//   * Landscape        — a terrain-authoring workspace: the Landscape panel
+//                        owns the right rail (brush + tool palette) with the
+//                        Inspector + Editor Settings tabbed beneath it, and the
+//                        viewport is center-stage for sculpting. The viewport
+//                        override replaces the transform gizmo with a projected
+//                        brush cursor that sculpts the heightfield.
 //
 // Tab groups conserve screen real estate: several windows docked into one node
 // render as a single tabbed window, with the last-docked window focused.
@@ -41,6 +47,7 @@ public:
         LevelDesign,
         Scripting,
         ShadingAndAssets,
+        Landscape,
     };
 
     // Human-readable workspace names, used by the menu-bar selector.

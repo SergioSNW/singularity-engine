@@ -19,6 +19,7 @@ struct Entity
     ScriptComponent script;  // Lua gameplay script bound on play start
     AudioComponent audio;  // sound effect reference (WAV/OGG) for the audio bridge
     DirectionalLightComponent light;  // directional light feeding the shading pipeline
+    LandscapeComponent landscape;  // procedural heightfield terrain (Phase 34)
 
     // Scene graph links. Entities are stored in the Scene by stable address
     // (std::unique_ptr), so these raw pointers stay valid until the entity is

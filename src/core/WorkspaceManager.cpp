@@ -28,6 +28,7 @@ static const char *kScriptEditorWindow = "Script Editor";
 static const char *kMaterialEditorWindow = "Material Editor";
 static const char *kHistoryWindow = "History";
 static const char *kViewportLayoutWindow = "Viewport Layout";
+static const char *kLandscapeWindow = "Landscape";
 
 const char *WorkspaceManager::WorkspaceName(Workspace ws)
 {
@@ -36,6 +37,7 @@ const char *WorkspaceManager::WorkspaceName(Workspace ws)
         case Workspace::LevelDesign:     return "Level Design";
         case Workspace::Scripting:       return "Scripting";
         case Workspace::ShadingAndAssets:return "Shading & Assets";
+        case Workspace::Landscape:       return "Landscape Mode";
     }
     return "Level Design";
 }
@@ -175,6 +177,33 @@ void WorkspaceManager::RebuildLayout()
             m_code_window_node = bottom_right;
             break;
         }
+        case Workspace::Landscape:
+        {
+            // Landscape Mode: a terrain-authoring workspace. The Landscape
+            // panel owns the right rail (brush + tool palette) with the
+            // Inspector + Editor Settings tabbed beneath it; the viewport stays
+            // center-stage for sculpting. The bottom zone hosts the Development
+            // Zone tabs beside the stats; the Script Editor stays free-floating
+            // while sculpting.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.74f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
+
+            ImGuiID brush_top, brush_bottom;
+            ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.60f, &brush_top, &brush_bottom);
+
+            ImGuiID bottom_left, bottom_right;
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
+
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            ImGui::DockBuilderDockWindow(kLandscapeWindow, brush_top);
+            dock_right_rail(brush_bottom);
+            dock_dev_zone(bottom_left);
+            ImGui::DockBuilderDockWindow(kStatsWindow, bottom_right);
+            m_code_window_node = 0;
+            break;
+        }
     }
 
     ImGui::DockBuilderFinish(m_dockspace_id);
@@ -275,7 +304,8 @@ void WorkspaceManager::SaveToFile() const
     const char *ws_name = (m_workspace == Workspace::Scripting)
         ? "scripting"
         : (m_workspace == Workspace::ShadingAndAssets) ? "shading_assets"
-                                                       : "level_design";
+        : (m_workspace == Workspace::Landscape) ? "landscape"
+        : "level_design";
 
     json::Value root = json::Value::MakeObject();
     root.object.emplace_back("version", json::Value::MakeNumber(1.0));
@@ -314,7 +344,8 @@ void WorkspaceManager::LoadFromFile()
     m_workspace = (ws == "scripting")
         ? Workspace::Scripting
         : (ws == "shading_assets") ? Workspace::ShadingAndAssets
-                                   : Workspace::LevelDesign;
+        : (ws == "landscape") ? Workspace::Landscape
+        : Workspace::LevelDesign;
 
     const std::string saved = root.String("saved_layout");
     if (!saved.empty())

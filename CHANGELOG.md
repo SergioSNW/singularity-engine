@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.34.0-alpha] — 2026-08-16
+
+### Added
+
+- **Procedural landscape component** (`src/core/Components.h`, `src/core/Entity.h`): a new `LandscapeComponent { enabled=false, resolution=64, size=40, base_height=0, heights (std::vector<float>, row-major), shared_ptr<Mesh> mesh, mesh_dirty }` — `resolution × resolution` quads spanning `size` world units centered on the entity, with per-vertex heights. The mesh is runtime-only (never serialized); `enabled` defaults to **false** so ordinary entities are untouched.
+- **Landscape module** (`src/core/Landscape.{h,cpp}`): `LandscapeInitialize` zero-fills the heightfield, `LandscapeRebuildMesh` generates the grid (triangle winding so normals face +Y, sparse surface-riding wireframe `edge_lines` every `res/8` grid line, AABB from min/max height), and the sculpt kernels — **Raise** (smoothstep-falloff elevation), **Smooth** (relax toward the 4-neighbor average), and **Flatten** (blend toward the bilinear-sampled height at the brush center) — operate in the landscape's **local** grid space, converted via `LandscapeWorldToLocal` (affine 4×4 inverse, so rotated/scaled terrains sculpt correctly) with the world radius scaled by `LandscapeWorldScale`. `LandscapeSampleHeightLocal` bilinearly samples heights for flattening; `LandscapeRaycast` does a local slab-AABB slab test → cell-scale marching → 12-iteration bisection for the viewport pick.
+- **Landscape Mode workspace** (`src/core/WorkspaceManager.{h,cpp}`): a new `Workspace::Landscape` preset ("Landscape Mode") lays out a right-side rail with the Landscape panel on top and Inspector/Settings below, the Hierarchy on the left, and the Development Zone + Stats on the bottom (Script Editor stays floating), and round-trips through the layout save/load ("landscape" key).
+- **Sculpt viewport override** (`src/core/Application.cpp`): while the workspace is Landscape Mode and the brush target has `landscape.enabled`, the transform gizmo is replaced by `UpdateLandscapeBrush` — a camera-basis pick ray (same math as `ComputeDropWorldPos`) ray-casts the terrain each frame, stores the hit, and while LMB is held stamps the brush (`strength × dt` per frame) inside a single **"Sculpt Landscape"** `BeginEntityEdit`/`EndEntityEdit` transaction per stroke; the overlay draws a projected brush-sphere cursor (outer + inner cap ring, depth pole, center cross) instead of the gizmo.
+- **LandscapePanel** (`src/editor/LandscapePanel.{h,cpp}`): brush **Size** (0.5–20), **Strength** (0.01–2) and **Falloff** (0–1) sliders, a Raise / Smooth / Flatten tool palette, the target entity combo with a "+" Create Landscape action, and an empty-state Create button — it edits the shared `LandscapeBrushSettings` and routes creation through the Application (spawn + undo + selection + workspace switch).
+- **Creation + wiring**: a new `Application::CreateLandscape` spawns the "Landscape" entity (green-tinted, 64×64 × 40 m, placed ~6 m in front of the editor camera), pushes a `PushSpawn` undo record, selects it, arms the brush target and toasts "Created 'Landscape'". "Create Landscape" entries land in the **Command Palette** (Create) and the **viewport right-click menu** and switch to Landscape Mode after spawning; "Switch to Landscape Mode" joins the palette and Workspace menu. The per-entity AABB refresh loop, the three render passes and the selection outline now resolve meshes through a new `ResolveEntityMesh` (landscape mesh if enabled, else the mesh library), with load failures still surfaced to the status bar. `CommandHistory` snapshots the landscape fields (including a copy of the heights vector) so sculpt strokes and spawn/delete undo cleanly; `SceneSerializer` round-trips `enabled/resolution/size/base_height` + the heights array and rebuilds the mesh on load.
+- **Wiring & versioning**: `CMakeLists.txt` adds `src/core/Landscape.cpp` and `src/editor/LandscapePanel.cpp` and bumps the project version to `0.34.0`.
+- **Documentation**: `docs/Singularity_Architecture_Textbook.md` gains a Phase 34 chapter ("Landscape & Topology Design Suite") covering the heightfield component, the mesh builder, the sculpt kernels, the ray-cast pick, the workspace viewport override and the undo/serialization story.
+
+### Verified
+
+- Clean rebuild succeeds. Editor smoke run stays alive with the landscape workspace, panel, brush cursor and sculpt transaction wiring, an empty log, and no stray file edits on disk.
+
 ## [0.33.0-alpha] — 2026-08-15
 
 ### Added

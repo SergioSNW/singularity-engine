@@ -30,9 +30,11 @@
 #include "editor/HistoryPanel.h"
 #include "editor/ViewportLayoutPanel.h"
 #include "editor/ProfilerPanel.h"
+#include "editor/LandscapePanel.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
 #include "core/AssetImporter.h"
+#include "core/Landscape.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -83,6 +85,7 @@ Application::Application()
     , m_inspector_panel(nullptr)
     , m_history(nullptr)
     , m_history_panel(nullptr)
+    , m_landscape_panel(nullptr)
     , m_viewport_target(nullptr)
     , m_viewport_target_w(0)
     , m_viewport_target_h(0)
@@ -274,6 +277,70 @@ static bool ProjectToScreen(const Mat4 &view_proj, float near_p, int w, int h,
     sy = (int)((1.0f - clip.y / w_out) * 0.5f * h);
     depth = w_out;
     return true;
+}
+
+// Phase 34 landscape brush cursor: the viewport override that replaces the
+// transform gizmo while sculpting. Draws a projected brush-sphere ring pair
+// (outer + inner cap ring) on the surface at the brush center, a depth pole
+// down to the base plane, and a center cross, so the stroke footprint reads
+// clearly while painting terrain.
+static void DrawLandscapeBrushCursor(SDL_Renderer *renderer,
+                                     const Mat4 &view_proj, float near_p,
+                                     int w, int h, const Vec3 &center,
+                                     float radius, int *draw_calls)
+{
+    if (radius <= 0.0f)
+        return;
+    const Vec3 up{ 0.0f, 1.0f, 0.0f };
+    const Vec3 ref = (std::fabs(up.x) < 0.9f) ? Vec3{ 1.0f, 0.0f, 0.0f }
+                                              : Vec3{ 0.0f, 1.0f, 0.0f };
+    const Vec3 u = Vec3Normalize(Vec3Cross(ref, up));
+    const Vec3 v = Vec3Cross(up, u);
+    const int SEG = 48;
+
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const float rr = (pass == 0) ? radius : radius * 0.65f;
+        SDL_SetRenderDrawColor(renderer, 110, 200, 255, 255);
+        int px = 0, py = 0;
+        bool have = false;
+        for (int i = 0; i <= SEG; ++i)
+        {
+            const float a = (float)i / (float)SEG * 6.2831853f;
+            const Vec3 pt = Vec3Add(center,
+                Vec3Add(Vec3Scale(u, std::cos(a) * rr),
+                        Vec3Scale(v, std::sin(a) * rr)));
+            int sx, sy;
+            float depth;
+            if (!ProjectToScreen(view_proj, near_p, w, h, pt, sx, sy, depth))
+            {
+                have = false;
+                continue;
+            }
+            if (have)
+            {
+                if (draw_calls)
+                    ++(*draw_calls);
+                SDL_RenderDrawLine(renderer, px, py, sx, sy);
+            }
+            px = sx;
+            py = sy;
+            have = true;
+        }
+    }
+
+    // Depth pole down to the base plane + center cross.
+    SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+    DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                      center, { center.x, center.y - radius, center.z },
+                      draw_calls);
+    const float arm = radius * 0.14f;
+    DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                      { center.x - arm, center.y, center.z },
+                      { center.x + arm, center.y, center.z }, draw_calls);
+    DrawProjectedLine(renderer, view_proj, near_p, w, h,
+                      { center.x, center.y - arm, center.z },
+                      { center.x, center.y + arm, center.z }, draw_calls);
 }
 
 // One screen-space shaded triangle, collected for the global painter pass.
@@ -517,11 +584,23 @@ void Application::RenderViewportTarget()
         // (Mesh::bounds_min/max). The mesh can change through the editor or
         // a scene load, so the component is recomputed each frame to stay a
         // true mirror of the geometry used for picking and collision.
+        // Procedural landscapes rebuild their generated mesh here when a
+        // sculpt stroke dirtied it, so rendering always sees fresh geometry.
         for (auto &entity_ptr : m_scene->GetEntities())
         {
             Entity &entity = *entity_ptr;
-            std::string mesh_error;
-            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            const Mesh *mesh = nullptr;
+            if (entity.landscape.enabled)
+            {
+                if (entity.landscape.mesh_dirty)
+                    LandscapeRebuildMesh(entity.landscape);
+                mesh = entity.landscape.mesh.get();
+            }
+            else
+            {
+                std::string mesh_error;
+                mesh = ResolveMesh(entity, mesh_error);
+            }
             if (mesh)
             {
                 entity.bounds.local_min = mesh->bounds_min;
@@ -645,8 +724,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
         Entity &e = *entity_ptr;
         if (&e == skip_entity || !e.material.active)
             continue;
-        std::string mesh_error;
-        const Mesh *mesh = ResolveMesh(e, mesh_error);
+        const Mesh *mesh = ResolveEntityMesh(e);
         if (!mesh)
             continue;
         Mat4 world = m_scene->ComputeWorldMatrix(e);
@@ -666,8 +744,13 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             if (&entity == skip_entity || !entity.material.active)
                 continue;
 
+            // Landscapes render their generated mesh; every other entity
+            // resolves through the mesh library, surfacing load failures to
+            // the status bar so a broken asset is never silently dropped.
             std::string mesh_error;
-            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            const Mesh *mesh = entity.landscape.enabled
+                ? entity.landscape.mesh.get()
+                : ResolveMesh(entity, mesh_error);
             if (!mesh_error.empty() && mesh_error != m_mesh_error)
             {
                 m_mesh_error = mesh_error;
@@ -695,8 +778,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             if (&entity == skip_entity || !entity.material.active)
                 continue;
 
-            std::string mesh_error;
-            const Mesh *mesh = ResolveMesh(entity, mesh_error);
+            const Mesh *mesh = ResolveEntityMesh(entity);
             if (!mesh)
                 continue;
 
@@ -726,8 +808,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     // Selected entity: amber wireframe outline + white bounds box.
     if (m_overlay.bounds && selected && selected != camera_entity)
     {
-        std::string mesh_error;
-        const Mesh *mesh = ResolveMesh(*selected, mesh_error);
+        const Mesh *mesh = ResolveEntityMesh(*selected);
         static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
         if (mesh)
         {
@@ -879,8 +960,24 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     gf.snap_rotation = m_snap.rotation;
     gf.snap_scale = m_snap.scale;
     gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
-    if (m_overlay.gizmo)
+
+    // Phase 34 viewport override: in Landscape Mode the transform gizmo is
+    // replaced by the sculpt brush cursor — a projected brush-sphere ring
+    // tracking the mouse on the terrain (hit computed by UpdateLandscapeBrush
+    // earlier in the frame). The gizmo stays suppressed while sculpting.
+    if (IsLandscapeSculptMode())
+    {
+        if (m_landscape_brush_valid)
+        {
+            DrawLandscapeBrushCursor(renderer, view_proj, near_p, w, h,
+                                     m_landscape_brush_center,
+                                     m_landscape_brush.radius, &draw_calls);
+        }
+    }
+    else if (m_overlay.gizmo)
+    {
         m_gizmo->Draw(renderer, gf);
+    }
 }
 
 Entity *Application::FindActiveCamera() const
@@ -1161,6 +1258,17 @@ const Mesh *Application::ResolveMesh(const Entity &entity, std::string &error)
     if (mesh)
         return mesh;
     return m_mesh_library->GetBuiltinCube();
+}
+
+// The mesh that renders / picks an entity: procedural landscapes carry their
+// generated mesh directly (rebuilt on demand by RenderViewportTarget), every
+// other entity resolves through the mesh library like ResolveMesh.
+const Mesh *Application::ResolveEntityMesh(const Entity &entity)
+{
+    if (entity.landscape.enabled && entity.landscape.mesh)
+        return entity.landscape.mesh.get();
+    std::string error;
+    return ResolveMesh(entity, error);
 }
 
 // Resolve the texture + tint that shade `entity`. A .mat asset assigned to the
@@ -1576,6 +1684,128 @@ Entity *Application::SpawnPrimitive(const char *label, const char *mesh_path,
     m_scene_status = "Spawned '" + std::string(label) + "'";
     PushToast("Spawned '" + std::string(label) + "'");
     return &created;
+}
+
+// Phase 34: spawn a sculptable heightfield terrain. The grid is initialized,
+// meshed, tinted as ground, placed in front of the editor camera, selected and
+// armed as the brush target. Undoable like any spawn.
+Entity *Application::CreateLandscape()
+{
+    if (!m_scene)
+        return nullptr;
+
+    Entity &created = m_scene->CreateEntity("Landscape");
+    created.landscape.enabled = true;
+    created.landscape.resolution = 64;
+    created.landscape.size = 40.0f;
+    created.landscape.base_height = 0.0f;
+    LandscapeInitialize(created.landscape);
+    LandscapeRebuildMesh(created.landscape);
+    created.material.color[0] = 0.35f;
+    created.material.color[1] = 0.55f;
+    created.material.color[2] = 0.33f;
+    created.material.color[3] = 1.0f;
+
+    // Center the grid a few meters in front of the editor camera so it is
+    // visible on creation; the surface sits at y = base_height (0).
+    const float yaw = m_editor_camera.yaw * 3.1415926535f / 180.0f;
+    created.transform.position[0] =
+        m_editor_camera.position.x - std::sin(yaw) * 6.0f;
+    created.transform.position[2] =
+        m_editor_camera.position.z - std::cos(yaw) * 6.0f;
+
+    if (m_history)
+        m_history->PushSpawn(created, "Create 'Landscape'");
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_landscape_brush.target_id = created.id;
+    m_scene_status = "Created 'Landscape'";
+    PushToast("Created 'Landscape'");
+    return &created;
+}
+
+bool Application::IsLandscapeSculptMode() const
+{
+    if (m_workspace_manager.GetWorkspace() != WorkspaceManager::Workspace::Landscape)
+        return false;
+    if (m_landscape_brush.target_id < 0 || !m_scene)
+        return false;
+    const Entity *target = m_scene->GetEntityById(m_landscape_brush.target_id);
+    return target && target->landscape.enabled;
+}
+
+void Application::UpdateLandscapeBrush(const GizmoFrame &gf, float dt)
+{
+    m_landscape_brush_valid = false;
+
+    Entity *target = m_scene
+        ? m_scene->GetEntityById(m_landscape_brush.target_id) : nullptr;
+    if (!target || !target->landscape.enabled)
+    {
+        // Target vanished (scene switch / delete): close any dangling stroke
+        // transaction so the undo stack never sits open.
+        if (m_landscape_sculpting)
+        {
+            m_landscape_sculpting = false;
+            if (m_history)
+                m_history->EndEntityEdit();
+        }
+        return;
+    }
+
+    if (!gf.hovered || gf.vp_width <= 1.0f || gf.vp_height <= 1.0f)
+        return;
+
+    // Build the pick ray in the same camera basis as the gizmo (matches
+    // ComputeDropWorldPos): view = RotX(-pitch) * RotY(-yaw) * Translate(-pos).
+    const float PI = 3.1415926535f;
+    const float nx = (2.0f * gf.mouse_x / gf.vp_width - 1.0f);
+    const float ny = (1.0f - 2.0f * gf.mouse_y / gf.vp_height);
+    const float tan_half = std::tan(gf.cam_fov * PI / 360.0f);
+    const float aspect = gf.vp_width / gf.vp_height;
+    const float p = gf.cam_pitch * PI / 180.0f;
+    const float y = gf.cam_yaw * PI / 180.0f;
+    const float sp = std::sin(p), cp = std::cos(p);
+    const float sy = std::sin(y), cy = std::cos(y);
+    const Vec3 right{ cy, 0.0f, -sy };
+    const Vec3 up{ sp * sy, cp, sp * cy };
+    const Vec3 fwd{ cp * sy, -sp, cp * cy };
+    const Vec3 dir = Vec3Normalize(Vec3Add(
+        Vec3Add(Vec3Scale(right, nx * tan_half * aspect),
+                Vec3Scale(up, ny * tan_half)),
+        Vec3Scale(fwd, -1.0f)));
+
+    const Mat4 world = m_scene->ComputeWorldMatrix(*target);
+    Vec3 hit;
+    float t;
+    if (!LandscapeRaycast(target->landscape, world, gf.cam_pos, dir, t, hit))
+        return;
+    m_landscape_brush_valid = true;
+    m_landscape_brush_center = hit;
+
+    // Paint while LMB is held: one undo transaction per stroke.
+    const bool lmb = ImGui::IsMouseDown(0);
+    if (lmb && !m_landscape_sculpting)
+    {
+        m_landscape_sculpting = true;
+        if (m_history)
+            m_history->BeginEntityEdit(target->id, "Sculpt Landscape");
+    }
+    if (m_landscape_sculpting)
+    {
+        const Vec3 local = LandscapeWorldToLocal(world, hit);
+        const float scale = LandscapeWorldScale(world);
+        LandscapeSculpt(target->landscape, m_landscape_brush.tool, local,
+                        m_landscape_brush.radius / std::max(scale, 1e-6f),
+                        m_landscape_brush.strength * dt,
+                        m_landscape_brush.falloff);
+    }
+    if (!lmb && m_landscape_sculpting)
+    {
+        m_landscape_sculpting = false;
+        if (m_history)
+            m_history->EndEntityEdit();
+    }
 }
 
 void Application::DeleteSelection()
@@ -2004,6 +2234,16 @@ void Application::DrawViewportContextMenu()
             SpawnPrimitive("Cube", nullptr, "Checker.mat");
         if (ImGui::MenuItem("Create Octahedron"))
             SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
+        if (ImGui::MenuItem("Create Landscape"))
+        {
+            // Spawn + select + arm the brush, then jump into the Landscape
+            // workspace so the viewport override is immediately active.
+            if (CreateLandscape())
+            {
+                m_script_editor->RequestDockCodeWindow(
+                    m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+            }
+        }
         if (ImGui::MenuItem("Create Directional Light"))
         {
             Entity &light = CreateDirectionalLightEntity(*m_scene, "Directional Light");
@@ -2557,6 +2797,13 @@ bool Application::Init(int width, int height, const char *title)
         });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
+    // Phase 34 landscape & topology design: the terrain sculpting panel owns no
+    // scene state — it edits the shared LandscapeBrushSettings and routes
+    // terrain creation through the Application (spawn + undo + selection).
+    m_landscape_panel = new LandscapePanel(m_scene, m_selection, &m_landscape_brush,
+        [this]() { CreateLandscape(); });
+    m_panels.push_back(std::shared_ptr<LandscapePanel>(m_landscape_panel));
+
     // Live theme customizer + grid snapping config + viewport navigation
     // tuning: owns no state itself — it edits Application's token set (and
     // SnapSettings / EditorCameraSettings) and asks for a ConfigureStyle
@@ -2601,6 +2848,10 @@ bool Application::Init(int width, int height, const char *title)
         m_script_editor->RequestDockCodeWindow(
             m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
     } });
+    cp.Register({ "Switch to Landscape Mode", "Workspace", "", [this]() {
+        m_script_editor->RequestDockCodeWindow(
+            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+    } });
     cp.Register({ "Reset View to Workspace Default", "Workspace", "", [this]() {
         m_script_editor->RequestDockCodeWindow(
             m_workspace_manager.ResetToWorkspaceDefault());
@@ -2624,6 +2875,15 @@ bool Application::Init(int width, int height, const char *title)
     } });
     cp.Register({ "Create Cube", "Create", "", [this]() {
         SpawnPrimitive("Cube", nullptr, "Checker.mat");
+    } });
+    cp.Register({ "Create Landscape", "Create", "", [this]() {
+        // Spawn + select + arm the brush, then jump into the Landscape
+        // workspace so the viewport override is immediately active.
+        if (CreateLandscape())
+        {
+            m_script_editor->RequestDockCodeWindow(
+                m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+        }
     } });
     cp.Register({ "Create Octahedron", "Create", "", [this]() {
         SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
@@ -3018,6 +3278,13 @@ void Application::Run()
                         m_script_editor->RequestDockCodeWindow(
                             m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
                     }
+                    if (ImGui::MenuItem(
+                            WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Landscape),
+                            nullptr, current == WorkspaceManager::Workspace::Landscape))
+                    {
+                        m_script_editor->RequestDockCodeWindow(
+                            m_workspace_manager.ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                    }
                     ImGui::Spacing();
                     ImGui::TextDisabled("Layout");
                     ImGui::Separator();
@@ -3357,7 +3624,14 @@ void Application::Run()
                 gf.snap_rotation = m_snap.rotation;
                 gf.snap_scale = m_snap.scale;
                 gf.snap_active = m_snap.enabled || ImGui::GetIO().KeyCtrl;
-                m_gizmo->Update(gf);
+
+                // Phase 34 viewport override: in Landscape Mode the brush
+                // replaces the gizmo — the same mouse + camera context drives
+                // the terrain pick and paint strokes.
+                if (IsLandscapeSculptMode())
+                    UpdateLandscapeBrush(gf, (float)dt);
+                else
+                    m_gizmo->Update(gf);
             }
         }
         m_profiler.EndStage(Profiler::Update);
@@ -3425,6 +3699,7 @@ void Application::Shutdown()
     m_console_panel = nullptr;
     m_inspector_panel = nullptr;
     m_viewport_layout_panel = nullptr;
+    m_landscape_panel = nullptr;
     m_profiler_panel = nullptr;
 
     // Tear the console pipes down before the window/SDL go away so no further

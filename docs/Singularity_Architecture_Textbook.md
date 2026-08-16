@@ -11,6 +11,7 @@
 7. [Phase 31 — Advanced Content Browser & Thumbnail Generator](#7-phase-31--advanced-content-browser--thumbnail-generator)
 8. [Phase 32 — Integrated Lua Scripting IDE](#8-phase-32--integrated-lua-scripting-ide)
 9. [Phase 33 — True Workspace Layouts, Tabbed Mini-IDE & Theme](#9-phase-33--true-workspace-layouts-tabbed-mini-ide--theme)
+10. [Phase 34 — Landscape & Topology Design Suite](#10-phase-34--landscape--topology-design-suite)
 
 ---
 
@@ -714,3 +715,89 @@ The engine rebuilds clean (the new `LineNumberFill` index flows through the
 existing palette-blend loop). The editor smoke run stays alive with the workspace
 presets, the tabbed IDE, the Float/Dock toggle, and the gutter-filled mini-theme
 wired, an empty log, and no stray file edits on disk.
+
+---
+
+## 10. Phase 34 — Landscape & Topology Design Suite
+
+Phase 34 gives the engine its first procedural terrain: a heightfield component,
+a mesh builder, three sculpt kernels, a dedicated workspace whose viewport
+replaces the transform gizmo with a live brush cursor, and full undo/serialization
+support for the painted heights. Everything is editor-driven — landscapes are
+authoring-only entities whose mesh is regenerated on demand.
+
+### 10.1 The Heightfield Component (`src/core/Components.h`)
+
+`LandscapeComponent` stores the terrain as data, not geometry:
+
+- `enabled` — defaults to **false**, so an ordinary entity is never mistaken for
+  a landscape (unlike a mesh path, "no terrain" must be the safe default).
+- `resolution` / `size` — `resolution × resolution` quads spanning `size` world
+  units, centered on the entity origin (local x/z in `[-size/2, +size/2]`).
+- `base_height` — the y baseline the surface is painted on top of.
+- `heights` — `(resolution+1)²` floats, row-major, the only editable state.
+- `mesh` — a runtime-only `shared_ptr<Mesh>` generated from the heights; it is
+  never serialized, and rebuilt whenever `mesh_dirty` is set.
+
+### 10.2 Mesh Building and the Render Path (`src/core/Landscape.cpp`)
+
+`LandscapeRebuildMesh` triangulates the grid with winding chosen so face normals
+point +Y, adds a sparse **edge_lines** wireframe (every `res/8` grid line, riding
+the actual surface heights) so the terrain reads through the editor's wireframe
+pass, and derives `bounds_min/max` from the min/max height for picking. In the
+Application's per-entity AABB refresh loop a dirty landscape is rebuilt **before**
+its bounds are read, so rendering, picking, and gizmo ray-casts always see fresh
+geometry. All render passes and the selection outline resolve meshes through a new
+`ResolveEntityMesh`: landscape mesh if enabled, otherwise the mesh library
+(`ResolveMesh`), with load failures still surfaced to the status bar.
+
+### 10.3 Sculpt Kernels in Local Space
+
+The brush hits the terrain in **world** space (ray-cast) but sculpts in the
+landscape's **local** grid space:
+
+- `LandscapeWorldToLocal` inverts the entity world matrix via the affine 4×4
+  inverse, so rotated and non-uniformly scaled landscapes still sculpt correctly.
+- The world-space brush radius is divided by `LandscapeWorldScale` (the average
+  column scale) to get a radius in grid cells.
+- **Raise** raises vertices with a `1 - smoothstep(r_cells - fade_in, r_cells, d)`
+  falloff; **Smooth** blends each vertex toward its 4-neighbor average; **Flatten**
+  blends toward the bilinear-sampled height at the brush center (`LandscapeSampleHeightLocal`).
+- Each frame stamps `strength × dt` and marks the mesh dirty.
+
+### 10.4 The Landscape Workspace and Viewport Override
+
+A new `Workspace::Landscape` ("Landscape Mode") lays out a right rail (Landscape
+panel on top, Inspector/Settings below), Hierarchy left, Development Zone + Stats
+bottom, with the Script Editor floating, and round-trips via "landscape" in the
+layout save/load. When the workspace is Landscape Mode **and** the brush target
+entity has `landscape.enabled`, `UpdateLandscapeBrush` replaces `m_gizmo->Update`:
+it builds the same camera-basis pick ray as `ComputeDropWorldPos`, ray-casts the
+terrain (slab test → march → bisection), stores the hit, and while LMB is held
+stamps the brush inside a single **"Sculpt Landscape"** undo transaction per
+stroke. `RenderEditorOverlay` swaps the gizmo draw for `DrawLandscapeBrushCursor`:
+a projected outer + inner-cap ring pair, a depth pole, and a center cross.
+
+### 10.5 The LandscapePanel
+
+`LandscapePanel` edits the shared `LandscapeBrushSettings` (tool, size, strength,
+falloff, target id): size/strength/falloff sliders, a Raise / Smooth / Flatten
+tool palette, a target combo with a "+" Create Landscape action, and an empty-state
+create button. Creation routes through `Application::CreateLandscape`, which spawns
+a green-tinted 64×64×40 m terrain ~6 m in front of the editor camera, pushes a
+spawn undo record, selects it, and arms the brush.
+
+### 10.6 Undo and Serialization
+
+`CommandHistory::EntitySnapshot` now captures the landscape fields including a
+copy of the heights vector, so each paint stroke (and spawn/delete) undoes
+cleanly. `SceneSerializer` writes `enabled/resolution/size/base_height` and the
+heights array, and on load drops the generated mesh and marks it dirty so the
+next frame rebuilds it.
+
+### 10.7 Testability and Verification
+
+The engine rebuilds clean with both new translation units (`src/core/Landscape.cpp`,
+`src/editor/LandscapePanel.cpp`) in the explicit CMake source list. The editor smoke
+run stays alive with the landscape workspace, panel, brush cursor and sculpt
+transaction wiring, an empty log, and no stray file edits on disk.
