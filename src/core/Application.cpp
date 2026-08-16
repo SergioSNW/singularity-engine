@@ -3053,6 +3053,8 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Save Scene As...", "File", "", [this]() { OpenSaveAsModal(); } });
     cp.Register({ "Enter Play Mode", "Transport", "", [this]() { EnterPlayMode(); } });
     cp.Register({ "Stop Play Mode", "Transport", "", [this]() { ExitPlayMode(); } });
+    cp.Register({ "Play Timeline", "Transport", "", [this]() { PlayPauseTimeline(); } });
+    cp.Register({ "Stop Timeline", "Transport", "", [this]() { StopTimeline(); } });
 
     // Entity operations (palette + viewport context menu share these paths).
     cp.Register({ "Duplicate Selected", "Edit", "Ctrl+D", [this]() { DuplicateSelection(); } });
