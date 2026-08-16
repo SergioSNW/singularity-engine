@@ -36,7 +36,7 @@ struct PostParams
 {
     float exposure = 1.0f;
     float gamma = 2.2f;
-    float bloom_strength = 0.7f;
+    float bloom_strength = 0.2f;
     float saturation = 1.0f;
     float contrast = 1.0f;
     float temperature = 0.0f;      // -1 cool .. +1 warm

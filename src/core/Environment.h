@@ -34,7 +34,7 @@ struct EnvironmentSettings
     float sky_color_top[3] = { 0.09f, 0.20f, 0.45f };      // zenith stop
     float sky_color_horizon[3] = { 0.62f, 0.70f, 0.80f };  // horizon stop
     float sky_sun_color[3] = { 1.0f, 0.93f, 0.82f };
-    float sky_sun_intensity = 1.2f;
+    float sky_sun_intensity = 0.9f;
     float sky_sun_glow = 0.38f;     // glow radius (fraction of the shorter axis)
     float sky_sun_disk = 0.012f;    // bright disk radius (same units)
     float sky_sun_yaw = 35.0f;      // sun direction heading (degrees)
@@ -53,8 +53,8 @@ struct EnvironmentSettings
     float post_exposure = 1.0f;
     float post_gamma = 2.2f;        // output gamma (display curve)
     bool post_bloom_enabled = true;
-    float post_bloom_threshold = 0.85f;  // luminance above which pixels bloom
-    float post_bloom_strength = 0.7f;    // additive gain of the blurred pass
+    float post_bloom_threshold = 0.92f;  // luminance above which pixels bloom
+    float post_bloom_strength = 0.2f;    // additive gain of the blurred pass
     float post_bloom_radius = 2.0f;      // gaussian blur radius (1..4)
     bool post_tonemap_enabled = true;    // ACES filmic tone map
     float post_saturation = 1.0f;        // 0 = grayscale, 2 = vivid

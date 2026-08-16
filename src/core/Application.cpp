@@ -199,6 +199,8 @@ static void DrawProjectedLine(SDL_Renderer *renderer, const Mat4 &view_proj,
                               float near_p, int w, int h, Vec3 a, Vec3 b,
                               int *draw_calls = nullptr)
 {
+    if (!renderer)
+        return;
     // For the perspective matrix, w_out == -z_view (depth in front of camera).
     float wa, wb;
     Mat4MulVec3(view_proj, a, wa);
@@ -245,6 +247,8 @@ static void DrawWorldAABB(SDL_Renderer *renderer, const Mat4 &view_proj, float n
                           Uint8 r, Uint8 g, Uint8 b,
                           int *draw_calls = nullptr)
 {
+    if (!renderer)
+        return;
     const Vec3 c[8] = {
         { min.x, min.y, min.z }, { max.x, min.y, min.z },
         { max.x, max.y, min.z }, { min.x, max.y, min.z },
@@ -266,6 +270,8 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                              float near_p, int w, int h,
                              int *draw_calls = nullptr)
 {
+    if (!renderer)
+        return;
     const float extent = 20.0f;
 
     // Minor grid lines on the y=0 (XZ) plane; the axis lines are drawn below.
@@ -721,7 +727,7 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
 static void FlushTriBatch(SDL_Renderer *renderer, std::vector<SDL_Vertex> &verts,
                           SDL_Texture *texture, int *draw_calls = nullptr)
 {
-    if (verts.empty())
+    if (!renderer || verts.empty())
         return;
     // Chunked so very large meshes stay well under any renderer vertex limit.
     static const size_t MAX_VERTS = 6000;
@@ -742,6 +748,8 @@ static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
                                 const Mesh &mesh, const float color[3], bool brighten,
                                 int *draw_calls = nullptr)
 {
+    if (!renderer)
+        return;
     float gain = brighten ? 1.35f : 1.0f;
     Uint8 r = (Uint8)std::min(255.0f, color[0] * 255.0f * gain);
     Uint8 g = (Uint8)std::min(255.0f, color[1] * 255.0f * gain);
@@ -759,6 +767,8 @@ static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
 static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, int w, int h,
                           int *draw_calls = nullptr)
 {
+    if (!renderer || tris.empty())
+        return;
     // Painter's algorithm across all entities: farthest triangles first.
     std::stable_sort(tris.begin(), tris.end(),
         [](const FillTri &a, const FillTri &b) { return a.depth > b.depth; });
@@ -906,10 +916,23 @@ void Application::RenderViewportTarget()
 
             // Phase 37 post-processing (bloom, tone map, color grade) runs on
             // the graded pixels but *before* the editor overlay, so selection
-            // bounds and the gizmo stay crisp and ungraded.
-            if (m_environment.post_enabled)
-                m_fx.PostProcess(renderer, m_viewport_target, rx, ry, rw, rh,
-                                 m_environment);
+            // bounds and the gizmo stay crisp and ungraded.  Bypass entirely
+            // in lightweight modes (Unlit/Wireframe) or when bloom is off and
+            // every colour-grading parameter sits at its neutral default — the
+            // ~55 ms SDL_RenderReadPixels readback is not worth the cost.
+            {
+                const bool lightweight =
+                    m_overlay.render_mode != ViewportRenderMode::Lit;
+                const bool grades_neutral =
+                    !m_environment.post_bloom_enabled &&
+                    m_environment.post_exposure  == 1.0f &&
+                    m_environment.post_saturation == 1.0f &&
+                    m_environment.post_contrast   == 1.0f &&
+                    m_environment.post_temperature == 0.0f;
+                if (m_environment.post_enabled && !lightweight && !grades_neutral)
+                    m_fx.PostProcess(renderer, m_viewport_target, rx, ry, rw, rh,
+                                     m_environment);
+            }
 
             if (is_primary && m_state == EngineState::Editor && m_gizmo)
                 RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh,
@@ -929,7 +952,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
                                   float near_p, int w, int h, Entity *skip_entity,
                                   const Vec3 &cam_pos, int &draw_calls)
 {
-    if (!m_scene)
+    if (!m_scene || !renderer)
         return;
 
     // Ground-plane grid first so entities draw on top of it.
@@ -956,6 +979,8 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     {
         for (auto &entity_ptr : m_scene->GetEntities())
         {
+            if (!entity_ptr)
+                continue;
             Entity &e = *entity_ptr;
             if (&e == skip_entity || !e.material.active)
                 continue;
@@ -976,6 +1001,8 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
         std::vector<FillTri> tris;
         for (auto &entity_ptr : m_scene->GetEntities())
         {
+            if (!entity_ptr)
+                continue;
             Entity &entity = *entity_ptr;
             if (&entity == skip_entity || !entity.material.active)
                 continue;
@@ -1012,6 +1039,8 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     {
         for (auto &entity_ptr : m_scene->GetEntities())
         {
+            if (!entity_ptr)
+                continue;
             Entity &entity = *entity_ptr;
             if (&entity == skip_entity || !entity.material.active)
                 continue;
@@ -1035,7 +1064,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                                       const EditorCamera &pose, float near_p,
                                       int w, int h, int &draw_calls)
 {
-    if (!m_scene || !m_selection || !m_gizmo)
+    if (!m_scene || !m_selection || !m_gizmo || !renderer)
         return;
 
     Entity *camera_entity = GetPrimarySkipEntity();
@@ -1095,6 +1124,8 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     {
         for (auto &entity_ptr : m_scene->GetEntities())
         {
+            if (!entity_ptr)
+                continue;
             Entity &collider_entity = *entity_ptr;
             if (!collider_entity.collider.enabled)
                 continue;
@@ -1134,6 +1165,8 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
         const float reach = 2.0f; // direction arrow length
         for (auto &entity_ptr : m_scene->GetEntities())
         {
+            if (!entity_ptr)
+                continue;
             Entity &light_entity = *entity_ptr;
             if (!light_entity.light.active)
                 continue;
