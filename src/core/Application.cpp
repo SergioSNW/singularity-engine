@@ -390,14 +390,18 @@ static void DrawLandscapeBrushCursor(SDL_Renderer *renderer,
 }
 
 // One screen-space shaded triangle, collected for the global painter pass.
-// `texture` may be null (flat shading); when set, `r/g/b` act as the tint that
-// SDL multiplies against the texture and `u0..v2` are its per-vertex UVs.
+// `texture` may be null (flat shading); when set, the per-vertex colors act
+// as the tint that SDL multiplies against the texture and `u0..v2` are its
+// per-vertex UVs. Per-vertex colors enable Gouraud shading (smooth interpolation
+// of lighting across the triangle face).
 struct FillTri
 {
     float depth;
     int x0, y0, x1, y1, x2, y2;
     float u0, v0, u1, v1, u2, v2;
-    Uint8 r, g, b;
+    Uint8 r0, g0, b0;   // vertex 0 color (Gouraud)
+    Uint8 r1, g1, b1;   // vertex 1 color (Gouraud)
+    Uint8 r2, g2, b2;   // vertex 2 color (Gouraud)
     SDL_Texture *texture = nullptr;
 };
 
@@ -581,6 +585,57 @@ static Mesh BuildPreviewCylinder()
     return m;
 }
 
+// Compute per-vertex shade (diffuse + ambient + specular) for a given normal.
+// Used by EmitEntityTris for Gouraud shading: called once per vertex with that
+// vertex's averaged normal, producing smooth lighting interpolation across the
+// triangle face.
+static void ShadeVertex(const Vec3 &n, const Vec3 &centroid, const Vec3 &cam_pos,
+                         const std::vector<RenderLight> &lights,
+                         const std::vector<WorldAABB> &occluders,
+                         const Entity *self, float ao, float spec_power,
+                         float spec_weight, float f0_r, float f0_g, float f0_b,
+                         float &out_r, float &out_g, float &out_b)
+{
+    Vec3 to_cam = Vec3Sub(cam_pos, centroid);
+    const float to_cam_len = Vec3Length(to_cam);
+    Vec3 v = (to_cam_len > 1e-5f) ? Vec3Scale(to_cam, 1.0f / to_cam_len)
+                                  : Vec3{ 0.0f, 0.0f, 1.0f };
+
+    out_r = out_g = out_b = 0.0f;
+    for (const RenderLight &l : lights)
+    {
+        float diffuse = std::max(0.0f, Vec3Dot(n, Vec3Scale(l.dir, -1.0f))) * l.intensity;
+        float shadow = 1.0f;
+        if (diffuse > 0.0f && l.shadow_strength > 0.0f && !occluders.empty())
+            shadow = DirectionalShadowFactor(l, centroid, n, occluders, self);
+        const float ambient = pbr::AmbientFloor(l.ambient, ao);
+        float factor = ambient + (1.0f - ambient) * diffuse * shadow;
+
+        float spec_r = 0.0f, spec_g = 0.0f, spec_b = 0.0f;
+        if (spec_weight > 0.0f)
+        {
+            Vec3 h = Vec3Add(Vec3Scale(l.dir, -1.0f), v);
+            const float h_len = Vec3Length(h);
+            if (h_len > 1e-5f)
+            {
+                h = Vec3Scale(h, 1.0f / h_len);
+                const float spec = pbr::BlinnPhong(Vec3Dot(n, h), spec_power) *
+                                   l.intensity * spec_weight;
+                spec_r = spec * f0_r;
+                spec_g = spec * f0_g;
+                spec_b = spec * f0_b;
+            }
+        }
+
+        out_r += factor * l.color.x + spec_r * l.color.x;
+        out_g += factor * l.color.y + spec_g * l.color.y;
+        out_b += factor * l.color.z + spec_b * l.color.z;
+    }
+    out_r = std::min(out_r, 1.0f);
+    out_g = std::min(out_g, 1.0f);
+    out_b = std::min(out_b, 1.0f);
+}
+
 // Project + shade one mesh into screen-space FillTri entries. `color` is the
 // RGBA albedo tint (already resolved from the entity's material asset when
 // assigned); `uvs` (parallel to positions) and `texture` are used together to
@@ -622,17 +677,25 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             !ProjectToScreen(view_proj, near_p, w, h, c, cx, cy, dc))
             continue;
 
-        // Directional shading: diffuse from the world-space face normal, an
-        // ambient floor, a ray-cast directional shadow, and a Blinn-Phong
-        // specular term whose strength and tint come from the material's
-        // metallic/roughness channels. Every active light contributes
-        // additively; the shadow term only applies to lit faces.
+        // Gouraud shading: compute per-vertex shades using averaged vertex
+        // normals (from Mesh::normals when available, falling back to the flat
+        // face normal). Each vertex gets its own shade, and SDL_RenderGeometry
+        // linearly interpolates the colors across the triangle.
         Vec3 e1 = Vec3Sub(b, a);
         Vec3 e2 = Vec3Sub(c, a);
-        Vec3 n = Vec3Normalize(Vec3Cross(e1, e2));
+        Vec3 face_n = Vec3Normalize(Vec3Cross(e1, e2));
         Vec3 centroid = Vec3Scale(Vec3Add(Vec3Add(a, b), c), 1.0f / 3.0f);
 
-        float shade_r = 1.0f, shade_g = 1.0f, shade_b = 1.0f;
+        // Per-vertex normals: use averaged normals when the mesh provides them,
+        // otherwise fall back to the face normal (flat shading).
+        const bool has_normals = !mesh.normals.empty();
+        Vec3 n0 = has_normals ? mesh.normals[i]     : face_n;
+        Vec3 n1 = has_normals ? mesh.normals[i + 1] : face_n;
+        Vec3 n2 = has_normals ? mesh.normals[i + 2] : face_n;
+
+        float sr0 = 1.0f, sg0 = 1.0f, sb0 = 1.0f;
+        float sr1 = 1.0f, sg1 = 1.0f, sb1 = 1.0f;
+        float sr2 = 1.0f, sg2 = 1.0f, sb2 = 1.0f;
         if (!lights.empty())
         {
             const float ao = std::clamp(shading.ao, 0.0f, 1.0f);
@@ -642,46 +705,12 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             const float f0_g = pbr::DielectricF0(shading.metallic, alb_g / 255.0f);
             const float f0_b = pbr::DielectricF0(shading.metallic, alb_b / 255.0f);
 
-            // View vector for the half-angle term; guarded against a camera
-            // sitting exactly on the centroid.
-            Vec3 to_cam = Vec3Sub(cam_pos, centroid);
-            const float to_cam_len = Vec3Length(to_cam);
-            Vec3 v = (to_cam_len > 1e-5f) ? Vec3Scale(to_cam, 1.0f / to_cam_len)
-                                          : Vec3{ 0.0f, 0.0f, 1.0f };
-
-            shade_r = shade_g = shade_b = 0.0f;
-            for (const RenderLight &l : lights)
-            {
-                float diffuse = std::max(0.0f, Vec3Dot(n, Vec3Scale(l.dir, -1.0f))) * l.intensity;
-                float shadow = 1.0f;
-                if (diffuse > 0.0f && l.shadow_strength > 0.0f && !occluders.empty())
-                    shadow = DirectionalShadowFactor(l, centroid, n, occluders, self);
-                const float ambient = pbr::AmbientFloor(l.ambient, ao);
-                float factor = ambient + (1.0f - ambient) * diffuse * shadow;
-
-                float spec_r = 0.0f, spec_g = 0.0f, spec_b = 0.0f;
-                if (spec_weight > 0.0f)
-                {
-                    Vec3 h = Vec3Add(Vec3Scale(l.dir, -1.0f), v);
-                    const float h_len = Vec3Length(h);
-                    if (h_len > 1e-5f)
-                    {
-                        h = Vec3Scale(h, 1.0f / h_len);
-                        const float spec = pbr::BlinnPhong(Vec3Dot(n, h), spec_power) *
-                                           l.intensity * spec_weight;
-                        spec_r = spec * f0_r;
-                        spec_g = spec * f0_g;
-                        spec_b = spec * f0_b;
-                    }
-                }
-
-                shade_r += factor * l.color.x + spec_r * l.color.x;
-                shade_g += factor * l.color.y + spec_g * l.color.y;
-                shade_b += factor * l.color.z + spec_b * l.color.z;
-            }
-            shade_r = std::min(shade_r, 1.0f);
-            shade_g = std::min(shade_g, 1.0f);
-            shade_b = std::min(shade_b, 1.0f);
+            ShadeVertex(n0, centroid, cam_pos, lights, occluders, self,
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr0, sg0, sb0);
+            ShadeVertex(n1, centroid, cam_pos, lights, occluders, self,
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr1, sg1, sb1);
+            ShadeVertex(n2, centroid, cam_pos, lights, occluders, self,
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr2, sg2, sb2);
         }
 
         FillTri t;
@@ -690,14 +719,13 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
         t.x1 = bx; t.y1 = by;
         t.x2 = cx; t.y2 = cy;
         t.u0 = t.v0 = t.u1 = t.v1 = t.u2 = t.v2 = 0.0f;
-        float fr = base_r * shade_r;
-        float fg = base_g * shade_g;
-        float fb = base_b * shade_b;
 
-        // Phase 37 exponential height fog: blend the shaded color toward the
-        // fog color by a per-triangle factor (density grows below the camera,
-        // decays above it). Applied in tint space so textured surfaces fog too
-        // (SDL multiplies the vertex tint by the texture sample).
+        // Per-vertex shaded colors, with fog applied per-vertex for smooth
+        // distance blending across the triangle.
+        float fr0 = base_r * sr0, fg0 = base_g * sg0, fb0 = base_b * sb0;
+        float fr1 = base_r * sr1, fg1 = base_g * sg1, fb1 = base_b * sb1;
+        float fr2 = base_r * sr2, fg2 = base_g * sg2, fb2 = base_b * sb2;
+
         if (env.fog_enabled)
         {
             const float dist = Vec3Length(Vec3Sub(centroid, cam_pos));
@@ -705,15 +733,24 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                                              env.fog_start, dist, cam_pos.y, centroid.y);
             if (fog > 0.0f)
             {
-                fr += (env.fog_color[0] * 255.0f - fr) * fog;
-                fg += (env.fog_color[1] * 255.0f - fg) * fog;
-                fb += (env.fog_color[2] * 255.0f - fb) * fog;
+                fr0 += (env.fog_color[0] * 255.0f - fr0) * fog;
+                fg0 += (env.fog_color[1] * 255.0f - fg0) * fog;
+                fb0 += (env.fog_color[2] * 255.0f - fb0) * fog;
+                fr1 += (env.fog_color[0] * 255.0f - fr1) * fog;
+                fg1 += (env.fog_color[1] * 255.0f - fg1) * fog;
+                fb1 += (env.fog_color[2] * 255.0f - fb1) * fog;
+                fr2 += (env.fog_color[0] * 255.0f - fr2) * fog;
+                fg2 += (env.fog_color[1] * 255.0f - fg2) * fog;
+                fb2 += (env.fog_color[2] * 255.0f - fb2) * fog;
             }
         }
 
-        t.r = std::isfinite(fr) ? (Uint8)std::min(255.0f, std::max(0.0f, fr)) : 0;
-        t.g = std::isfinite(fg) ? (Uint8)std::min(255.0f, std::max(0.0f, fg)) : 0;
-        t.b = std::isfinite(fb) ? (Uint8)std::min(255.0f, std::max(0.0f, fb)) : 0;
+        auto tobyte = [](float v) -> Uint8 {
+            return std::isfinite(v) ? (Uint8)std::min(255.0f, std::max(0.0f, v)) : 0;
+        };
+        t.r0 = tobyte(fr0); t.g0 = tobyte(fg0); t.b0 = tobyte(fb0);
+        t.r1 = tobyte(fr1); t.g1 = tobyte(fg1); t.b1 = tobyte(fb1);
+        t.r2 = tobyte(fr2); t.g2 = tobyte(fg2); t.b2 = tobyte(fb2);
         t.texture = texture;
         if (textured)
         {
@@ -789,10 +826,12 @@ static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, in
             FlushTriBatch(renderer, verts, active_texture, draw_calls);
             active_texture = t.texture;
         }
-        SDL_Color col = { t.r, t.g, t.b, 255 };
-        verts.push_back({ { (float)t.x0, (float)t.y0 }, col, { t.u0, t.v0 } });
-        verts.push_back({ { (float)t.x1, (float)t.y1 }, col, { t.u1, t.v1 } });
-        verts.push_back({ { (float)t.x2, (float)t.y2 }, col, { t.u2, t.v2 } });
+        SDL_Color c0 = { t.r0, t.g0, t.b0, 255 };
+        SDL_Color c1 = { t.r1, t.g1, t.b1, 255 };
+        SDL_Color c2 = { t.r2, t.g2, t.b2, 255 };
+        verts.push_back({ { (float)t.x0, (float)t.y0 }, c0, { t.u0, t.v0 } });
+        verts.push_back({ { (float)t.x1, (float)t.y1 }, c1, { t.u1, t.v1 } });
+        verts.push_back({ { (float)t.x2, (float)t.y2 }, c2, { t.u2, t.v2 } });
         if (verts.size() >= 6000)
             FlushTriBatch(renderer, verts, active_texture, draw_calls);
     }

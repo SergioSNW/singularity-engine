@@ -284,9 +284,63 @@ bool FileExists(const std::string &path)
 
 } // namespace
 
+// Compute averaged vertex normals for Gouraud shading. For each triangle, the
+// face normal is accumulated at all three vertex positions. Vertices at
+// coincident positions (quantized to 4 decimal places) share the average,
+// producing smooth shading across curved surfaces while preserving hard edges
+// at vertices where faces meet at sharp angles.
+static void ComputeVertexNormals(Mesh &mesh)
+{
+    mesh.normals.assign(mesh.positions.size(), { 0.0f, 0.0f, 0.0f });
+    if (mesh.positions.size() < 3)
+        return;
+
+    // Map quantized position → accumulated normal. The key is a snapped int3
+    // so vertices at the same position (within 0.0001 units) share normals.
+    struct PosKey { int x, y, z; bool operator<(const PosKey &o) const {
+        if (x != o.x) return x < o.x; if (y != o.y) return y < o.y; return z < o.z;
+    }};
+    std::map<PosKey, Vec3> accum;
+
+    auto snap = [](float v) -> int { return (int)std::round(v * 10000.0f); };
+    auto key_of = [&snap](const Vec3 &p) -> PosKey {
+        return { snap(p.x), snap(p.y), snap(p.z) };
+    };
+
+    for (size_t i = 0; i + 2 < mesh.positions.size(); i += 3)
+    {
+        const Vec3 &a = mesh.positions[i];
+        const Vec3 &b = mesh.positions[i + 1];
+        const Vec3 &c = mesh.positions[i + 2];
+        Vec3 e1 = Vec3Sub(b, a);
+        Vec3 e2 = Vec3Sub(c, a);
+        Vec3 fn = Vec3Normalize(Vec3Cross(e1, e2));
+
+        for (int v = 0; v < 3; ++v)
+        {
+            PosKey k = key_of(mesh.positions[i + v]);
+            Vec3 &acc = accum[k];
+            acc = Vec3Add(acc, fn);
+        }
+    }
+
+    // Normalize accumulated normals and write back.
+    for (size_t i = 0; i < mesh.positions.size(); ++i)
+    {
+        PosKey k = key_of(mesh.positions[i]);
+        auto it = accum.find(k);
+        if (it != accum.end())
+            mesh.normals[i] = Vec3Normalize(it->second);
+        else
+            mesh.normals[i] = { 0.0f, 1.0f, 0.0f };
+    }
+}
+
 MeshLibrary::MeshLibrary()
 {
-    m_meshes.emplace("__builtin_cube__", BuildCubeMesh());
+    Mesh cube = BuildCubeMesh();
+    ComputeVertexNormals(cube);
+    m_meshes.emplace("__builtin_cube__", std::move(cube));
 }
 
 const Mesh* MeshLibrary::Load(const std::string &path, std::string *error)
@@ -307,6 +361,7 @@ const Mesh* MeshLibrary::Load(const std::string &path, std::string *error)
     if (!LoadObj(resolved, mesh, error))
         return nullptr;
     mesh.name = path;
+    ComputeVertexNormals(mesh);
 
     auto res = m_meshes.emplace(path, std::move(mesh));
     return &res.first->second;
@@ -338,6 +393,7 @@ size_t MeshLibrary::ResidentBytes() const
         const Mesh &m = kv.second;
         bytes += sizeof(kv.second) + m.name.capacity();
         bytes += m.positions.capacity() * sizeof(Vec3);
+        bytes += m.normals.capacity() * sizeof(Vec3);
         bytes += m.edge_lines.capacity() * sizeof(Vec3);
         bytes += m.uvs.capacity() * sizeof(Vec2);
     }

@@ -18,6 +18,7 @@ struct Mesh
 {
     std::string name;
     std::vector<Vec3> positions;   // groups of 3 = one triangle (soup)
+    std::vector<Vec3> normals;     // parallel to positions; averaged vertex normals for Gouraud shading
     std::vector<Vec3> edge_lines;  // groups of 2 = one wireframe segment
     std::vector<Vec2> uvs;         // parallel to positions; empty = no UVs
     Vec3 bounds_min{0.0f, 0.0f, 0.0f};
