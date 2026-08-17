@@ -56,7 +56,7 @@ struct EntitySnapshot
     float light_color[3] = { 1.0f, 1.0f, 1.0f };
     float light_intensity = 1.0f;
     float light_direction[3] = { 0.4f, -0.8f, -0.45f };
-    float light_ambient = 0.25f;
+    float light_ambient = 0.10f;
     float light_shadow_strength = 0.6f;
     float light_shadow_bias = 0.05f;
     float light_shadow_distance = 30.0f;

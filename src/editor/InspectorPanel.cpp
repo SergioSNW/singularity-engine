@@ -341,10 +341,11 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Material");
         BeginEditSession("Edit Material");
-        ImGui::ColorEdit4("Albedo", entity->material.color);
+        ImGui::ColorEdit4("Albedo##Material", entity->material.color);
         EndEditSessionIfReleased();
-        ImGui::Checkbox("Active", &entity->material.active);
+        ImGui::Checkbox("Active##Material", &entity->material.active);
         EndEditSessionIfReleased();
 
         // Resolve the effective texture/tint so the UI reflects what renders:
@@ -386,8 +387,8 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::TextDisabled("Create a .mat asset from the current albedo");
         if (m_new_material_open)
         {
-            ImGui::InputText("File Name", m_new_material_buffer, sizeof(m_new_material_buffer));
-            if (ImGui::Button("Create"))
+            ImGui::InputText("File Name##Material", m_new_material_buffer, sizeof(m_new_material_buffer));
+            if (ImGui::Button("Create##Material"))
             {
                 std::string name = m_new_material_buffer;
                 if (!name.empty())
@@ -410,7 +411,7 @@ void InspectorPanel::OnImGuiRender(float dt)
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel"))
+            if (ImGui::Button("Cancel##Material"))
             {
                 m_new_material_open = false;
                 m_new_material_buffer[0] = '\0';
@@ -420,7 +421,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         // --- Texture map ---
         ImGui::Spacing();
         ImGui::Separator();
-        if (ImGui::BeginCombo("Texture", tex_key.empty() ? "None" : tex_key.c_str()))
+        if (ImGui::BeginCombo("Texture##Material", tex_key.empty() ? "None" : tex_key.c_str()))
         {
             if (ImGui::Selectable("None", tex_key.empty()))
                 CommitEdit("Assign Texture", [this, entity]() {
@@ -482,6 +483,7 @@ void InspectorPanel::OnImGuiRender(float dt)
             ImGui::EndDragDropTarget();
         }
         ImGui::TextDisabled("Drag a .mat / image from the Content Browser to assign");
+        ImGui::PopID();
     }
 
     // --- Mesh ---
@@ -497,10 +499,11 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Mesh");
         const char *preview = entity->mesh.path.empty()
             ? "Cube Primitive"
             : entity->mesh.path.c_str();
-        if (ImGui::BeginCombo("Asset", preview))
+        if (ImGui::BeginCombo("Asset##Mesh", preview))
         {
             if (ImGui::Selectable("Cube Primitive", entity->mesh.path.empty()))
                 CommitEdit("Change Mesh", [this, entity]() {
@@ -520,7 +523,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
 
         BeginEditSession("Change Mesh");
-        if (ImGui::InputText("Path", m_mesh_buffer, sizeof(m_mesh_buffer)))
+        if (ImGui::InputText("Path##Mesh", m_mesh_buffer, sizeof(m_mesh_buffer)))
         {
             if (m_mesh_buffer[0] == '\0')
                 entity->mesh.path.clear();
@@ -531,12 +534,13 @@ void InspectorPanel::OnImGuiRender(float dt)
                 entity->mesh.path = m_mesh_buffer;
             });
         ImGui::SameLine();
-        if (ImGui::Button("Reset to Cube"))
+        if (ImGui::Button("Reset to Cube##Mesh"))
             CommitEdit("Change Mesh", [this, entity]() {
                 entity->mesh.path.clear();
                 m_mesh_buffer[0] = '\0';
             });
         ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
+        ImGui::PopID();
     }
 
     // --- Collider ---
@@ -556,12 +560,13 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Collider");
         BeginEditSession("Edit Collider");
-        ImGui::Checkbox("Enabled", &entity->collider.enabled);
+        ImGui::Checkbox("Enabled##Collider", &entity->collider.enabled);
         EndEditSessionIfReleased();
         const char *preview = (entity->collider.type == ColliderComponent::Type::Trigger)
             ? "Trigger" : "Solid";
-        if (ImGui::BeginCombo("Type", preview))
+        if (ImGui::BeginCombo("Type##Collider", preview))
         {
             if (ImGui::Selectable("Solid", entity->collider.type == ColliderComponent::Type::Solid))
                 CommitEdit("Edit Collider", [this, entity]() {
@@ -596,7 +601,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         if (layers_preview.empty())
             layers_preview = "None";
         unsigned int layers = entity->collider.layers;
-        if (ImGui::BeginCombo("Layers", layers_preview.c_str()))
+        if (ImGui::BeginCombo("Layers##Collider", layers_preview.c_str()))
         {
             for (int i = 0; i < CollisionMatrix::kLayerCount; ++i)
             {
@@ -623,7 +628,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::Separator();
         const char *pm_preview = entity->collider.physics_material.empty()
             ? "Default" : entity->collider.physics_material.c_str();
-        if (ImGui::BeginCombo("Physics Material", pm_preview))
+        if (ImGui::BeginCombo("Physics Material##Collider", pm_preview))
         {
             if (ImGui::Selectable("Default", entity->collider.physics_material.empty()))
                 CommitEdit("Assign Physics Material", [this, entity]() {
@@ -658,9 +663,9 @@ void InspectorPanel::OnImGuiRender(float dt)
         {
             ImGui::SliderFloat("Friction", &m_new_physics_friction, 0.0f, 1.0f);
             ImGui::SliderFloat("Restitution", &m_new_physics_restitution, 0.0f, 1.0f);
-            ImGui::InputText("File Name", m_new_physics_material_buffer,
+            ImGui::InputText("File Name##PhysicsMat", m_new_physics_material_buffer,
                              sizeof(m_new_physics_material_buffer));
-            if (ImGui::Button("Create"))
+            if (ImGui::Button("Create##PhysicsMat"))
             {
                 std::string name = m_new_physics_material_buffer;
                 if (!name.empty())
@@ -681,7 +686,7 @@ void InspectorPanel::OnImGuiRender(float dt)
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel"))
+            if (ImGui::Button("Cancel##PhysicsMat"))
             {
                 m_new_physics_material_open = false;
                 m_new_physics_material_buffer[0] = '\0';
@@ -689,6 +694,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
 
         ImGui::TextDisabled("Solid blocks solids; Trigger is pass-through (events only)");
+        ImGui::PopID();
     }
 
     // --- Script ---
@@ -704,11 +710,12 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Script");
         // Text input writes the buffer live (like the mesh path field); Apply
         // commits it, and empty means no script. Scripts bind when the scene
         // enters play mode.
         BeginEditSession("Change Script");
-        ImGui::InputText("Path", m_script_buffer, sizeof(m_script_buffer));
+        ImGui::InputText("Path##Script", m_script_buffer, sizeof(m_script_buffer));
         EndEditSessionIfReleased();
         if (ImGui::Button("Apply Script"))
             CommitEdit("Change Script", [this, entity]() {
@@ -718,12 +725,13 @@ void InspectorPanel::OnImGuiRender(float dt)
                     entity->script.path = m_script_buffer;
             });
         ImGui::SameLine();
-        if (ImGui::Button("Clear"))
+        if (ImGui::Button("Clear##Script"))
             CommitEdit("Change Script", [this, entity]() {
                 entity->script.path.clear();
                 m_script_buffer[0] = '\0';
             });
         ImGui::TextDisabled("Lua file under assets/scripts/; empty = no script");
+        ImGui::PopID();
     }
 
     // --- Audio ---
@@ -739,11 +747,12 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Audio");
         // Path text input (like the script/mesh fields); Apply commits it, and
         // empty means no audio. The path is a WAV/OGG asset under
         // assets/audio/, played on demand by the AudioManager.
         BeginEditSession("Change Audio");
-        ImGui::InputText("Path", m_audio_buffer, sizeof(m_audio_buffer));
+        ImGui::InputText("Path##Audio", m_audio_buffer, sizeof(m_audio_buffer));
         EndEditSessionIfReleased();
         if (ImGui::Button("Apply Audio"))
             CommitEdit("Change Audio", [this, entity]() {
@@ -753,28 +762,29 @@ void InspectorPanel::OnImGuiRender(float dt)
                     entity->audio.path = m_audio_buffer;
             });
         ImGui::SameLine();
-        if (ImGui::Button("Clear"))
+        if (ImGui::Button("Clear##Audio"))
             CommitEdit("Change Audio", [this, entity]() {
                 entity->audio = AudioComponent();
                 m_audio_buffer[0] = '\0';
             });
 
-        ImGui::SliderFloat("Volume", &entity->audio.volume, 0.0f, 1.0f);
+        ImGui::SliderFloat("Volume##Audio", &entity->audio.volume, 0.0f, 1.0f);
         EndEditSessionIfReleased();
-        ImGui::Checkbox("Loop", &entity->audio.loop);
+        ImGui::Checkbox("Loop##Audio", &entity->audio.loop);
         EndEditSessionIfReleased();
-        ImGui::Checkbox("Auto Play", &entity->audio.auto_play);
+        ImGui::Checkbox("Auto Play##Audio", &entity->audio.auto_play);
         EndEditSessionIfReleased();
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextDisabled("WAV/OGG under assets/audio/; empty = no audio");
-        if (ImGui::Button("Preview Play") && !entity->audio.path.empty() && m_audio)
+        if (ImGui::Button("Preview Play##Audio") && !entity->audio.path.empty() && m_audio)
             m_audio->Play(entity->audio.path, entity->audio.volume,
                           entity->audio.loop);
         ImGui::SameLine();
-        if (ImGui::Button("Preview Stop") && m_audio)
+        if (ImGui::Button("Preview Stop##Audio") && m_audio)
             m_audio->Stop(entity->audio.path);
+        ImGui::PopID();
     }
 
     // --- Camera ---
@@ -794,19 +804,21 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Camera");
         BeginEditSession("Edit Camera");
-        ImGui::DragFloat("FOV", &entity->camera.fov, 0.5f, 1.0f, 179.0f);
+        ImGui::DragFloat("FOV##Camera", &entity->camera.fov, 0.5f, 1.0f, 179.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Pitch", &entity->camera.pitch, 0.1f, -89.0f, 89.0f);
+        ImGui::DragFloat("Pitch##Camera", &entity->camera.pitch, 0.1f, -89.0f, 89.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Yaw",   &entity->camera.yaw,   0.1f);
+        ImGui::DragFloat("Yaw##Camera",   &entity->camera.yaw,   0.1f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Near", &entity->camera.near_plane, 0.01f, 0.001f, 10.0f);
+        ImGui::DragFloat("Near##Camera", &entity->camera.near_plane, 0.01f, 0.001f, 10.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Far",  &entity->camera.far_plane,  0.1f,  0.1f, 1000.0f);
+        ImGui::DragFloat("Far##Camera",  &entity->camera.far_plane,  0.1f,  0.1f, 1000.0f);
         EndEditSessionIfReleased();
-        ImGui::Checkbox("Primary", &entity->camera.primary);
+        ImGui::Checkbox("Primary##Camera", &entity->camera.primary);
         EndEditSessionIfReleased();
+        ImGui::PopID();
     }
 
     // --- Camera Preview (Phase 27) ---
@@ -847,28 +859,30 @@ void InspectorPanel::OnImGuiRender(float dt)
         }
     }))
     {
+        ImGui::PushID("Light");
         BeginEditSession("Edit Light");
-        ImGui::Checkbox("Active", &entity->light.active);
+        ImGui::Checkbox("Active##Light", &entity->light.active);
         EndEditSessionIfReleased();
-        ImGui::ColorEdit3("Color", entity->light.color);
+        ImGui::ColorEdit3("Color##Light", entity->light.color);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Intensity", &entity->light.intensity, 0.05f, 0.0f, 10.0f);
+        ImGui::DragFloat("Intensity##Light", &entity->light.intensity, 0.05f, 0.0f, 10.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat3("Direction", entity->light.direction, 0.05f);
+        ImGui::DragFloat3("Direction##Light", entity->light.direction, 0.05f);
         EndEditSessionIfReleased();
-        ImGui::SliderFloat("Ambient", &entity->light.ambient, 0.0f, 1.0f);
+        ImGui::SliderFloat("Ambient##Light", &entity->light.ambient, 0.0f, 1.0f);
         EndEditSessionIfReleased();
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextDisabled("Directional shadow attenuation");
-        ImGui::SliderFloat("Shadow Strength", &entity->light.shadow_strength, 0.0f, 1.0f);
+        ImGui::SliderFloat("Shadow Strength##Light", &entity->light.shadow_strength, 0.0f, 1.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Shadow Bias", &entity->light.shadow_bias, 0.001f, 0.0f, 1.0f);
+        ImGui::DragFloat("Shadow Bias##Light", &entity->light.shadow_bias, 0.001f, 0.0f, 1.0f);
         EndEditSessionIfReleased();
-        ImGui::DragFloat("Shadow Distance", &entity->light.shadow_distance, 0.5f, 0.0f, 500.0f);
+        ImGui::DragFloat("Shadow Distance##Light", &entity->light.shadow_distance, 0.5f, 0.0f, 500.0f);
         EndEditSessionIfReleased();
         ImGui::TextDisabled("Light travels along 'Direction'; faces toward the source are lit");
+        ImGui::PopID();
     }
 
     // If the panel loses the session target (selection cleared/changed without

@@ -125,15 +125,14 @@ struct CameraComponent
 // the shadow fades out. `active` gates the light in the renderer.
 struct DirectionalLightComponent
 {
-    bool active = false;
-    float color[3] = { 1.0f, 1.0f, 1.0f };
-    float intensity = 1.0f;
-    float direction[3] = { 0.4f, -0.8f, -0.45f };
-    float ambient = 0.25f;
-
-    float shadow_strength = 0.6f;
-    float shadow_bias = 0.05f;
-    float shadow_distance = 30.0f;
+    bool    active = false;
+    float   color[3] = { 1.0f, 1.0f, 1.0f };
+    float   intensity = 1.0f;
+    float   direction[3] = { 0.4f, -0.8f, -0.45f };
+    float   ambient = 0.10f;
+    float   shadow_strength = 0.6f;
+    float   shadow_bias = 0.05f;
+    float   shadow_distance = 30.0f;
 };
 
 // Procedural heightfield terrain (Phase 34). When `enabled`, the entity owns a

@@ -408,10 +408,10 @@ struct FillTri
 // floor. The shadow group drives the ray-cast directional shadow attenuation.
 struct RenderLight
 {
-    Vec3 dir{ 0.0f, -1.0f, 0.0f };
-    Vec3 color{ 1.0f, 1.0f, 1.0f };
+    Vec3  dir{ 0.0f, -1.0f, 0.0f };
+    Vec3  color{ 1.0f, 1.0f, 1.0f };
     float intensity = 1.0f;
-    float ambient = 0.25f;
+    float ambient = 0.10f;
     float shadow_strength = 0.6f;
     float shadow_bias = 0.05f;
     float shadow_distance = 30.0f;
@@ -679,6 +679,9 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                 shade_g += factor * l.color.y + spec_g * l.color.y;
                 shade_b += factor * l.color.z + spec_b * l.color.z;
             }
+            shade_r = std::min(shade_r, 1.0f);
+            shade_g = std::min(shade_g, 1.0f);
+            shade_b = std::min(shade_b, 1.0f);
         }
 
         FillTri t;

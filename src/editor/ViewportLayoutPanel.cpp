@@ -54,6 +54,7 @@ void ViewportLayoutPanel::OnImGuiRender(float dt)
         if (ImGui::CollapsingHeader((label + "##" + std::to_string(i)).c_str(),
                                     ImGuiTreeNodeFlags_DefaultOpen))
         {
+            ImGui::PushID((int)i);
             char label_buf[64] = {};
             std::strncpy(label_buf, entry->label.c_str(), sizeof(label_buf) - 1);
             if (ImGui::InputText("Label", label_buf, sizeof(label_buf)))
@@ -83,6 +84,7 @@ void ViewportLayoutPanel::OnImGuiRender(float dt)
             ImGui::SameLine();
             if (ImGui::Button(("Remove##" + std::to_string(i)).c_str()))
                 to_remove.push_back(i);
+            ImGui::PopID();
         }
     }
 
