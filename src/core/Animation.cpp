@@ -178,7 +178,7 @@ void SampleValue(const AnimationTrack &track, float t, bool loop, float out[3])
     if (loop && span > 1e-6f)
         t = std::fmod(t, span);
 
-    if (t <= track.keys.front().time)
+    if (track.keys.size() == 1 || t <= track.keys.front().time)
     {
         CopyValue(track.keys.front(), out);
         return;
@@ -191,8 +191,10 @@ void SampleValue(const AnimationTrack &track, float t, bool loop, float out[3])
 
     // Find the bracketing pair: `hi` is the first key strictly after t.
     size_t hi = 1;
-    while (hi < track.keys.size() - 1 && track.keys[hi].time < t)
+    while (hi + 1 < track.keys.size() && track.keys[hi].time < t)
         ++hi;
+    if (hi >= track.keys.size())
+        hi = track.keys.size() - 1;
     const AnimationKeyframe &a = track.keys[hi - 1];
     const AnimationKeyframe &b = track.keys[hi];
     const float f = (b.time > a.time) ? (t - a.time) / (b.time - a.time) : 0.0f;
@@ -219,7 +221,7 @@ void SampleRotation(const AnimationTrack &track, float t, bool loop, float out[3
         CopyValue(*exact, out);
         return;
     }
-    if (t <= track.keys.front().time)
+    if (track.keys.size() == 1 || t <= track.keys.front().time)
     {
         CopyValue(track.keys.front(), out);
         return;
@@ -231,8 +233,10 @@ void SampleRotation(const AnimationTrack &track, float t, bool loop, float out[3
     }
 
     size_t hi = 1;
-    while (hi < track.keys.size() - 1 && track.keys[hi].time < t)
+    while (hi + 1 < track.keys.size() && track.keys[hi].time < t)
         ++hi;
+    if (hi >= track.keys.size())
+        hi = track.keys.size() - 1;
     const AnimationKeyframe &a = track.keys[hi - 1];
     const AnimationKeyframe &b = track.keys[hi];
     const float f = (b.time > a.time) ? (t - a.time) / (b.time - a.time) : 0.0f;

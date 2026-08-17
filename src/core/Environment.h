@@ -31,8 +31,8 @@ struct EnvironmentSettings
 {
     // --- Sky ---
     bool sky_enabled = true;
-    float sky_color_top[3] = { 0.09f, 0.20f, 0.45f };      // zenith stop
-    float sky_color_horizon[3] = { 0.62f, 0.70f, 0.80f };  // horizon stop
+    float sky_color_top[3] = { 0.06f, 0.12f, 0.28f };      // zenith stop (dark moody blue)
+    float sky_color_horizon[3] = { 0.35f, 0.40f, 0.48f };  // horizon stop (slate-gray)
     float sky_sun_color[3] = { 1.0f, 0.93f, 0.82f };
     float sky_sun_intensity = 0.9f;
     float sky_sun_glow = 0.38f;     // glow radius (fraction of the shorter axis)
@@ -43,7 +43,7 @@ struct EnvironmentSettings
 
     // --- Fog ---
     bool fog_enabled = true;
-    float fog_color[3] = { 0.62f, 0.70f, 0.80f };
+    float fog_color[3] = { 0.35f, 0.40f, 0.48f };
     float fog_density = 0.012f;     // 1/world-unit base extinction
     float fog_height_falloff = 0.08f;// exponential density falloff with height
     float fog_start = 5.0f;         // distance at which fog begins

@@ -117,8 +117,12 @@ void TimelinePanel::DrawLane(const char *label, const AnimationTrack &track,
     dl->AddRect(ImVec2(lane_x, lane_y), ImVec2(lane_x + lane_w, lane_bottom),
                 IM_COL32(70, 70, 84, 255));
 
+    // Snapshot the key vector to avoid iterator invalidation if a keyframe is
+    // added/removed via a callback during the same frame.
+    const std::vector<AnimationKeyframe> keys_snapshot = track.keys;
+
     // Keyframe diamonds.
-    for (const AnimationKeyframe &k : track.keys)
+    for (const AnimationKeyframe &k : keys_snapshot)
     {
         const float kx = lane_x + (k.time / duration) * lane_w;
         dl->AddQuadFilled(ImVec2(kx, mid_y - 4.0f), ImVec2(kx + 4.0f, mid_y),
@@ -141,7 +145,7 @@ void TimelinePanel::DrawLane(const char *label, const AnimationTrack &track,
             ScrubTo(std::max(0.0f, std::min(duration, mouse_t)));
         else if (lane_rclicked && m_bridge->on_remove_keyframe)
         {
-            for (const AnimationKeyframe &k : track.keys)
+            for (const AnimationKeyframe &k : keys_snapshot)
             {
                 const float kx = lane_x + (k.time / duration) * lane_w;
                 if (std::fabs(ImGui::GetIO().MousePos.x - kx) < 6.0f)

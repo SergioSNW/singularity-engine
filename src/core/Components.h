@@ -127,7 +127,7 @@ struct DirectionalLightComponent
 {
     bool    active = false;
     float   color[3] = { 1.0f, 1.0f, 1.0f };
-    float   intensity = 1.0f;
+    float   intensity = 0.85f;
     float   direction[3] = { 0.4f, -0.8f, -0.45f };
     float   ambient = 0.10f;
     float   shadow_strength = 0.6f;

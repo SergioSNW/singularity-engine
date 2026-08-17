@@ -54,7 +54,7 @@ struct EntitySnapshot
 
     bool  light_active = false;
     float light_color[3] = { 1.0f, 1.0f, 1.0f };
-    float light_intensity = 1.0f;
+    float light_intensity = 0.85f;
     float light_direction[3] = { 0.4f, -0.8f, -0.45f };
     float light_ambient = 0.10f;
     float light_shadow_strength = 0.6f;

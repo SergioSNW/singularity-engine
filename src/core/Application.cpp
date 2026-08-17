@@ -2498,6 +2498,17 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     // Profiler: hidden by default (toggled by user).
     // History: hidden by default (toggled by user).
     // Command Palette: handled by its own toggle.
+    // Force-hide auxiliary panels so they never leak across mode switches.
+    if (m_collision_matrix_panel)
+        m_collision_matrix_panel->SetVisible(false);
+    if (m_stats_panel)
+        m_stats_panel->SetVisible(false);
+    if (m_viewport_layout_panel)
+        m_viewport_layout_panel->SetVisible(false);
+    if (m_profiler_panel)
+        m_profiler_panel->SetVisible(false);
+    if (m_history_panel)
+        m_history_panel->SetVisible(false);
 
     // Leaving the Sequencing workspace stops playback so no hidden animation
     // keeps mutating transforms behind the author's back.
