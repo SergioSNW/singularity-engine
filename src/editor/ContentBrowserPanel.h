@@ -127,7 +127,7 @@ private:
     // Phase 31 view state: list-vs-grid layout, thumbnail size slider, live
     // search text, and the active category chip (All/Meshes/Materials/...).
     bool m_list_view = false;
-    float m_thumb_scale = 96.0f;                 // preview box size (px)
+    float m_thumb_scale = 120.0f;                 // preview box size (px)
     char m_search[64] = {};                      // substring filter on names
     AssetCatalog::AssetFilter m_filter = AssetCatalog::AssetFilter::All;
 

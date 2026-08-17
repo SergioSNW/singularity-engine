@@ -71,15 +71,23 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
     if (landscape.heights.size() != count)
         landscape.heights.assign(count, landscape.base_height);
 
-    auto mesh = std::make_shared<Mesh>();
-    mesh->name = "Landscape";
+    // Reuse the existing mesh allocation to avoid malloc/free churn during
+    // active sculpting (the hot path sets mesh_dirty every frame).
+    if (!landscape.mesh)
+        landscape.mesh = std::make_shared<Mesh>();
+    Mesh &mesh = *landscape.mesh;
+    mesh.name = "Landscape";
+    mesh.positions.clear();
+    mesh.uvs.clear();
+    mesh.normals.clear();
+    mesh.edge_lines.clear();
 
     const float cell = landscape.size / (float)res;
     const float half = landscape.size * 0.5f;
 
     const size_t tri_count = (size_t)res * res * 2;
-    mesh->positions.reserve(tri_count * 3);
-    mesh->uvs.reserve(tri_count * 3);
+    mesh.positions.reserve(tri_count * 3);
+    mesh.uvs.reserve(tri_count * 3);
 
     float min_y = landscape.heights[0];
     float max_y = landscape.heights[0];
@@ -103,23 +111,23 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
             const Vec3 v11{ x1, landscape.heights[(size_t)(r + 1) * stride + c + 1], z1 };
             // Winding chosen so the two-cell diagonal runs v00 -> v11 and the
             // faces' normals point +Y (up).
-            mesh->positions.push_back(v00);
-            mesh->positions.push_back(v11);
-            mesh->positions.push_back(v10);
-            mesh->positions.push_back(v00);
-            mesh->positions.push_back(v01);
-            mesh->positions.push_back(v11);
+            mesh.positions.push_back(v00);
+            mesh.positions.push_back(v11);
+            mesh.positions.push_back(v10);
+            mesh.positions.push_back(v00);
+            mesh.positions.push_back(v01);
+            mesh.positions.push_back(v11);
 
             const float u0 = (float)c / (float)res;
             const float u1 = (float)(c + 1) / (float)res;
             const float v0 = (float)r / (float)res;
             const float v1 = (float)(r + 1) / (float)res;
-            mesh->uvs.push_back({ u0, v0 });
-            mesh->uvs.push_back({ u1, v1 });
-            mesh->uvs.push_back({ u1, v0 });
-            mesh->uvs.push_back({ u0, v0 });
-            mesh->uvs.push_back({ u0, v1 });
-            mesh->uvs.push_back({ u1, v1 });
+            mesh.uvs.push_back({ u0, v0 });
+            mesh.uvs.push_back({ u1, v1 });
+            mesh.uvs.push_back({ u1, v0 });
+            mesh.uvs.push_back({ u0, v0 });
+            mesh.uvs.push_back({ u0, v1 });
+            mesh.uvs.push_back({ u1, v1 });
         }
     }
 
@@ -127,7 +135,7 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
     // resolutions while still reading as a topology preview. Segments ride the
     // surface (per-vertex heights) so the preview hugs the terrain.
     const int wire_step = std::max(1, res / 8);
-    mesh->edge_lines.reserve(
+    mesh.edge_lines.reserve(
         (size_t)((res / wire_step + 1) * 2 * res) * 2);
     for (int r = 0; r <= res; r += wire_step)
     {
@@ -138,8 +146,8 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
             const float x1 = x0 + cell;
             const float y0 = landscape.heights[(size_t)r * stride + c];
             const float y1 = landscape.heights[(size_t)r * stride + c + 1];
-            mesh->edge_lines.push_back({ x0, y0, z });
-            mesh->edge_lines.push_back({ x1, y1, z });
+            mesh.edge_lines.push_back({ x0, y0, z });
+            mesh.edge_lines.push_back({ x1, y1, z });
         }
     }
     for (int c = 0; c <= res; c += wire_step)
@@ -151,15 +159,14 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
             const float z1 = z0 + cell;
             const float y0 = landscape.heights[(size_t)r * stride + c];
             const float y1 = landscape.heights[(size_t)(r + 1) * stride + c];
-            mesh->edge_lines.push_back({ x, y0, z0 });
-            mesh->edge_lines.push_back({ x, y1, z1 });
+            mesh.edge_lines.push_back({ x, y0, z0 });
+            mesh.edge_lines.push_back({ x, y1, z1 });
         }
     }
 
-    mesh->bounds_min = { -half, min_y, -half };
-    mesh->bounds_max = {  half, max_y,  half };
+    mesh.bounds_min = { -half, min_y, -half };
+    mesh.bounds_max = {  half, max_y,  half };
 
-    landscape.mesh = std::move(mesh);
     landscape.mesh_dirty = false;
 }
 

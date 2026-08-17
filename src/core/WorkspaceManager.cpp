@@ -137,41 +137,28 @@ void WorkspaceManager::RebuildLayout()
         }
         case Workspace::ShadingAndAssets:
         {
-            // Shading & Assets workspace: the Material Editor owns the right
-            // rail as the primary material-authoring zone, with the Inspector
-            // + Editor Settings + Content Browser tabbed beneath it, and a
-            // bottom Console + Stats tab group. The center column splits into
-            // the main viewport (top) and the dedicated Material Preview
-            // viewport (bottom strip) so shaded geometry previews alongside
-            // the scene under the same environment lighting.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.68f, &top, &bottom);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.16f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, &right, &center);
-
-            ImGuiID vp_top, vp_bottom;
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.62f, &vp_top, &vp_bottom);
+            // Shading & Assets workspace: the Material Editor + Material
+            // Preview own the left rail as the primary authoring zone, the
+            // Viewport is center-stage for inspecting shaded geometry, and the
+            // Content Browser sits on the right for asset drag-and-drop.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.72f, &top, &bottom);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.22f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
 
             ImGuiID mat_top, mat_bottom;
-            ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.58f, &mat_top, &mat_bottom);
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &mat_top, &mat_bottom);
 
-            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
-            ImGui::DockBuilderDockWindow(kViewportWindow, vp_top);
-            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, vp_bottom);
-            // Phase 37: the Environment & Shading panel docks *behind* the
-            // Material Editor in the primary zone (last-docked wins focus).
-            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_top);
             ImGui::DockBuilderDockWindow(kMaterialEditorWindow, mat_top);
+            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_top);
+            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, mat_bottom);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, right);
+            ImGui::DockBuilderDockWindow(kInspectorWindow, right);
+            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
 
-            // Asset-focused right-rail group: Content Browser is the active tab.
-            ImGui::DockBuilderDockWindow(kSettingsWindow, mat_bottom);
-            ImGui::DockBuilderDockWindow(kInspectorWindow, mat_bottom);
-            ImGui::DockBuilderDockWindow(kContentBrowserWindow, mat_bottom);
-            ImGui::DockBuilderDockWindow(kCollisionMatrixWindow, mat_bottom);
-            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_bottom);
-
-            // Bottom zone: Console is the active tab over the stats.
-            ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
+            // Bottom zone: Console + Stats.
             ImGui::DockBuilderDockWindow(kConsoleWindow, bottom);
+            ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
             break;
         }
         default: // Workspace::LevelDesign
@@ -227,25 +214,19 @@ void WorkspaceManager::RebuildLayout()
         }
         case Workspace::Timeline:
         {
-            // Sequencing workspace (Phase 35): the track-based Timeline editor
-            // replaces the viewport center-stage, so the animation timeline is
-            // the primary authoring surface. The Inspector stays on the right
-            // rail (its keyframe toggles pair with the lanes), the Hierarchy on
-            // the left, and the Development Zone + Stats along the bottom. The
-            // viewport is hidden by the Application while this workspace is
-            // active; the Script Editor stays free-floating.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.80f, &top, &bottom);
+            // Sequencing workspace: the Timeline sits at the bottom as a wide
+            // editing surface, with the Viewport above it for context, the
+            // Hierarchy on the left, and the Inspector on the right for
+            // keyframe toggles.  The viewport is visible so the user can see
+            // the animation result alongside the track lanes.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Down, 0.34f, &bottom, &top);
             ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
 
-            ImGuiID bottom_left, bottom_right;
-            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
-
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
-            ImGui::DockBuilderDockWindow(kTimelineWindow, center);
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
             dock_right_rail(right);
-            dock_dev_zone(bottom_left);
-            ImGui::DockBuilderDockWindow(kStatsWindow, bottom_right);
+            ImGui::DockBuilderDockWindow(kTimelineWindow, bottom);
             m_code_window_node = 0;
             break;
         }
@@ -256,6 +237,16 @@ void WorkspaceManager::RebuildLayout()
 
 void WorkspaceManager::DrawDockspace()
 {
+    // Disable ImGui's own layout persistence on the first frame so imgui.ini
+    // never overrides the canonical DockBuilder layouts.  The engine uses
+    // editor_layout.json instead.
+    static bool s_ini_disabled = false;
+    if (!s_ini_disabled)
+    {
+        ImGui::GetIO().IniFilename = nullptr;
+        s_ini_disabled = true;
+    }
+
     // Stable identity for the dock node, shared by the host window, the
     // DockBuilder tree, and the .ini persistence (must be computed the same way
     // on every run so saved layouts match).

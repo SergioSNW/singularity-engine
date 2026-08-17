@@ -34,7 +34,7 @@ float ComputeDpiScale(void *window, void *renderer);
 // Rasterize the editor fonts at `base_* * dpi_scale`. Falls back along a
 // curated chain (Segoe UI -> Arial -> default; Cascadia Mono -> Consolas ->
 // Courier New) so the editor still builds on stripped-down Windows installs.
-void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 17.0f,
+void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 18.0f,
                float base_mono = 15.0f);
 
 // The six key color tokens the user can live-edit in the Theme Settings

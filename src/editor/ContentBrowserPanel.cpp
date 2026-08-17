@@ -485,10 +485,41 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 
     if (!preview_drawn)
     {
-        // Fallback per-type badge (small square in the preview box corner).
-        dl->AddRectFilled(ImVec2(box_min.x, box_min.y),
-                          ImVec2(box_min.x + 12.0f, box_min.y + 12.0f),
-                          BadgeColor(kind), 3.0f);
+        // Draw a recognizable type icon inside the preview box.
+        const float icon = std::min(box * 0.55f, 64.0f);
+        const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
+        const ImU32 col = BadgeColor(kind);
+        if (kind == FileKind::Folder)
+        {
+            // Folder: rectangle body + small tab on top-left.
+            const float body_w = icon, body_h = icon * 0.72f;
+            const float tab_w = icon * 0.35f, tab_h = icon * 0.22f;
+            const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
+            const ImVec2 body_max(c.x + body_w * 0.5f, c.y + body_h * 0.5f + tab_h);
+            dl->AddRectFilled(body_min, body_max, col, 4.0f);
+            dl->AddRectFilled(ImVec2(body_min.x, body_min.y - tab_h),
+                              ImVec2(body_min.x + tab_w, body_min.y), col, 3.0f);
+        }
+        else
+        {
+            // File: rectangle with a folded corner.
+            const float fw = icon * 0.7f, fh = icon * 0.85f;
+            const float fold = icon * 0.22f;
+            const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
+            const ImVec2 br(c.x + fw * 0.5f, c.y + fh * 0.5f);
+            const ImVec2 points[] = {
+                tl,
+                ImVec2(br.x - fold, tl.y),
+                ImVec2(br.x, tl.y + fold),
+                br,
+                tl
+            };
+            dl->AddConvexPolyFilled(points, 5, col);
+            dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
+                        IM_COL32(255, 255, 255, 60), 1.5f);
+            dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
+                        IM_COL32(255, 255, 255, 60), 1.5f);
+        }
     }
 
     dl->AddText(ImVec2(pmin.x + 10.0f, box_max.y + 8.0f),
@@ -551,7 +582,7 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
 
     const bool selected = (m_selected == path);
     if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_DontClosePopups,
-                          ImVec2(-FLT_MIN, 22.0f)))
+                          ImVec2(-FLT_MIN, 28.0f)))
         m_selected = path;
 
     if (kind == FileKind::Prefab && ImGui::BeginDragDropSource(
@@ -591,7 +622,7 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 pmin = ImGui::GetItemRectMin();
     const float row_h = ImGui::GetItemRectMax().y - pmin.y;
-    const float box = 16.0f;
+    const float box = 22.0f;
     const ImVec2 box_min(pmin.x + 6.0f, pmin.y + (row_h - box) * 0.5f);
     const ImVec2 box_max(box_min.x + box, box_min.y + box);
 
@@ -620,13 +651,37 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
     }
     if (!preview_drawn)
     {
-        dl->AddRectFilled(ImVec2(box_min.x, box_min.y),
-                          ImVec2(box_min.x + 10.0f, box_min.y + 10.0f),
-                          BadgeColor(kind), 2.0f);
+        const float icon = box * 0.75f;
+        const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
+        const ImU32 col = BadgeColor(kind);
+        if (kind == FileKind::Folder)
+        {
+            const float body_w = icon, body_h = icon * 0.72f;
+            const float tab_w = icon * 0.35f, tab_h = icon * 0.22f;
+            const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
+            const ImVec2 body_max(c.x + body_w * 0.5f, c.y + body_h * 0.5f + tab_h);
+            dl->AddRectFilled(body_min, body_max, col, 3.0f);
+            dl->AddRectFilled(ImVec2(body_min.x, body_min.y - tab_h),
+                              ImVec2(body_min.x + tab_w, body_min.y), col, 2.0f);
+        }
+        else
+        {
+            const float fw = icon * 0.7f, fh = icon * 0.85f;
+            const float fold = icon * 0.22f;
+            const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
+            const ImVec2 br(c.x + fw * 0.5f, c.y + fh * 0.5f);
+            const ImVec2 points[] = { tl, ImVec2(br.x - fold, tl.y),
+                ImVec2(br.x, tl.y + fold), br, tl };
+            dl->AddConvexPolyFilled(points, 5, col);
+            dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
+                        IM_COL32(255, 255, 255, 60), 1.0f);
+            dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
+                        IM_COL32(255, 255, 255, 60), 1.0f);
+        }
     }
 
     // Name (clipped to leave room for the right-aligned meta) + kind/size.
-    const ImVec2 text_pos(pmin.x + 28.0f, pmin.y + (row_h - ImGui::GetFontSize()) * 0.5f);
+    const ImVec2 text_pos(pmin.x + 34.0f, pmin.y + (row_h - ImGui::GetFontSize()) * 0.5f);
     const float meta_w = ImGui::CalcTextSize("Material  999.9 KB").x;
     const float name_w = ImGui::GetWindowWidth() - 36.0f - meta_w;
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_pos,
