@@ -399,6 +399,10 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
                                    int col, int cols, float cell_w, float cell_h)
 {
     ImGui::PushID(path.c_str());
+
+    // Dark card background so individual items stand out from the panel.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
+
     if (col > 0)
         ImGui::SameLine();
 
@@ -446,7 +450,7 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
     const ImVec2 pmax = ImGui::GetItemRectMax();
     const ImU32 card_bg = selected
         ? IM_COL32(50, 55, 70, 255)
-        : IM_COL32(32, 33, 38, 255);
+        : ImGui::GetColorU32(ImGuiCol_ChildBg);
     dl->AddRectFilled(pmin, pmax, card_bg, 4.0f);
     if (selected)
         dl->AddRect(pmin, pmax, IM_COL32(88, 141, 245, 200), 4.0f, 0, 1.5f);
@@ -484,24 +488,27 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 
     if (!preview_drawn)
     {
-        const float icon = std::min(box * 0.55f, 64.0f);
-        const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            // Folder: wider body rectangle + smaller tab rectangle on top-left.
-            const float body_w = icon * 1.1f, body_h = icon * 0.72f;
-            const float tab_w = icon * 0.40f, tab_h = icon * 0.24f;
-            const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
-            const ImVec2 body_max(c.x + body_w * 0.5f, c.y + body_h * 0.5f + tab_h);
-            dl->AddRectFilled(body_min, body_max, col, 3.0f);
-            dl->AddRectFilled(ImVec2(body_min.x, body_min.y - tab_h),
-                              ImVec2(body_min.x + tab_w, body_min.y), col, 3.0f);
-            dl->AddRect(body_min, body_max,
-                        IM_COL32(180, 180, 190, 60), 3.0f, 0, 1.0f);
+            // Real folder icon: a golden tab on the top-left corner over the
+            // body rectangle (exact draw logic).
+            const ImVec2 f_min = box_min;
+            const ImVec2 f_max = box_max;
+            const ImU32 folder_color = IM_COL32(180, 150, 80, 255); // Muted golden folder
+
+            // Folder Tab (Top Left)
+            const ImVec2 tab_max = ImVec2(f_min.x + (f_max.x - f_min.x) * 0.4f, f_min.y + 12.0f);
+            dl->AddRectFilled(f_min, tab_max, folder_color, 2.0f, ImDrawFlags_RoundCornersTop);
+
+            // Folder Body
+            const ImVec2 body_min = ImVec2(f_min.x, f_min.y + 10.0f);
+            dl->AddRectFilled(body_min, f_max, folder_color, 3.0f, ImDrawFlags_RoundCornersAll);
         }
         else
         {
+            const float icon = std::min(box * 0.55f, 64.0f);
+            const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
             const float fw = icon * 0.7f, fh = icon * 0.85f;
             const float fold = icon * 0.22f;
             const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
@@ -526,6 +533,7 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
                 ClipToWidth(Leaf(path), text_area_w).c_str());
     dl->PopClipRect();
 
+    ImGui::PopStyleColor();
     ImGui::PopID();
 }
 

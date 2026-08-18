@@ -153,6 +153,21 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     // Reset to stock defaults first so repeated calls (UI-scale changes, live
     // theme edits) can never drift the palette or metrics.
     style = ImGuiStyle();
+    ImGui::StyleColorsDark();
+
+    // Hardcoded slate-gray theme: injected immediately after the dark default
+    // is applied so every boot forces these exact colors regardless of saved
+    // settings, JSON files, or prior sessions.
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
+    style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
+    style.Colors[ImGuiCol_PopupBg]  = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
+    style.Colors[ImGuiCol_Border]   = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+    style.Colors[ImGuiCol_Text]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+    style.Colors[ImGuiCol_Header]   = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive]  = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
 
     // --- Metrics: breathable padding, generous spacing, soft rounding ---
     style.WindowPadding    = ImVec2(16.0f, 16.0f);
@@ -317,6 +332,19 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     colors_out[ImGuiCol_NavHighlight]         = accent;
     colors_out[ImGuiCol_NavWindowingHighlight] = accentTint;
     colors_out[ImGuiCol_NavWindowingDimBg]    = rgb(0, 0, 0, 150);
+
+    // Re-assert the hardcoded slate-gray theme after the derived palette so
+    // these exact values always win on every boot.
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
+    style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
+    style.Colors[ImGuiCol_PopupBg]  = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
+    style.Colors[ImGuiCol_Border]   = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+    style.Colors[ImGuiCol_Text]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+    style.Colors[ImGuiCol_Header]   = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive]  = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
 
     // Apply the user's global UI zoom to every metric.
     style.ScaleAllSizes(ui_scale);
