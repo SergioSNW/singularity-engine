@@ -1027,9 +1027,6 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     const bool draw_fills = (m_overlay.render_mode != ViewportRenderMode::Wireframe);
     const bool use_lighting = (m_overlay.render_mode != ViewportRenderMode::Unlit);
     const bool draw_wire = (m_overlay.render_mode == ViewportRenderMode::Wireframe);
-    // Structural edges: semi-transparent black wireframe drawn over Lit geometry
-    // to give low-poly shapes crisp, defined edges (reduces the "candy" look).
-    const bool draw_edges = (m_overlay.render_mode == ViewportRenderMode::Lit);
 
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
@@ -1097,30 +1094,6 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
                            cam_pos, m_environment, shading);
         }
         DrawTriangles(renderer, tris, w, h, &draw_calls);
-    }
-
-    // --- Pass 1.5: structural edges (Lit mode only) ---
-    // Semi-transparent black wireframe over solid fills gives low-poly shapes
-    // crisp, defined edges without the harsh look of bright wireframes.
-    if (draw_edges)
-    {
-        static const float EDGE_COLOR[3] = { 0.0f, 0.0f, 0.0f };
-        for (auto &entity_ptr : m_scene->GetEntities())
-        {
-            if (!entity_ptr)
-                continue;
-            Entity &entity = *entity_ptr;
-            if (&entity == skip_entity || !entity.material.active)
-                continue;
-
-            const Mesh *mesh = ResolveEntityMesh(entity);
-            if (!mesh)
-                continue;
-
-            Mat4 world = m_scene->ComputeWorldMatrix(entity);
-            RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
-                                *mesh, EDGE_COLOR, false, &draw_calls);
-        }
     }
 
     // --- Pass 2: wireframe overlay for every visible entity ---
@@ -3294,10 +3267,10 @@ bool Application::Init(int width, int height, const char *title)
     Theme::LoadFonts(m_fonts, m_dpi_scale);
     ImGui::GetIO().FontGlobalScale = 1.0f / m_dpi_scale;
 
-    // Restore a saved custom color scheme (editor_theme.json) before the first
-    // ConfigureStyle so the whole palette derives from the user's tokens.
+    // Always use the hardcoded slate-gray defaults.  Do NOT load from
+    // editor_theme.json here: the saved file may contain stale blue values
+    // from older sessions that override the intended theme.
     m_theme_colors = Theme::DefaultColors();
-    Theme::LoadThemeFromFile(m_theme_colors);
 
     Theme::ConfigureStyle(1.0f, m_theme_colors);
     ImGui_ImplSDL2_InitForSDLRenderer(
@@ -4034,6 +4007,17 @@ void Application::Run()
 
         // Phase 41: copy current -> previous keyboard/mouse state for next frame.
         Input::Instance().EndFrame();
+
+        // Disable imgui.ini before the first NewFrame so no cached layout
+        // colors can bleed through on startup.
+        {
+            static bool s_ini_disabled = false;
+            if (!s_ini_disabled)
+            {
+                ImGui::GetIO().IniFilename = nullptr;
+                s_ini_disabled = true;
+            }
+        }
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();

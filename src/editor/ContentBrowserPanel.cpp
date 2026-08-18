@@ -217,14 +217,13 @@ void ContentBrowserPanel::DrawFolderTree()
 
 void ContentBrowserPanel::DrawToolbar()
 {
-    // Up button: one level toward the assets root.
+    // Row 1: navigation — Up, breadcrumbs, item count, Refresh, New Folder.
     ImGui::BeginDisabled(m_current == m_root);
     if (ImGui::Button("Up"))
         Navigate(m_current.substr(0, m_current.find_last_of('/')));
     ImGui::EndDisabled();
     ImGui::SameLine();
 
-    // Breadcrumbs: each path segment jumps straight to that folder.
     const std::vector<std::string> crumbs = AssetCatalog::BreadcrumbSegments(m_current);
     for (size_t i = 0; i < crumbs.size(); ++i)
     {
@@ -240,7 +239,6 @@ void ContentBrowserPanel::DrawToolbar()
         ImGui::SameLine();
     }
 
-    // Filtered item count (what the grid/list will actually show).
     int visible = 0;
     for (const std::string &path : m_files)
     {
@@ -264,8 +262,8 @@ void ContentBrowserPanel::DrawToolbar()
 
     ImGui::Separator();
 
-    // View mode toggle + condensed toolbar: thumb scale, search, and filter
-    // chips on one line to save vertical space.
+    // Row 2: strictly one line — View toggle, thumb slider, search, filter.
+    // All items use SameLine to prevent any wrapping.
     if (ImGui::Button(m_list_view ? "Grid" : "List"))
         m_list_view = !m_list_view;
     ImGui::SameLine();
@@ -274,15 +272,14 @@ void ContentBrowserPanel::DrawToolbar()
     ImGui::SliderFloat("##thumb", &m_thumb_scale, 48.0f, 192.0f, "%.0f");
     ImGui::SameLine();
 
-    const float search_w = std::max(100.0f, ImGui::GetContentRegionAvail().x - 260.0f);
+    const float search_w = std::max(100.0f, ImGui::GetContentRegionAvail().x - 220.0f);
     ImGui::SetNextItemWidth(search_w);
     ImGui::InputTextWithHint("##content_search", "Search...",
                              m_search, sizeof(m_search));
     ImGui::SameLine();
 
-    ImGui::TextDisabled("Filter:");
-    ImGui::SameLine();
-    const AssetCatalog::AssetFilter filters[] = {
+    const char *filter_labels[] = { "All", "Mesh", "Mat", "Tex", "Audio", "Prefab" };
+    const AssetCatalog::AssetFilter filter_values[] = {
         AssetCatalog::AssetFilter::All,
         AssetCatalog::AssetFilter::Meshes,
         AssetCatalog::AssetFilter::Materials,
@@ -290,15 +287,14 @@ void ContentBrowserPanel::DrawToolbar()
         AssetCatalog::AssetFilter::Audio,
         AssetCatalog::AssetFilter::Prefabs,
     };
-    for (const AssetCatalog::AssetFilter f : filters)
+    for (int i = 0; i < 6; ++i)
     {
-        const bool active = (m_filter == f);
-        if (ImGui::Selectable(AssetCatalog::AssetFilterLabel(f), active,
-                              ImGuiSelectableFlags_DontClosePopups))
-            m_filter = f;
-        ImGui::SameLine();
+        const bool active = (m_filter == filter_values[i]);
+        if (i > 0)
+            ImGui::SameLine();
+        if (ImGui::SmallButton(filter_labels[i]))
+            m_filter = filter_values[i];
     }
-    ImGui::NewLine();
 }
 
 bool ContentBrowserPanel::PassesFilter(const std::string &path, FileKind kind) const

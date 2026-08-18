@@ -54,7 +54,7 @@ const Colors &DefaultColors()
         {0.16f, 0.16f, 0.16f, 1.0f},   // child_bg   panel recess
         {0.14f, 0.14f, 0.14f, 1.0f},   // popup_bg
         {0.18f, 0.18f, 0.18f, 1.0f},   // frame_bg   input fields
-        {0.82f, 0.82f, 0.82f, 1.0f},   // text       neutral light gray
+        {0.85f, 0.85f, 0.85f, 1.0f},   // text       off-white
         {0.345f, 0.553f, 0.961f, 1.0f},// accent     (kept for tabs/selection)
     };
     return defaults;
@@ -165,12 +165,11 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     style.ScrollbarSize    = 14.0f;
     style.GrabMinSize      = 10.0f;
 
-    // Borders are toned down to near-invisible hairlines; surfaces separate
-    // through rounding and subtle color contrast instead of hard outlines.
-    style.WindowBorderSize   = 0.0f;
-    style.ChildBorderSize    = 0.0f;
+    // Borders: crisp 1px near-black lines delimit every panel.
+    style.WindowBorderSize   = 1.0f;
+    style.ChildBorderSize    = 1.0f;
     style.PopupBorderSize    = 1.0f;
-    style.FrameBorderSize    = 0.0f;
+    style.FrameBorderSize    = 1.0f;
     style.TabBorderSize      = 0.0f;
 
     style.WindowRounding    = 2.0f;
@@ -210,7 +209,7 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     const ImVec4 buttonHovered = Lerp(frame, accent, 0.20f);
     const ImVec4 buttonActive  = Lerp(frame, accent, 0.32f);
 
-    const ImVec4 border        = Lerp(window, ImVec4(1, 1, 1, 1), 0.07f);
+    const ImVec4 border        = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
     const ImVec4 borderBright  = Lerp(window, ImVec4(1, 1, 1, 1), 0.13f);
     const ImVec4 separator     = Lerp(window, ImVec4(1, 1, 1, 1), 0.06f);
 
