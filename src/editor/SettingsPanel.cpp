@@ -76,16 +76,12 @@ void SettingsPanel::OnImGuiRender(float dt)
         *m_colors = Theme::DefaultColors();
         if (m_on_change)
             m_on_change();
-        Theme::SaveThemeToFile(*m_colors);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Save Theme"))
-        Theme::SaveThemeToFile(*m_colors);
     ImGui::SameLine();
     if (ImGui::Button("Close"))
         m_visible = false;
 
-    ImGui::TextDisabled("Theme persisted to editor_theme.json (gitignored).");
+    ImGui::TextDisabled("Theme is hardcoded; edits are session-only and not persisted.");
 
     // --- Grid & Snapping (Phase 18) ---
     ImGui::Spacing();

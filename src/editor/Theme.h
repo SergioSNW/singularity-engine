@@ -41,7 +41,8 @@ void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 18.0f,
 // panel. Everything else in the style (borders, hovers, tints, tabs, scrollbars)
 // is derived from these at ConfigureStyle time, so tweaking one token re-skins
 // the whole editor coherently. Stored as 0-1 RGBA floats (no ImGui dependency
-// in this header) and persisted to editor_theme.json (gitignored).
+// in this header). Not persisted: the core colors are hardcoded and re-asserted
+// every frame.
 struct Colors
 {
     float window_bg[4];   // main window / surface background (warm charcoal)
@@ -65,14 +66,5 @@ void ConfigureStyle(float ui_scale, const Colors &colors);
 // token most recently applied by ConfigureStyle().
 void PushPrimaryButtonColor();
 void PopPrimaryButtonColor();
-
-// Persist the current token set to `path` (editor_theme.json) so a custom
-// color scheme survives restarts. Returns true on success.
-bool SaveThemeToFile(const Colors &colors, const char *path = "editor_theme.json");
-
-// Load a saved token set from `path`. On success `colors` is overwritten and
-// true is returned; on any failure (missing file, bad format) false is
-// returned and `colors` is left untouched.
-bool LoadThemeFromFile(Colors &colors, const char *path = "editor_theme.json");
 
 } // namespace Theme

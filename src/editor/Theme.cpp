@@ -1,13 +1,9 @@
 #include "Theme.h"
 
-#include "Json.h"
-
 #include <imgui.h>
 
 #include <SDL.h>
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 
 namespace Theme {
 
@@ -360,72 +356,6 @@ void PushPrimaryButtonColor()
 void PopPrimaryButtonColor()
 {
     ImGui::PopStyleColor(3);
-}
-
-bool SaveThemeToFile(const Colors &colors, const char *path)
-{
-    auto WriteToken = [](json::Value &obj, const char *key, const float c[4])
-    {
-        json::Value arr = json::Value::MakeArray();
-        for (int i = 0; i < 4; ++i)
-            arr.array.push_back(json::Value::MakeNumber(c[i]));
-        obj.object.emplace_back(key, std::move(arr));
-    };
-
-    json::Value root = json::Value::MakeObject();
-    root.object.emplace_back("version", json::Value::MakeNumber(1.0));
-    WriteToken(root, "window_bg", colors.window_bg);
-    WriteToken(root, "child_bg", colors.child_bg);
-    WriteToken(root, "popup_bg", colors.popup_bg);
-    WriteToken(root, "frame_bg", colors.frame_bg);
-    WriteToken(root, "text", colors.text);
-    WriteToken(root, "accent", colors.accent);
-
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out)
-        return false;
-    out << json::WritePretty(root) << "\n";
-    out.close();
-    return true;
-}
-
-bool LoadThemeFromFile(Colors &colors, const char *path)
-{
-    std::ifstream in(path, std::ios::in | std::ios::binary);
-    if (!in)
-        return false;
-
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-
-    std::string error;
-    json::Value root = json::Parse(buffer.str(), &error);
-    if (!root.IsObject())
-        return false;
-
-    auto ReadToken = [&root](const char *key, float out[4]) -> bool
-    {
-        const json::Value *arr = root.Find(key);
-        if (!arr || !arr->IsArray() || arr->Size() < 4)
-            return false;
-        for (int i = 0; i < 4; ++i)
-            out[i] = (float)arr->At((size_t)i).num;
-        return true;
-    };
-
-    Colors loaded = colors;
-    bool any = false;
-    any |= ReadToken("window_bg", loaded.window_bg);
-    any |= ReadToken("child_bg", loaded.child_bg);
-    any |= ReadToken("popup_bg", loaded.popup_bg);
-    any |= ReadToken("frame_bg", loaded.frame_bg);
-    any |= ReadToken("text", loaded.text);
-    any |= ReadToken("accent", loaded.accent);
-    if (!any)
-        return false;
-
-    colors = loaded;
-    return true;
 }
 
 } // namespace Theme

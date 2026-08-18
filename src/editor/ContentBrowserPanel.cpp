@@ -659,21 +659,25 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
     }
     if (!preview_drawn)
     {
-        const float icon = box * 0.75f;
-        const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            const float body_w = icon, body_h = icon * 0.72f;
-            const float tab_w = icon * 0.35f, tab_h = icon * 0.22f;
-            const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
-            const ImVec2 body_max(c.x + body_w * 0.5f, c.y + body_h * 0.5f + tab_h);
-            dl->AddRectFilled(body_min, body_max, col, 3.0f);
-            dl->AddRectFilled(ImVec2(body_min.x, body_min.y - tab_h),
-                              ImVec2(body_min.x + tab_w, body_min.y), col, 2.0f);
+            // Real folder icon via ImDrawList: golden tab on the top-left
+            // corner over the body rectangle (scaled to the list thumbnail).
+            const ImU32 folder_color = IM_COL32(180, 150, 80, 255);
+            const float fw = box_max.x - box_min.x;
+            const float fh = box_max.y - box_min.y;
+            // Folder Tab (Top Left)
+            const ImVec2 tab_max(box_min.x + fw * 0.4f, box_min.y + fh * 0.30f);
+            dl->AddRectFilled(box_min, tab_max, folder_color, 1.5f, ImDrawFlags_RoundCornersTop);
+            // Folder Body
+            const ImVec2 body_min(box_min.x, box_min.y + fh * 0.24f);
+            dl->AddRectFilled(body_min, box_max, folder_color, 2.0f, ImDrawFlags_RoundCornersAll);
         }
         else
         {
+            const float icon = box * 0.75f;
+            const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
             const float fw = icon * 0.7f, fh = icon * 0.85f;
             const float fold = icon * 0.22f;
             const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);

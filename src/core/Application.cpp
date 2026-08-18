@@ -3267,9 +3267,8 @@ bool Application::Init(int width, int height, const char *title)
     Theme::LoadFonts(m_fonts, m_dpi_scale);
     ImGui::GetIO().FontGlobalScale = 1.0f / m_dpi_scale;
 
-    // Always use the hardcoded slate-gray defaults.  Do NOT load from
-    // editor_theme.json here: the saved file may contain stale blue values
-    // from older sessions that override the intended theme.
+    // Always use the hardcoded slate-gray defaults.  The theme persistence
+    // system has been removed, so nothing on disk can override these.
     m_theme_colors = Theme::DefaultColors();
 
     Theme::ConfigureStyle(1.0f, m_theme_colors);
@@ -4424,6 +4423,20 @@ void Application::Run()
         // itself (so window/rect queries like the Content Browser's and the
         // viewport's are current for this frame).
         ProcessExternalDrops();
+
+        // Force the hardcoded slate-gray theme every single frame.  Nothing a
+        // runtime theme customizer or a saved state mutates before this point
+        // can survive: these exact values win right before submission.
+        {
+            ImGuiStyle &style = ImGui::GetStyle();
+            style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
+            style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
+            style.Colors[ImGuiCol_PopupBg]  = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
+            style.Colors[ImGuiCol_Border]   = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+            style.Colors[ImGuiCol_Text]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+            style.WindowBorderSize = 1.0f;
+            style.ChildBorderSize = 1.0f;
+        }
 
         ImGui::Render();
         m_profiler.EndStage(Profiler::UI);

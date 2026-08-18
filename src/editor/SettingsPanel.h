@@ -10,9 +10,9 @@
 // Live Editor Settings window: the theme customizer (six key color tokens that
 // re-skin the editor on change), the grid-snapping configuration (Phase 18)
 // applied to gizmo translate/rotate/scale drags, and the viewport navigation
-// tuning (Phase 25) used by Fly Mode. "Save Theme" persists the tokens to
-// editor_theme.json (gitignored); the snap steps and navigation tuning are
-// session-only.
+// tuning (Phase 25) used by Fly Mode. Theme edits are session-only; the core
+// colors are hardcoded and re-asserted every frame, and the snap steps and
+// navigation tuning are session-only.
 class SettingsPanel : public EditorPanel
 {
 public:
