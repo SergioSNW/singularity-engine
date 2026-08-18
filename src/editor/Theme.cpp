@@ -50,12 +50,12 @@ static ImVec4 Over(const ImVec4 &bg, const ImVec4 &fg)
 const Colors &DefaultColors()
 {
     static const Colors defaults = {
-        {0.125f, 0.125f, 0.125f, 1.0f},   // window_bg 0x202020  (matte charcoal)
-        {0.176f, 0.176f, 0.188f, 1.0f},   // child_bg  0x2D2D30  (panel recess)
-        {0.188f, 0.188f, 0.200f, 1.0f},   // popup_bg  0x303033
-        {0.165f, 0.165f, 0.176f, 1.0f},   // frame_bg  0x2A2A2D
-        {0.850f, 0.850f, 0.870f, 1.0f},   // text      0xD9D9DE
-        {0.345f, 0.553f, 0.961f, 1.0f},   // accent    0x588DF5  (cool blue)
+        {0.12f, 0.12f, 0.12f, 1.0f},   // window_bg  pure matte charcoal
+        {0.16f, 0.16f, 0.16f, 1.0f},   // child_bg   panel recess
+        {0.14f, 0.14f, 0.14f, 1.0f},   // popup_bg
+        {0.18f, 0.18f, 0.18f, 1.0f},   // frame_bg   input fields
+        {0.82f, 0.82f, 0.82f, 1.0f},   // text       neutral light gray
+        {0.345f, 0.553f, 0.961f, 1.0f},// accent     (kept for tabs/selection)
     };
     return defaults;
 }
@@ -173,14 +173,14 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     style.FrameBorderSize    = 0.0f;
     style.TabBorderSize      = 0.0f;
 
-    style.WindowRounding    = 6.0f;
-    style.ChildRounding     = 4.0f;
-    style.FrameRounding     = 4.0f;
-    style.PopupRounding     = 6.0f;
-    style.ScrollbarRounding = 6.0f;
-    style.GrabRounding      = 4.0f;
-    style.TabRounding       = 4.0f;
-    style.TabBarOverlineSize = 2.0f; // selected-tab highlight
+    style.WindowRounding    = 2.0f;
+    style.ChildRounding     = 2.0f;
+    style.FrameRounding     = 2.0f;
+    style.PopupRounding     = 2.0f;
+    style.ScrollbarRounding = 2.0f;
+    style.GrabRounding      = 2.0f;
+    style.TabRounding       = 2.0f;
+    style.TabBarOverlineSize = 1.0f; // selected-tab highlight
 
     style.WindowTitleAlign    = ImVec2(0.5f, 0.5f);
     style.WindowMenuButtonPosition = ImGuiDir_Right;
@@ -265,10 +265,10 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     colors_out[ImGuiCol_ButtonHovered]        = buttonHovered;
     colors_out[ImGuiCol_ButtonActive]         = buttonActive;
 
-    // Headers (selectable list items, collapsing headers).
-    colors_out[ImGuiCol_Header]               = accentTint;
-    colors_out[ImGuiCol_HeaderHovered]        = accentStrong;
-    colors_out[ImGuiCol_HeaderActive]         = accentStrong;
+    // Headers (selectable list items, collapsing headers) — neutral matte gray.
+    colors_out[ImGuiCol_Header]               = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
+    colors_out[ImGuiCol_HeaderHovered]        = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
+    colors_out[ImGuiCol_HeaderActive]         = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
 
     // Checkbox / slider grabs and focus.
     colors_out[ImGuiCol_CheckMark]            = accent;

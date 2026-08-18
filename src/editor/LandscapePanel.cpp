@@ -107,22 +107,52 @@ void LandscapePanel::OnImGuiRender(float dt)
 
     // --- Tool palette ----------------------------------------------------
     ImGui::TextDisabled("Tool");
-    const char *tool_names[] = { "Raise", "Smooth", "Flatten" };
+    const char *tool_names[] = { "Raise", "Smooth", "Flatten", "Paint" };
     const char *tool_hints[] = {
         "Lift or lower the surface under the brush.",
         "Blur heights toward the local neighborhood average.",
         "Pull heights toward the height under the brush center.",
+        "Apply vertex color (material) to the terrain surface.",
     };
     const int current_tool = (int)m_brush->tool;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
     {
         if (i > 0)
             ImGui::SameLine();
         if (ImGui::RadioButton(tool_names[i], current_tool == i))
             m_brush->tool = (SculptTool)i;
     }
-    if (current_tool >= 0 && current_tool < 3)
+    if (current_tool >= 0 && current_tool < 4)
         ImGui::TextDisabled("%s", tool_hints[current_tool]);
+
+    // Material picker: only visible in Paint mode.
+    if (current_tool == (int)SculptTool::Paint)
+    {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Material");
+        struct MaterialPreset { const char *name; float r, g, b; };
+        const MaterialPreset presets[] = {
+            { "Grass",  0.30f, 0.55f, 0.20f },
+            { "Rock",   0.45f, 0.42f, 0.38f },
+            { "Dirt",   0.40f, 0.28f, 0.15f },
+            { "Snow",   0.90f, 0.92f, 0.95f },
+            { "Sand",   0.76f, 0.70f, 0.50f },
+        };
+        for (const auto &p : presets)
+        {
+            if (ImGui::ColorButton(p.name, ImVec4(p.r, p.g, p.b, 1.0f),
+                                   0, ImVec2(20, 20)))
+            {
+                m_brush->paint_color[0] = p.r;
+                m_brush->paint_color[1] = p.g;
+                m_brush->paint_color[2] = p.b;
+            }
+            ImGui::SameLine();
+            ImGui::Text("%s", p.name);
+        }
+        ImGui::ColorEdit3("Custom", m_brush->paint_color,
+                          ImGuiColorEditFlags_NoInputs);
+    }
 
     ImGui::Spacing();
 

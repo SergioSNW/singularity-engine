@@ -21,6 +21,7 @@ struct Mesh
     std::vector<Vec3> normals;     // parallel to positions; averaged vertex normals for Gouraud shading
     std::vector<Vec3> edge_lines;  // groups of 2 = one wireframe segment
     std::vector<Vec2> uvs;         // parallel to positions; empty = no UVs
+    std::vector<float> colors;     // parallel to positions * 3 (RGB per vertex); empty = use material color
     Vec3 bounds_min{0.0f, 0.0f, 0.0f};
     Vec3 bounds_max{0.0f, 0.0f, 0.0f};
 };

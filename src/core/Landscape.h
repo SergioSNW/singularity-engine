@@ -16,6 +16,7 @@ enum class SculptTool
     Raise,   // lift / lower the surface under the brush
     Smooth,  // blur heights toward the local neighbourhood average
     Flatten, // pull heights toward the height under the brush center
+    Paint,   // apply vertex color (material) to the terrain surface
 };
 
 // Shared brush state: edited by the Landscape panel, consumed by the viewport
@@ -28,6 +29,8 @@ struct LandscapeBrushSettings
     float strength = 0.5f; // per-second stamp amount
     float falloff = 0.6f;  // 0 = hard edge, 1 = fully soft
     int target_id = -1;    // entity id being sculpted (-1 = none)
+    // Paint mode: RGB color applied to vertices under the brush.
+    float paint_color[3] = { 0.30f, 0.55f, 0.20f }; // default: grass green
 };
 
 // Fill `heights` with `base_height`, sized for `resolution`.
@@ -42,7 +45,7 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape);
 // applied as-is (the caller scales it by dt for time-based strokes).
 void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
                      const Vec3 &center, float radius, float strength,
-                     float falloff);
+                     float falloff, const float paint_color[3] = nullptr);
 
 // Bilinear height sample at local (lx, lz). Returns `base_height` when the
 // grid is uninitialized.

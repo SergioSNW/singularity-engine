@@ -192,7 +192,7 @@ void ContentBrowserPanel::Navigate(const std::string &path)
 
 void ContentBrowserPanel::DrawFolderTree()
 {
-    ImGui::BeginChild("##content_tree", ImVec2(190.0f, 0.0f), true);
+    ImGui::BeginChild("##content_tree", ImVec2(200.0f, 0.0f), true);
 
     if (ImGui::TreeNodeEx("Assets", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
@@ -264,18 +264,21 @@ void ContentBrowserPanel::DrawToolbar()
 
     ImGui::Separator();
 
-    // View mode + thumbnail scale + live search + category chips.
-    if (ImGui::Button(m_list_view ? "Grid View" : "List View"))
+    // View mode toggle + condensed toolbar: thumb scale, search, and filter
+    // chips on one line to save vertical space.
+    if (ImGui::Button(m_list_view ? "Grid" : "List"))
         m_list_view = !m_list_view;
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(std::min(140.0f, ImGui::GetContentRegionAvail().x * 0.25f));
-    ImGui::SliderFloat("Thumb", &m_thumb_scale, 48.0f, 192.0f, "%.0f");
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::SliderFloat("##thumb", &m_thumb_scale, 48.0f, 192.0f, "%.0f");
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(std::min(180.0f, ImGui::GetContentRegionAvail().x * 0.30f));
-    ImGui::InputTextWithHint("##content_search", "Search assets...",
+    const float search_w = std::max(100.0f, ImGui::GetContentRegionAvail().x - 260.0f);
+    ImGui::SetNextItemWidth(search_w);
+    ImGui::InputTextWithHint("##content_search", "Search...",
                              m_search, sizeof(m_search));
+    ImGui::SameLine();
 
     ImGui::TextDisabled("Filter:");
     ImGui::SameLine();
@@ -490,13 +493,16 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            const float body_w = icon, body_h = icon * 0.72f;
-            const float tab_w = icon * 0.35f, tab_h = icon * 0.22f;
+            // Folder: wider body rectangle + smaller tab rectangle on top-left.
+            const float body_w = icon * 1.1f, body_h = icon * 0.72f;
+            const float tab_w = icon * 0.40f, tab_h = icon * 0.24f;
             const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
             const ImVec2 body_max(c.x + body_w * 0.5f, c.y + body_h * 0.5f + tab_h);
-            dl->AddRectFilled(body_min, body_max, col, 4.0f);
+            dl->AddRectFilled(body_min, body_max, col, 3.0f);
             dl->AddRectFilled(ImVec2(body_min.x, body_min.y - tab_h),
                               ImVec2(body_min.x + tab_w, body_min.y), col, 3.0f);
+            dl->AddRect(body_min, body_max,
+                        IM_COL32(180, 180, 190, 60), 3.0f, 0, 1.0f);
         }
         else
         {

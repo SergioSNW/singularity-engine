@@ -723,9 +723,27 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
 
         // Per-vertex shaded colors, with fog applied per-vertex for smooth
         // distance blending across the triangle.
-        float fr0 = base_r * sr0, fg0 = base_g * sg0, fb0 = base_b * sb0;
-        float fr1 = base_r * sr1, fg1 = base_g * sg1, fb1 = base_b * sb1;
-        float fr2 = base_r * sr2, fg2 = base_g * sg2, fb2 = base_b * sb2;
+        // When the mesh provides per-vertex colors (paint layer), use those
+        // as the albedo instead of the flat material color.
+        float vr0 = base_r, vg0 = base_g, vb0 = base_b;
+        float vr1 = base_r, vg1 = base_g, vb1 = base_b;
+        float vr2 = base_r, vg2 = base_g, vb2 = base_b;
+        if (!mesh.colors.empty() && i * 3 + 8 < mesh.colors.size())
+        {
+            const float am = shading.albedo_multiplier;
+            vr0 = std::min(255.0f, mesh.colors[i * 3 + 0] * 255.0f * am);
+            vg0 = std::min(255.0f, mesh.colors[i * 3 + 1] * 255.0f * am);
+            vb0 = std::min(255.0f, mesh.colors[i * 3 + 2] * 255.0f * am);
+            vr1 = std::min(255.0f, mesh.colors[(i + 1) * 3 + 0] * 255.0f * am);
+            vg1 = std::min(255.0f, mesh.colors[(i + 1) * 3 + 1] * 255.0f * am);
+            vb1 = std::min(255.0f, mesh.colors[(i + 1) * 3 + 2] * 255.0f * am);
+            vr2 = std::min(255.0f, mesh.colors[(i + 2) * 3 + 0] * 255.0f * am);
+            vg2 = std::min(255.0f, mesh.colors[(i + 2) * 3 + 1] * 255.0f * am);
+            vb2 = std::min(255.0f, mesh.colors[(i + 2) * 3 + 2] * 255.0f * am);
+        }
+        float fr0 = vr0 * sr0, fg0 = vg0 * sg0, fb0 = vb0 * sb0;
+        float fr1 = vr1 * sr1, fg1 = vg1 * sg1, fb1 = vb1 * sb1;
+        float fr2 = vr2 * sr2, fg2 = vg2 * sg2, fb2 = vb2 * sb2;
 
         if (env.fog_enabled)
         {
@@ -1009,6 +1027,9 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     const bool draw_fills = (m_overlay.render_mode != ViewportRenderMode::Wireframe);
     const bool use_lighting = (m_overlay.render_mode != ViewportRenderMode::Unlit);
     const bool draw_wire = (m_overlay.render_mode == ViewportRenderMode::Wireframe);
+    // Structural edges: semi-transparent black wireframe drawn over Lit geometry
+    // to give low-poly shapes crisp, defined edges (reduces the "candy" look).
+    const bool draw_edges = (m_overlay.render_mode == ViewportRenderMode::Lit);
 
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
@@ -1076,6 +1097,30 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
                            cam_pos, m_environment, shading);
         }
         DrawTriangles(renderer, tris, w, h, &draw_calls);
+    }
+
+    // --- Pass 1.5: structural edges (Lit mode only) ---
+    // Semi-transparent black wireframe over solid fills gives low-poly shapes
+    // crisp, defined edges without the harsh look of bright wireframes.
+    if (draw_edges)
+    {
+        static const float EDGE_COLOR[3] = { 0.0f, 0.0f, 0.0f };
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            if (!entity_ptr)
+                continue;
+            Entity &entity = *entity_ptr;
+            if (&entity == skip_entity || !entity.material.active)
+                continue;
+
+            const Mesh *mesh = ResolveEntityMesh(entity);
+            if (!mesh)
+                continue;
+
+            Mat4 world = m_scene->ComputeWorldMatrix(entity);
+            RenderMeshWireframe(renderer, view_proj, near_p, w, h, world,
+                                *mesh, EDGE_COLOR, false, &draw_calls);
+        }
     }
 
     // --- Pass 2: wireframe overlay for every visible entity ---
@@ -2281,7 +2326,8 @@ void Application::UpdateLandscapeBrush(const GizmoFrame &gf, float dt)
         LandscapeSculpt(target->landscape, m_landscape_brush.tool, local,
                         m_landscape_brush.radius / std::max(scale, 1e-6f),
                         m_landscape_brush.strength * dt,
-                        m_landscape_brush.falloff);
+                        m_landscape_brush.falloff,
+                        m_landscape_brush.paint_color);
     }
     if (!lmb && m_landscape_sculpting)
     {
@@ -2979,8 +3025,7 @@ void Application::DrawViewportContextMenu()
             // workspace so the viewport override is immediately active.
             if (CreateLandscape())
             {
-                m_script_editor->RequestDockCodeWindow(
-                    ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                ApplyWorkspace(WorkspaceManager::Workspace::Landscape);
             }
         }
         if (ImGui::MenuItem("Create Directional Light"))
@@ -3566,8 +3611,7 @@ bool Application::Init(int width, int height, const char *title)
         [this]() {
             // Re-apply the active workspace: rebuilds its canonical layout and
             // routes the mini-IDE window back into its dedicated dock node.
-            m_script_editor->RequestDockCodeWindow(
-                ApplyWorkspace(m_workspace_manager.GetWorkspace()));
+            ApplyWorkspace(m_workspace_manager.GetWorkspace());
         });
     m_panels.push_back(std::shared_ptr<ScriptEditorPanel>(m_script_editor));
 
@@ -3637,27 +3681,22 @@ bool Application::Init(int width, int height, const char *title)
         m_ui_scale = 1.0f;
     } });
     cp.Register({ "Switch to Level Design Workspace", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
+        ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign);
     } });
     cp.Register({ "Switch to Scripting Workspace", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
+        ApplyWorkspace(WorkspaceManager::Workspace::Scripting);
     } });
     cp.Register({ "Switch to Shading & Assets Workspace", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+        ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets);
     } });
     cp.Register({ "Switch to Landscape Mode", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+        ApplyWorkspace(WorkspaceManager::Workspace::Landscape);
     } });
     cp.Register({ "Switch to Sequencing Workspace", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(
-            ApplyWorkspace(WorkspaceManager::Workspace::Timeline));
+        ApplyWorkspace(WorkspaceManager::Workspace::Timeline);
     } });
     cp.Register({ "Reset View to Workspace Default", "Workspace", "", [this]() {
-        m_script_editor->RequestDockCodeWindow(ResetWorkspaceDefault());
+        ResetWorkspaceDefault();
         PushToast("Reset to workspace default");
     } });
     cp.Register({ "Save Current Layout as Default", "Workspace", "", [this]() {
@@ -3686,8 +3725,7 @@ bool Application::Init(int width, int height, const char *title)
         // workspace so the viewport override is immediately active.
         if (CreateLandscape())
         {
-            m_script_editor->RequestDockCodeWindow(
-                ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+            ApplyWorkspace(WorkspaceManager::Workspace::Landscape);
         }
     } });
     cp.Register({ "Create Octahedron", "Create", "", [this]() {
@@ -4134,44 +4172,38 @@ void Application::Run()
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::LevelDesign),
                             nullptr, current == WorkspaceManager::Workspace::LevelDesign))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign));
+                        ApplyWorkspace(WorkspaceManager::Workspace::LevelDesign);
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Scripting),
                             nullptr, current == WorkspaceManager::Workspace::Scripting))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ApplyWorkspace(WorkspaceManager::Workspace::Scripting));
+                        ApplyWorkspace(WorkspaceManager::Workspace::Scripting);
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::ShadingAndAssets),
                             nullptr, current == WorkspaceManager::Workspace::ShadingAndAssets))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets));
+                        ApplyWorkspace(WorkspaceManager::Workspace::ShadingAndAssets);
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Landscape),
                             nullptr, current == WorkspaceManager::Workspace::Landscape))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ApplyWorkspace(WorkspaceManager::Workspace::Landscape));
+                        ApplyWorkspace(WorkspaceManager::Workspace::Landscape);
                     }
                     if (ImGui::MenuItem(
                             WorkspaceManager::WorkspaceName(WorkspaceManager::Workspace::Timeline),
                             nullptr, current == WorkspaceManager::Workspace::Timeline))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ApplyWorkspace(WorkspaceManager::Workspace::Timeline));
+                        ApplyWorkspace(WorkspaceManager::Workspace::Timeline);
                     }
                     ImGui::Spacing();
                     ImGui::TextDisabled("Layout");
                     ImGui::Separator();
                     if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ResetWorkspaceDefault());
+                        ResetWorkspaceDefault();
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default", nullptr,
                                         m_workspace_manager.HasSavedLayout()))
@@ -4345,8 +4377,7 @@ void Application::Run()
                     }
                     if (ImGui::MenuItem("Reset to Workspace Default"))
                     {
-                        m_script_editor->RequestDockCodeWindow(
-                            ResetWorkspaceDefault());
+                        ResetWorkspaceDefault();
                         PushToast("Reset to workspace default");
                     }
                     if (ImGui::MenuItem("Save Current Layout as Default"))

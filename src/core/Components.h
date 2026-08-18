@@ -151,6 +151,7 @@ struct LandscapeComponent
     float size = 40.0f;            // world units per side (x / z extent)
     float base_height = 0.0f;      // starting height for every vertex
     std::vector<float> heights;    // (resolution+1)^2 row-major; empty until initialized
+    std::vector<float> colors;     // (resolution+1)^2 * 3 row-major RGB; painted vertex colors
     std::shared_ptr<Mesh> mesh;    // generated geometry (null until built)
     bool mesh_dirty = true;        // rebuild `mesh` from `heights`
 };

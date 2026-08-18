@@ -60,6 +60,8 @@ void LandscapeInitialize(LandscapeComponent &landscape)
 {
     const int res = std::max(1, landscape.resolution);
     landscape.heights.assign((size_t)(res + 1) * (res + 1), landscape.base_height);
+    // Default vertex color: white (1,1,1) so unpainted terrain uses the material color.
+    landscape.colors.assign((size_t)(res + 1) * (res + 1) * 3, 1.0f);
     landscape.mesh_dirty = true;
 }
 
@@ -70,6 +72,8 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
     const size_t count = (size_t)stride * stride;
     if (landscape.heights.size() != count)
         landscape.heights.assign(count, landscape.base_height);
+    if (landscape.colors.size() != count * 3)
+        landscape.colors.assign(count * 3, 1.0f);
 
     // Reuse the existing mesh allocation to avoid malloc/free churn during
     // active sculpting (the hot path sets mesh_dirty every frame).
@@ -80,6 +84,7 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
     mesh.positions.clear();
     mesh.uvs.clear();
     mesh.normals.clear();
+    mesh.colors.clear();
     mesh.edge_lines.clear();
 
     const float cell = landscape.size / (float)res;
@@ -117,6 +122,16 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
             mesh.positions.push_back(v00);
             mesh.positions.push_back(v01);
             mesh.positions.push_back(v11);
+
+            // Per-vertex colors from the landscape paint layer.
+            auto push_color = [&](int vr, int vc) {
+                const size_t ci = ((size_t)vr * stride + vc) * 3;
+                mesh.colors.push_back(landscape.colors[ci]);
+                mesh.colors.push_back(landscape.colors[ci + 1]);
+                mesh.colors.push_back(landscape.colors[ci + 2]);
+            };
+            push_color(r, c);     push_color(r + 1, c + 1); push_color(r, c + 1);
+            push_color(r, c);     push_color(r + 1, c);     push_color(r + 1, c + 1);
 
             const float u0 = (float)c / (float)res;
             const float u1 = (float)(c + 1) / (float)res;
@@ -172,7 +187,7 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
 
 void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
                      const Vec3 &center, float radius, float strength,
-                     float falloff)
+                     float falloff, const float paint_color[3])
 {
     if (landscape.heights.empty() || landscape.resolution < 1 || radius <= 0.0f)
         return;
@@ -231,6 +246,18 @@ void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
                 case SculptTool::Flatten:
                     h += (target - h) * strength * w;
                     break;
+                case SculptTool::Paint:
+                {
+                    if (!paint_color)
+                        break;
+                    // Blend vertex color toward the paint color by w * strength.
+                    const size_t ci = ((size_t)r * stride + c) * 3;
+                    const float blend = std::clamp(strength * w, 0.0f, 1.0f);
+                    landscape.colors[ci + 0] += (paint_color[0] - landscape.colors[ci + 0]) * blend;
+                    landscape.colors[ci + 1] += (paint_color[1] - landscape.colors[ci + 1]) * blend;
+                    landscape.colors[ci + 2] += (paint_color[2] - landscape.colors[ci + 2]) * blend;
+                    break;
+                }
             }
         }
     }
