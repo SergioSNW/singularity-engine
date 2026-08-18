@@ -4,6 +4,7 @@
 #include "Entity.h"
 #include "AudioManager.h"
 #include "core/Console.h"
+#include "core/Input.h"
 
 extern "C" {
 #include <lua.h>
@@ -430,6 +431,113 @@ int LuaPrint(lua_State *L)
     return 0;
 }
 
+// --- Input ---
+//
+// Gameplay input bridge: scripts call Input.GetAction("Jump"),
+// Input.GetActionDown("Jump"), Input.GetAxis("MoveForward"), etc.
+// Scancodes are SDL_SCANCODE_* integer constants passed to
+// Input.GetKey / GetKeyDown / GetKeyUp. Mouse buttons use SDL
+// button indices (0=left, 1=middle, 2=right).
+
+int LuaInputGetAction(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, Input::Instance().GetAction(name));
+    return 1;
+}
+
+int LuaInputGetActionDown(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, Input::Instance().GetActionDown(name));
+    return 1;
+}
+
+int LuaInputGetActionUp(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, Input::Instance().GetActionUp(name));
+    return 1;
+}
+
+int LuaInputGetAxis(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushnumber(L, Input::Instance().GetAxis(name));
+    return 1;
+}
+
+int LuaInputGetKey(lua_State *L)
+{
+    const int key = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetKey(key));
+    return 1;
+}
+
+int LuaInputGetKeyDown(lua_State *L)
+{
+    const int key = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetKeyDown(key));
+    return 1;
+}
+
+int LuaInputGetKeyUp(lua_State *L)
+{
+    const int key = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetKeyUp(key));
+    return 1;
+}
+
+int LuaInputGetMouseX(lua_State *L)
+{
+    lua_pushinteger(L, Input::Instance().GetMouseX());
+    return 1;
+}
+
+int LuaInputGetMouseY(lua_State *L)
+{
+    lua_pushinteger(L, Input::Instance().GetMouseY());
+    return 1;
+}
+
+int LuaInputGetMouseButton(lua_State *L)
+{
+    const int btn = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetMouseButton(btn));
+    return 1;
+}
+
+int LuaInputGetMouseButtonDown(lua_State *L)
+{
+    const int btn = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetMouseButtonDown(btn));
+    return 1;
+}
+
+int LuaInputGetMouseButtonUp(lua_State *L)
+{
+    const int btn = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, Input::Instance().GetMouseButtonUp(btn));
+    return 1;
+}
+
+int LuaInputRegisterAction(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    const int key = (int)luaL_checkinteger(L, 2);
+    Input::Instance().RegisterAction(name, key);
+    return 0;
+}
+
+int LuaInputRegisterAxis(lua_State *L)
+{
+    const char *name = luaL_checkstring(L, 1);
+    const int pos_key = (int)luaL_checkinteger(L, 2);
+    const int neg_key = (int)luaL_checkinteger(L, 3);
+    Input::Instance().RegisterAxis(name, pos_key, neg_key);
+    return 0;
+}
+
 // --- Audio ---
 //
 // Gameplay sound bridge: scripts call Audio.Play(path, volume?, loop?) to fire
@@ -484,6 +592,23 @@ void RegisterEngineApi(lua_State *L)
     lua_pushcfunction(L, LuaAudioPlay); lua_setfield(L, -2, "Play");
     lua_pushcfunction(L, LuaAudioStop); lua_setfield(L, -2, "Stop");
     lua_setfield(L, -2, "Audio");           // api.Audio = audio -> [api]
+
+    lua_newtable(L);                        // [api, input]
+    lua_pushcfunction(L, LuaInputGetAction); lua_setfield(L, -2, "GetAction");
+    lua_pushcfunction(L, LuaInputGetActionDown); lua_setfield(L, -2, "GetActionDown");
+    lua_pushcfunction(L, LuaInputGetActionUp); lua_setfield(L, -2, "GetActionUp");
+    lua_pushcfunction(L, LuaInputGetAxis); lua_setfield(L, -2, "GetAxis");
+    lua_pushcfunction(L, LuaInputGetKey); lua_setfield(L, -2, "GetKey");
+    lua_pushcfunction(L, LuaInputGetKeyDown); lua_setfield(L, -2, "GetKeyDown");
+    lua_pushcfunction(L, LuaInputGetKeyUp); lua_setfield(L, -2, "GetKeyUp");
+    lua_pushcfunction(L, LuaInputGetMouseX); lua_setfield(L, -2, "GetMouseX");
+    lua_pushcfunction(L, LuaInputGetMouseY); lua_setfield(L, -2, "GetMouseY");
+    lua_pushcfunction(L, LuaInputGetMouseButton); lua_setfield(L, -2, "GetMouseButton");
+    lua_pushcfunction(L, LuaInputGetMouseButtonDown); lua_setfield(L, -2, "GetMouseButtonDown");
+    lua_pushcfunction(L, LuaInputGetMouseButtonUp); lua_setfield(L, -2, "GetMouseButtonUp");
+    lua_pushcfunction(L, LuaInputRegisterAction); lua_setfield(L, -2, "RegisterAction");
+    lua_pushcfunction(L, LuaInputRegisterAxis); lua_setfield(L, -2, "RegisterAxis");
+    lua_setfield(L, -2, "Input");           // api.Input = input -> [api]
 
     lua_newtable(L);                        // [api, api_mt]
     lua_getglobal(L, "_G");

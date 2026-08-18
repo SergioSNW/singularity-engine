@@ -43,6 +43,7 @@
 #include "core/Console.h"
 #include "core/AssetImporter.h"
 #include "core/Landscape.h"
+#include "core/Input.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -3880,6 +3881,12 @@ bool Application::Init(int width, int height, const char *title)
 
     RecreateViewportTarget(800, 600);
 
+    // Phase 41: default action + axis mappings.
+    Input &input = Input::Instance();
+    input.RegisterAction("Jump", SDL_SCANCODE_SPACE);
+    input.RegisterAxis("MoveForward", SDL_SCANCODE_W, SDL_SCANCODE_S);
+    input.RegisterAxis("MoveRight", SDL_SCANCODE_D, SDL_SCANCODE_A);
+
     m_running = true;
     return true;
 }
@@ -3911,10 +3918,26 @@ void Application::Run()
             m_fps = (m_fps <= 0.0f) ? inst_fps : m_fps * 0.92f + inst_fps * 0.08f;
         }
 
+        // Phase 41: snapshot live keyboard/mouse state before SDL_PollEvent.
+        Input::Instance().NewFrame();
+
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL2_ProcessEvent(&event);
+
+            // Phase 41: forward input events to the centralized Input Manager.
+            if (event.type == SDL_KEYDOWN)
+                Input::Instance().OnKeyDown(event.key);
+            else if (event.type == SDL_KEYUP)
+                Input::Instance().OnKeyUp(event.key);
+            else if (event.type == SDL_MOUSEBUTTONDOWN)
+                Input::Instance().OnMouseButtonDown(event.button);
+            else if (event.type == SDL_MOUSEBUTTONUP)
+                Input::Instance().OnMouseButtonUp(event.button);
+            else if (event.type == SDL_MOUSEMOTION)
+                Input::Instance().OnMouseMove(event.motion.x, event.motion.y);
+
             if (event.type == SDL_QUIT)
                 m_running = false;
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)
@@ -3970,6 +3993,9 @@ void Application::Run()
                     m_recreate_viewport = true;
             }
         }
+
+        // Phase 41: copy current -> previous keyboard/mouse state for next frame.
+        Input::Instance().EndFrame();
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();

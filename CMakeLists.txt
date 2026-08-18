@@ -117,6 +117,7 @@ target_sources(singularity-engine PRIVATE
   src/core/Animation.cpp
   src/core/PhysicsMaterial.cpp
   src/core/Environment.cpp
+  src/core/Input.cpp
   src/render/ThumbnailCache.cpp
   src/render/EnvironmentFX.cpp
   src/script/ScriptEngine.cpp
