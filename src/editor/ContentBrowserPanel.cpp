@@ -86,15 +86,15 @@ ImU32 BadgeColor(AssetCatalog::AssetKind kind)
 {
     switch (kind)
     {
-        case AssetCatalog::AssetKind::Folder:   return IM_COL32(210, 175, 90, 255);
-        case AssetCatalog::AssetKind::Scene:    return IM_COL32(90, 175, 220, 255);
-        case AssetCatalog::AssetKind::Prefab:   return IM_COL32(220, 120, 220, 255);
-        case AssetCatalog::AssetKind::Script:   return IM_COL32(110, 200, 110, 255);
-        case AssetCatalog::AssetKind::Mesh:     return IM_COL32(220, 140, 90, 255);
-        case AssetCatalog::AssetKind::Material: return IM_COL32(120, 180, 235, 255);
-        case AssetCatalog::AssetKind::Texture:  return IM_COL32(240, 210, 130, 255);
-        case AssetCatalog::AssetKind::Audio:    return IM_COL32(130, 210, 210, 255);
-        default:                                return IM_COL32(150, 150, 150, 255);
+        case AssetCatalog::AssetKind::Folder:   return IM_COL32(140, 120, 65, 255);
+        case AssetCatalog::AssetKind::Scene:    return IM_COL32(55, 110, 150, 255);
+        case AssetCatalog::AssetKind::Prefab:   return IM_COL32(140, 80, 140, 255);
+        case AssetCatalog::AssetKind::Script:   return IM_COL32(65, 130, 65, 255);
+        case AssetCatalog::AssetKind::Mesh:     return IM_COL32(140, 95, 55, 255);
+        case AssetCatalog::AssetKind::Material: return IM_COL32(70, 115, 160, 255);
+        case AssetCatalog::AssetKind::Texture:  return IM_COL32(155, 135, 75, 255);
+        case AssetCatalog::AssetKind::Audio:    return IM_COL32(70, 135, 135, 255);
+        default:                                return IM_COL32(100, 100, 100, 255);
     }
 }
 
@@ -201,16 +201,13 @@ void ContentBrowserPanel::DrawFolderTree()
             if (dir == m_root)
                 continue;
             const bool selected = (dir == m_current);
-            const int indent = Depth(dir) - 1;
-            for (int i = 0; i < indent; ++i)
-                ImGui::Indent();
-
+            const int depth = Depth(dir) - 1;
+            ImGui::PushID(dir.c_str());
+            ImGui::Indent(16.0f * depth);
             if (ImGui::Selectable(Leaf(dir).c_str(), selected))
                 Navigate(dir);
-            ImGui::SameLine();
-
-            for (int i = 0; i < indent; ++i)
-                ImGui::Unindent();
+            ImGui::Unindent(16.0f * depth);
+            ImGui::PopID();
         }
         ImGui::TreePop();
     }
@@ -411,9 +408,6 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
                           ImVec2(cell_w, cell_h)))
         m_selected = path;
 
-    // Drag source: prefabs spawn into the Hierarchy, mesh assets spawn as
-    // entities there or on the viewport, .mat / image assets assign onto the
-    // Inspector's Material section. Payload carries the path.
     if (kind == FileKind::Prefab && ImGui::BeginDragDropSource(
             ImGuiDragDropFlags_SourceAllowNullID))
     {
@@ -447,14 +441,21 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         OpenItem(path, kind);
 
-    // Overlay the preview (thumbnail, swatch, image, or badge) + clipped label.
-    // Meshes and materials come from the off-screen ThumbnailCache, image
-    // assets render the loaded texture aspect-fitted, everything else keeps a
-    // small colored per-type badge.
+    // Dark-slate card background behind the icon + text.
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 pmin = ImGui::GetItemRectMin();
-    const float box = m_thumb_scale;
-    const ImVec2 box_min(pmin.x + 10.0f, pmin.y + 8.0f);
+    const ImVec2 pmax = ImGui::GetItemRectMax();
+    const ImU32 card_bg = selected
+        ? IM_COL32(50, 55, 70, 255)
+        : IM_COL32(32, 33, 38, 255);
+    dl->AddRectFilled(pmin, pmax, card_bg, 4.0f);
+    if (selected)
+        dl->AddRect(pmin, pmax, IM_COL32(88, 141, 245, 200), 4.0f, 0, 1.5f);
+
+    // Thumbnail preview centered inside the card.
+    const float box = std::min(m_thumb_scale, cell_w - 16.0f);
+    const float pad_top = 8.0f;
+    const ImVec2 box_min(pmin.x + (cell_w - box) * 0.5f, pmin.y + pad_top);
     const ImVec2 box_max(box_min.x + box, box_min.y + box);
 
     bool preview_drawn = false;
@@ -471,7 +472,6 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
     {
         if (const TextureInfo *info = m_texture_library->Load(path))
         {
-            // Fit the image into the box preserving aspect ratio.
             const float iw = (float)std::max(1, info->width);
             const float ih = (float)std::max(1, info->height);
             float w = box, h = box;
@@ -485,13 +485,11 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 
     if (!preview_drawn)
     {
-        // Draw a recognizable type icon inside the preview box.
         const float icon = std::min(box * 0.55f, 64.0f);
         const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            // Folder: rectangle body + small tab on top-left.
             const float body_w = icon, body_h = icon * 0.72f;
             const float tab_w = icon * 0.35f, tab_h = icon * 0.22f;
             const ImVec2 body_min(c.x - body_w * 0.5f, c.y - body_h * 0.5f + tab_h);
@@ -502,29 +500,29 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         }
         else
         {
-            // File: rectangle with a folded corner.
             const float fw = icon * 0.7f, fh = icon * 0.85f;
             const float fold = icon * 0.22f;
             const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
             const ImVec2 br(c.x + fw * 0.5f, c.y + fh * 0.5f);
-            const ImVec2 points[] = {
-                tl,
-                ImVec2(br.x - fold, tl.y),
-                ImVec2(br.x, tl.y + fold),
-                br,
-                tl
-            };
+            const ImVec2 points[] = { tl, ImVec2(br.x - fold, tl.y),
+                ImVec2(br.x, tl.y + fold), br, tl };
             dl->AddConvexPolyFilled(points, 5, col);
             dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
-                        IM_COL32(255, 255, 255, 60), 1.5f);
+                        IM_COL32(180, 180, 190, 80), 1.5f);
             dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
-                        IM_COL32(255, 255, 255, 60), 1.5f);
+                        IM_COL32(180, 180, 190, 80), 1.5f);
         }
     }
 
-    dl->AddText(ImVec2(pmin.x + 10.0f, box_max.y + 8.0f),
-                ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_Text),
-                ClipToWidth(Leaf(path), cell_w - 18.0f).c_str());
+    // Text label clipped below the thumbnail with proper padding.
+    const float text_y = box_max.y + 6.0f;
+    const float text_area_w = cell_w - 12.0f;
+    dl->PushClipRect(ImVec2(pmin.x + 6.0f, text_y),
+                     ImVec2(pmax.x - 6.0f, pmax.y - 2.0f), true);
+    dl->AddText(ImVec2(pmin.x + 6.0f, text_y),
+                ImGui::GetColorU32(ImGuiCol_Text),
+                ClipToWidth(Leaf(path), text_area_w).c_str());
+    dl->PopClipRect();
 
     ImGui::PopID();
 }
@@ -674,9 +672,9 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
                 ImVec2(br.x, tl.y + fold), br, tl };
             dl->AddConvexPolyFilled(points, 5, col);
             dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
-                        IM_COL32(255, 255, 255, 60), 1.0f);
+                        IM_COL32(180, 180, 190, 80), 1.0f);
             dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
-                        IM_COL32(255, 255, 255, 60), 1.0f);
+                        IM_COL32(180, 180, 190, 80), 1.0f);
         }
     }
 

@@ -329,6 +329,9 @@ private:
     WorkspaceManager m_workspace_manager;
     WorkspaceManager::Workspace m_previous_workspace =
         WorkspaceManager::Workspace::LevelDesign;
+    Vec3 m_saved_camera_pos{ 0.0f, 2.0f, 8.0f };
+    float m_saved_camera_pitch = -14.0f;
+    float m_saved_camera_yaw = 0.0f;
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;

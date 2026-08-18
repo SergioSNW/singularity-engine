@@ -1007,7 +1007,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     // fall back to flat albedo (and drops the wireframe pass).
     const bool draw_fills = (m_overlay.render_mode != ViewportRenderMode::Wireframe);
     const bool use_lighting = (m_overlay.render_mode != ViewportRenderMode::Unlit);
-    const bool draw_wire = (m_overlay.render_mode != ViewportRenderMode::Unlit);
+    const bool draw_wire = (m_overlay.render_mode == ViewportRenderMode::Wireframe);
 
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
@@ -2447,6 +2447,7 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     const bool is_sha  = (ws == WorkspaceManager::Workspace::ShadingAndAssets);
     const bool is_seq  = (ws == WorkspaceManager::Workspace::Timeline);
     const bool is_scr  = (ws == WorkspaceManager::Workspace::Scripting);
+    const bool was_lsc = (m_previous_workspace == WorkspaceManager::Workspace::Landscape);
 
     // Viewport: visible in all modes (Scripting now has it on the right rail).
     if (m_viewport)
@@ -2485,9 +2486,23 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     if (m_timeline_panel)
         m_timeline_panel->SetVisible(is_seq);
 
-    // Script Editor: Scripting only (left column, top 75%).
+    // Script Editor: Scripting only (left column, top 75%). Force-expand
+    // (m_visible = true) and dock into the canonical IDE node so it is
+    // never floating or collapsed.
     if (m_script_editor)
-        m_script_editor->SetVisible(is_scr);
+    {
+        if (is_scr)
+        {
+            m_script_editor->SetVisible(true);
+            unsigned int node = m_workspace_manager.CodeWindowNode();
+            if (node)
+                m_script_editor->RequestDockCodeWindow(node);
+        }
+        else
+        {
+            m_script_editor->SetVisible(false);
+        }
+    }
 
     // Console: Scripting only (left column, bottom 25%).
     if (m_console_panel)
@@ -2510,13 +2525,23 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     if (ws != WorkspaceManager::Workspace::Timeline && m_timeline.playing)
         StopTimeline();
 
-    // Landscape Camera Hook: when entering Landscape Mode, automatically set
-    // the editor camera to a top-down overview so the terrain grid is easy to
-    // see and sculpt.  Only fires on the transition INTO Landscape Mode.
-    if (is_lsc && ws != m_previous_workspace)
+    // Landscape Camera Hook: save/restore editor camera across Landscape
+    // transitions so the user never gets stuck in top-down mode.
+    if (is_lsc && !was_lsc)
     {
+        // Entering Landscape: save current pose, then set top-down overview.
+        m_saved_camera_pos = m_editor_camera.position;
+        m_saved_camera_pitch = m_editor_camera.pitch;
+        m_saved_camera_yaw = m_editor_camera.yaw;
         m_editor_camera.pitch = -70.0f;
         m_editor_camera.position.y = 25.0f;
+    }
+    else if (!is_lsc && was_lsc)
+    {
+        // Leaving Landscape: restore the saved pose.
+        m_editor_camera.position = m_saved_camera_pos;
+        m_editor_camera.pitch = m_saved_camera_pitch;
+        m_editor_camera.yaw = m_saved_camera_yaw;
     }
     m_previous_workspace = ws;
 }

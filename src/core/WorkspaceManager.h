@@ -105,6 +105,8 @@ public:
     void SetBottomBarHeight(float height) { m_bottom_bar_height = height; }
     float BottomBarHeight() const { return m_bottom_bar_height; }
 
+    unsigned int CodeWindowNode() const { return m_code_window_node; }
+
 private:
     void RebuildLayout();
 

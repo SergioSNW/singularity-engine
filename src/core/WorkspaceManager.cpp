@@ -107,11 +107,10 @@ void WorkspaceManager::RebuildLayout()
     {
         case Workspace::Scripting:
         {
-            // Scripting workspace: split into two columns.  The left column
-            // hosts the Script Editor (top 75%) above the Console (bottom 25%).
-            // The right column holds the Viewport so the user can preview
-            // scene changes alongside code.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.62f, &left, &right);
+            // Scripting workspace: split into two columns.  Left column 65%
+            // width holds Script Editor (top 75%) above Console (bottom 25%).
+            // Right column 35% holds the Viewport.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.65f, &left, &right);
 
             ImGuiID ide_top, console_bot;
             ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.25f, &console_bot, &ide_top);
