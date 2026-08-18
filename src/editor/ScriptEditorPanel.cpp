@@ -452,7 +452,7 @@ void ScriptEditorPanel::OnImGuiRender(float /*dt*/)
         ImGui::SetNextWindowDockID(m_dock_node, ImGuiCond_Always);
         m_dock_requested = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(920.0f, 560.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(920.0f, 0.0f), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Script Editor", &m_visible, ImGuiWindowFlags_NoCollapse))
     {

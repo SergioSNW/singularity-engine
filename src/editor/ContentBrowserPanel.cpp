@@ -272,11 +272,11 @@ void ContentBrowserPanel::DrawToolbar()
         m_list_view = !m_list_view;
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SetNextItemWidth(std::min(140.0f, ImGui::GetContentRegionAvail().x * 0.25f));
     ImGui::SliderFloat("Thumb", &m_thumb_scale, 48.0f, 192.0f, "%.0f");
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SetNextItemWidth(std::min(180.0f, ImGui::GetContentRegionAvail().x * 0.30f));
     ImGui::InputTextWithHint("##content_search", "Search assets...",
                              m_search, sizeof(m_search));
 
@@ -317,7 +317,7 @@ void ContentBrowserPanel::DrawCreateFolderRow()
         return;
 
     ImGui::PushID("new_folder");
-    ImGui::SetNextItemWidth(260.0f);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 160.0f);
     ImGui::InputText("##name", m_new_folder, sizeof(m_new_folder),
                      ImGuiInputTextFlags_EnterReturnsTrue);
 
@@ -361,7 +361,7 @@ void ContentBrowserPanel::DrawRenameRow()
     ImGui::TextUnformatted(("Rename: " + Leaf(m_rename_path)).c_str());
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(300.0f);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 160.0f);
     const bool committed = ImGui::InputText(
         "##name", m_rename_buffer, sizeof(m_rename_buffer),
         ImGuiInputTextFlags_EnterReturnsTrue);

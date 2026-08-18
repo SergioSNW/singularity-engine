@@ -107,58 +107,43 @@ void WorkspaceManager::RebuildLayout()
     {
         case Workspace::Scripting:
         {
-            // Scripting workspace: a taller bottom strip dedicated to the IDE,
-            // with the unified "Script Editor" mini-IDE (browser sidebar, tab
-            // bar and code pane all inside the one window) docked beside the
-            // "Development Zone" tabs, so the whole IDE is part of the unified
-            // dock rather than floating.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.62f, &top, &bottom);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, &right, &center);
+            // Scripting workspace: split into two columns.  The left column
+            // hosts the Script Editor (top 75%) above the Console (bottom 25%).
+            // The right column holds the Viewport so the user can preview
+            // scene changes alongside code.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.62f, &left, &right);
 
-            ImGuiID left_top, left_bottom;
-            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &left_top, &left_bottom);
+            ImGuiID ide_top, console_bot;
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.25f, &console_bot, &ide_top);
 
-            ImGuiID ide_slot, dev_right;
-            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.66f, &ide_slot, &dev_right);
+            ImGui::DockBuilderDockWindow(kScriptEditorWindow, ide_top);
+            ImGui::DockBuilderDockWindow(kConsoleWindow, console_bot);
+            ImGui::DockBuilderDockWindow(kViewportWindow, right);
 
-            ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
-            ImGui::DockBuilderDockWindow(kStatsWindow, left_bottom);
-            ImGui::DockBuilderDockWindow(kViewportWindow, center);
-            dock_right_rail(right);
-            ImGui::DockBuilderDockWindow(kScriptEditorWindow, ide_slot);
-            dock_dev_zone(dev_right);
-
-            // The mini-IDE is a single fixed-title window ("Script Editor"),
-            // so it can be docked by name; the node is still routed to the
-            // Application for the Float/Dock toolbar toggle.
-            m_code_window_node = ide_slot;
+            m_code_window_node = ide_top;
             break;
         }
         case Workspace::ShadingAndAssets:
         {
-            // Shading & Assets workspace: the Material Editor + Material
-            // Preview own the left rail as the primary authoring zone, the
-            // Viewport is center-stage for inspecting shaded geometry, and the
-            // Content Browser sits on the right for asset drag-and-drop.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.72f, &top, &bottom);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.22f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
+            // Shading & Assets workspace: three-column layout.  Left column
+            // holds the Material Preview (top) and Content Browser (bottom).
+            // Center is the Viewport for inspecting shaded geometry.  Right
+            // column holds the Material Editor (top) and Environment panel
+            // (bottom).
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.20f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
 
-            ImGuiID mat_top, mat_bottom;
-            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, &mat_top, &mat_bottom);
+            ImGuiID left_top, left_bot;
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.45f, &left_bot, &left_top);
 
-            ImGui::DockBuilderDockWindow(kMaterialEditorWindow, mat_top);
-            ImGui::DockBuilderDockWindow(kEnvironmentWindow, mat_top);
-            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, mat_bottom);
+            ImGuiID right_top, right_bot;
+            ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.55f, &right_bot, &right_top);
+
+            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, left_top);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, left_bot);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
-            ImGui::DockBuilderDockWindow(kContentBrowserWindow, right);
-            ImGui::DockBuilderDockWindow(kInspectorWindow, right);
-            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
-
-            // Bottom zone: Console + Stats.
-            ImGui::DockBuilderDockWindow(kConsoleWindow, bottom);
-            ImGui::DockBuilderDockWindow(kStatsWindow, bottom);
+            ImGui::DockBuilderDockWindow(kMaterialEditorWindow, right_top);
+            ImGui::DockBuilderDockWindow(kEnvironmentWindow, right_bot);
             break;
         }
         default: // Workspace::LevelDesign
@@ -187,28 +172,18 @@ void WorkspaceManager::RebuildLayout()
         }
         case Workspace::Landscape:
         {
-            // Landscape Mode: a terrain-authoring workspace. The Landscape
-            // panel owns the right rail (brush + tool palette) with the
-            // Inspector + Editor Settings tabbed beneath it; the viewport stays
-            // center-stage for sculpting. The bottom zone hosts the Development
-            // Zone tabs beside the stats; the Script Editor stays free-floating
-            // while sculpting.
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up, 0.74f, &top, &bottom);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.18f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
+            // Landscape Mode: terrain-authoring workspace.  The left rail
+            // holds the Hierarchy (top) and Landscape brush/tools (bottom).
+            // The Viewport fills the entire center+right area for maximum
+            // sculpting room.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.20f, &left, &center);
 
-            ImGuiID brush_top, brush_bottom;
-            ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.60f, &brush_top, &brush_bottom);
+            ImGuiID left_top, left_bot;
+            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.50f, &left_bot, &left_top);
 
-            ImGuiID bottom_left, bottom_right;
-            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.50f, &bottom_left, &bottom_right);
-
-            ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
+            ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
+            ImGui::DockBuilderDockWindow(kLandscapeWindow, left_bot);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
-            ImGui::DockBuilderDockWindow(kLandscapeWindow, brush_top);
-            dock_right_rail(brush_bottom);
-            dock_dev_zone(bottom_left);
-            ImGui::DockBuilderDockWindow(kStatsWindow, bottom_right);
             m_code_window_node = 0;
             break;
         }

@@ -92,7 +92,7 @@ void SceneHierarchyPanel::DrawRenameRow()
     bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
     ImGui::PushID(m_rename_entity_id);
-    ImGui::SetNextItemWidth(220.0f);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 20.0f);
     if (ImGui::InputText("##name", m_rename_buffer, sizeof(m_rename_buffer),
                          ImGuiInputTextFlags_EnterReturnsTrue))
         committed = true;

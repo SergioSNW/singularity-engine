@@ -275,8 +275,8 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
     const float extent = 20.0f;
 
     // Minor grid lines on the y=0 (XZ) plane; the axis lines are drawn below.
-    // Softened to a subtle, non-intrusive tint so geometry is never overpowered.
-    SDL_SetRenderDrawColor(renderer, 38, 38, 48, 180);
+    // Very dark gray so they contrast cleanly against lit geometry.
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
     for (int k = -(int)extent; k <= (int)extent; ++k)
     {
         if (k == 0)
@@ -289,12 +289,12 @@ static void RenderGroundGrid(SDL_Renderer *renderer, const Mat4 &view_proj,
                           draw_calls);
     }
 
-    // Highlighted world axes: X = red, Z = blue. Softened for professional look.
-    SDL_SetRenderDrawColor(renderer, 180, 60, 60, 200);
+    // Highlighted world axes: X = dark red, Z = dark blue.
+    SDL_SetRenderDrawColor(renderer, 120, 30, 30, 180);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
                       { -extent, 0.0f, 0.0f }, { extent, 0.0f, 0.0f },
                       draw_calls);
-    SDL_SetRenderDrawColor(renderer, 60, 90, 200, 200);
+    SDL_SetRenderDrawColor(renderer, 30, 50, 140, 180);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
                       { 0.0f, 0.0f, -extent }, { 0.0f, 0.0f, extent },
                       draw_calls);
@@ -347,7 +347,7 @@ static void DrawLandscapeBrushCursor(SDL_Renderer *renderer,
     for (int pass = 0; pass < 2; ++pass)
     {
         const float rr = (pass == 0) ? radius : radius * 0.65f;
-        SDL_SetRenderDrawColor(renderer, 110, 200, 255, 255);
+        SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
         int px = 0, py = 0;
         bool have = false;
         for (int i = 0; i <= SEG; ++i)
@@ -376,7 +376,7 @@ static void DrawLandscapeBrushCursor(SDL_Renderer *renderer,
     }
 
     // Depth pole down to the base plane + center cross.
-    SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+    SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
     DrawProjectedLine(renderer, view_proj, near_p, w, h,
                       center, { center.x, center.y - radius, center.z },
                       draw_calls);
@@ -1115,11 +1115,11 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     Entity *selected = (m_selection->entity_id >= 0)
         ? m_scene->GetEntityById(m_selection->entity_id) : nullptr;
 
-    // Selected entity: amber wireframe outline + white bounds box.
+    // Selected entity: dark-amber wireframe outline + black bounds box.
     if (m_overlay.bounds && selected && selected != camera_entity)
     {
         const Mesh *mesh = ResolveEntityMesh(*selected);
-        static const float OUTLINE[3] = { 1.0f, 0.65f, 0.2f }; // amber
+        static const float OUTLINE[3] = { 0.55f, 0.35f, 0.10f }; // dark amber
         if (mesh)
         {
             Mat4 world = m_scene->ComputeWorldMatrix(*selected);
@@ -1135,10 +1135,10 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                       selected->bounds.local_max, sel_world,
                       sel_wmin, sel_wmax);
         DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                      sel_wmin, sel_wmax, 255, 255, 255, &draw_calls);
+                      sel_wmin, sel_wmax, 0, 0, 0, &draw_calls);
     }
 
-    // Hovered entity (ray/AABB hit under the cursor): light-blue
+    // Hovered entity (ray/AABB hit under the cursor): dark-gray
     // bounds box, distinct from the amber selection.
     if (m_overlay.bounds)
     {
@@ -1154,14 +1154,14 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                               hover->bounds.local_max, hover_world,
                               hover_wmin, hover_wmax);
                 DrawWorldAABB(renderer, view_proj, near_p, w, h,
-                              hover_wmin, hover_wmax, 110, 180, 255,
+                              hover_wmin, hover_wmax, 40, 40, 40,
                               &draw_calls);
             }
         }
     }
 
-    // Physics collider volumes (editor aid): solid = green,
-    // trigger = cyan. Drawn from the collider's own local box
+    // Physics collider volumes (editor aid): solid = black,
+    // trigger = dark-gray. Drawn from the collider's own local box
     // (center +/- extents) transformed into the world frame.
     if (m_overlay.colliders)
     {
@@ -1191,9 +1191,9 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
                 (collider_entity.collider.type == ColliderComponent::Type::Trigger);
             DrawWorldAABB(renderer, view_proj, near_p, w, h,
                           cwmin, cwmax,
-                          is_trigger ? 90 : 80,
-                          is_trigger ? 200 : 230,
-                          is_trigger ? 210 : 110,
+                          is_trigger ? 30 : 0,
+                          is_trigger ? 30 : 0,
+                          is_trigger ? 30 : 0,
                           &draw_calls);
         }
     }
@@ -1224,7 +1224,7 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
             if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
                 dir = { 0.0f, -1.0f, 0.0f };
 
-            SDL_SetRenderDrawColor(renderer, 255, 205, 90, 255);
+            SDL_SetRenderDrawColor(renderer, 160, 130, 50, 255);
             // Sun cross (world X/Z ticks around the light position).
             DrawProjectedLine(renderer, view_proj, near_p, w, h,
                               { pos.x - arm, pos.y, pos.z }, { pos.x + arm, pos.y, pos.z },
@@ -2448,35 +2448,36 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     const bool is_seq  = (ws == WorkspaceManager::Workspace::Timeline);
     const bool is_scr  = (ws == WorkspaceManager::Workspace::Scripting);
 
-    // Viewport: visible in all modes except Scripting (replaced by IDE).
+    // Viewport: visible in all modes (Scripting now has it on the right rail).
     if (m_viewport)
-        m_viewport->SetVisible(!is_scr);
+        m_viewport->SetVisible(true);
 
     // Hierarchy: Level Design, Landscape, Sequencing.
     if (m_hierarchy_panel)
         m_hierarchy_panel->SetVisible(is_ld || is_lsc || is_seq);
 
-    // Inspector: Level Design, Landscape, Sequencing.
+    // Inspector: Level Design, Sequencing (not Landscape — tools are in the
+    // Landscape panel; not Scripting or Shading — those use dedicated editors).
     if (m_inspector_panel)
-        m_inspector_panel->SetVisible(is_ld || is_lsc || is_seq);
+        m_inspector_panel->SetVisible(is_ld || is_seq);
 
-    // Content Browser: Level Design, Shading & Assets, Scripting.
+    // Content Browser: Level Design, Shading & Assets (left column).
     if (m_content_browser)
-        m_content_browser->SetVisible(is_ld || is_sha || is_scr);
+        m_content_browser->SetVisible(is_ld || is_sha);
 
-    // Landscape panel: Landscape only.
+    // Landscape panel: Landscape only (left rail, bottom).
     if (m_landscape_panel)
         m_landscape_panel->SetVisible(is_lsc);
 
-    // Material Editor: Shading & Assets only.
+    // Material Editor: Shading & Assets only (right column, top).
     if (m_material_panel)
         m_material_panel->SetVisible(is_sha);
 
-    // Material Preview: Shading & Assets only.
+    // Material Preview: Shading & Assets only (left column, top).
     if (m_material_preview_panel)
         m_material_preview_panel->SetVisible(is_sha);
 
-    // Environment panel: Shading & Assets only.
+    // Environment panel: Shading & Assets only (right column, bottom).
     if (m_environment_panel)
         m_environment_panel->SetVisible(is_sha);
 
@@ -2484,20 +2485,14 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     if (m_timeline_panel)
         m_timeline_panel->SetVisible(is_seq);
 
-    // Script Editor: Scripting only.
+    // Script Editor: Scripting only (left column, top 75%).
     if (m_script_editor)
         m_script_editor->SetVisible(is_scr);
 
-    // Console: Scripting only.
+    // Console: Scripting only (left column, bottom 25%).
     if (m_console_panel)
         m_console_panel->SetVisible(is_scr);
 
-    // Editor Settings: hidden by default (toggled by user via toolbar).
-    // Collision Matrix: hidden by default (toggled by user via command palette).
-    // Viewport Layout: hidden by default (toggled by user).
-    // Profiler: hidden by default (toggled by user).
-    // History: hidden by default (toggled by user).
-    // Command Palette: handled by its own toggle.
     // Force-hide auxiliary panels so they never leak across mode switches.
     if (m_collision_matrix_panel)
         m_collision_matrix_panel->SetVisible(false);
@@ -2514,6 +2509,16 @@ void Application::SyncWorkspaceSideEffects(WorkspaceManager::Workspace ws)
     // keeps mutating transforms behind the author's back.
     if (ws != WorkspaceManager::Workspace::Timeline && m_timeline.playing)
         StopTimeline();
+
+    // Landscape Camera Hook: when entering Landscape Mode, automatically set
+    // the editor camera to a top-down overview so the terrain grid is easy to
+    // see and sculpt.  Only fires on the transition INTO Landscape Mode.
+    if (is_lsc && ws != m_previous_workspace)
+    {
+        m_editor_camera.pitch = -70.0f;
+        m_editor_camera.position.y = 25.0f;
+    }
+    m_previous_workspace = ws;
 }
 
 void Application::DeleteSelection()

@@ -632,10 +632,10 @@ void GizmoController::Draw(SDL_Renderer *renderer, const GizmoFrame &f)
             DrawRing3D(renderer, f, center, axes[i], ring_radius, AXIS_COLOR[i], active == i);
 
         // Outer screen-facing trackball ring.
-        Uint8 or_c = 200, og = 235, ob = 255;
+        Uint8 or_c = 50, og = 50, ob = 50;
         if (active == 3)
         {
-            or_c = 255; og = 255; ob = 255;
+            or_c = 80; og = 80; ob = 80;
         }
         SDL_SetRenderDrawColor(renderer, or_c, og, ob, 255);
         const int SEGMENTS = 64;
@@ -714,8 +714,8 @@ void GizmoController::Draw(SDL_Renderer *renderer, const GizmoFrame &f)
     bool hot_center = (m_dragging && m_drag_axis == 3) || (!m_dragging && m_hover_center);
     SDL_Rect box = { (int)cx - 3, (int)cy - 3, 7, 7 };
     if (hot_center)
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);
     else
-        SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
     SDL_RenderFillRect(renderer, &box);
 }

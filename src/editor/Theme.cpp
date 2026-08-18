@@ -50,12 +50,12 @@ static ImVec4 Over(const ImVec4 &bg, const ImVec4 &fg)
 const Colors &DefaultColors()
 {
     static const Colors defaults = {
-        {0.102f, 0.106f, 0.125f, 1.0f},   // window_bg 0x191B20  (cool slate)
-        {0.118f, 0.122f, 0.141f, 1.0f},   // child_bg  0x1E1F24
-        {0.133f, 0.137f, 0.157f, 1.0f},   // popup_bg  0x222328
-        {0.149f, 0.153f, 0.173f, 1.0f},   // frame_bg  0x26272C
-        {0.800f, 0.820f, 0.860f, 1.0f},   // text      0xCCD1DB
-        {0.267f, 0.502f, 0.961f, 1.0f},   // accent    0x4480F5  (cool blue)
+        {0.125f, 0.125f, 0.125f, 1.0f},   // window_bg 0x202020  (matte charcoal)
+        {0.176f, 0.176f, 0.188f, 1.0f},   // child_bg  0x2D2D30  (panel recess)
+        {0.188f, 0.188f, 0.200f, 1.0f},   // popup_bg  0x303033
+        {0.165f, 0.165f, 0.176f, 1.0f},   // frame_bg  0x2A2A2D
+        {0.850f, 0.850f, 0.870f, 1.0f},   // text      0xD9D9DE
+        {0.345f, 0.553f, 0.961f, 1.0f},   // accent    0x588DF5  (cool blue)
     };
     return defaults;
 }
@@ -173,14 +173,14 @@ void ConfigureStyle(float ui_scale, const Colors &colors)
     style.FrameBorderSize    = 0.0f;
     style.TabBorderSize      = 0.0f;
 
-    style.WindowRounding    = 12.0f;
-    style.ChildRounding     = 8.0f;
-    style.FrameRounding     = 6.0f;
-    style.PopupRounding     = 12.0f;
-    style.ScrollbarRounding = 10.0f;
-    style.GrabRounding      = 6.0f;
-    style.TabRounding       = 8.0f;
-    style.TabBarOverlineSize = 3.0f; // selected-tab highlight
+    style.WindowRounding    = 6.0f;
+    style.ChildRounding     = 4.0f;
+    style.FrameRounding     = 4.0f;
+    style.PopupRounding     = 6.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.GrabRounding      = 4.0f;
+    style.TabRounding       = 4.0f;
+    style.TabBarOverlineSize = 2.0f; // selected-tab highlight
 
     style.WindowTitleAlign    = ImVec2(0.5f, 0.5f);
     style.WindowMenuButtonPosition = ImGuiDir_Right;

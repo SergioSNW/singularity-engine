@@ -327,6 +327,8 @@ private:
     Theme::Fonts m_fonts;
     Theme::Colors m_theme_colors;
     WorkspaceManager m_workspace_manager;
+    WorkspaceManager::Workspace m_previous_workspace =
+        WorkspaceManager::Workspace::LevelDesign;
     bool m_recreate_viewport;
     std::string m_scene_path;
     std::string m_scene_status;
