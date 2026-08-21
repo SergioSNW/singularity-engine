@@ -54,17 +54,20 @@ void SettingsPanel::OnImGuiRender(float dt)
         return;
     }
 
-    ImGui::TextUnformatted("Live theme customizer — edits apply instantly.");
+    ImGui::TextUnformatted("Locked slate-gray theme — the editor re-applies the canonical matte palette on each change.");
     ImGui::Separator();
     ImGui::Spacing();
 
-    // The six key tokens; every other style color is derived from these, so
-    // a single edit re-skins selection, tabs, borders and scrollbars too.
+    // The key tokens; every other style color is derived from these, so a single
+    // edit re-skins selection, tabs, borders, secondary panels and scrollbars.
     ColorRow("Window Background", m_colors->window_bg, m_on_change);
     ColorRow("Panel / Child", m_colors->child_bg, m_on_change);
+    ColorRow("Secondary Panel", m_colors->secondary_bg, m_on_change);
+    ColorRow("Folder / Browser", m_colors->folder_bg, m_on_change);
     ColorRow("Popup / Menu", m_colors->popup_bg, m_on_change);
     ColorRow("Controls / Frames", m_colors->frame_bg, m_on_change);
     ColorRow("Text", m_colors->text, m_on_change);
+    ColorRow("Border", m_colors->border, m_on_change);
     ColorRow("Accent", m_colors->accent, m_on_change);
 
     ImGui::Spacing();
@@ -81,7 +84,7 @@ void SettingsPanel::OnImGuiRender(float dt)
     if (ImGui::Button("Close"))
         m_visible = false;
 
-    ImGui::TextDisabled("Theme is hardcoded; edits are session-only and not persisted.");
+    ImGui::TextDisabled("Theme is hardcoded at startup and reasserted by the core style pass; changes are session-only and not persisted.");
 
     // --- Grid & Snapping (Phase 18) ---
     ImGui::Spacing();

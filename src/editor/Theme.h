@@ -37,20 +37,23 @@ float ComputeDpiScale(void *window, void *renderer);
 void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 18.0f,
                float base_mono = 15.0f);
 
-// The six key color tokens the user can live-edit in the Theme Settings
-// panel. Everything else in the style (borders, hovers, tints, tabs, scrollbars)
-// is derived from these at ConfigureStyle time, so tweaking one token re-skins
-// the whole editor coherently. Stored as 0-1 RGBA floats (no ImGui dependency
-// in this header). Not persisted: the core colors are hardcoded and re-asserted
+// The key color tokens the user can live-edit in the Theme Settings panel.
+// Everything else in the style (borders, hovers, tints, tabs, scrollbars) is
+// derived from these at ConfigureStyle time, so tweaking one token re-skins the
+// whole editor coherently. Stored as 0-1 RGBA floats (no ImGui dependency in
+// this header). Not persisted: the core colors are hardcoded and re-asserted
 // every frame.
 struct Colors
 {
-    float window_bg[4];   // main window / surface background (warm charcoal)
-    float child_bg[4];    // child windows, panel recesses
-    float popup_bg[4];    // popups, menus, dropdowns
-    float frame_bg[4];    // input frames, buttons, combo boxes
-    float text[4];        // primary text
-    float accent[4];      // indigo accent (selection, tabs, focus rings)
+    float window_bg[4];      // main window / surface background
+    float child_bg[4];       // child windows, panel recesses
+    float popup_bg[4];       // popups, menus, dropdowns
+    float frame_bg[4];      // input frames, buttons, combo boxes
+    float text[4];          // primary text
+    float border[4];        // borders, dividers, outlines
+    float secondary_bg[4];  // alternate surface / title / secondary panel fills
+    float folder_bg[4];     // content browser / folder cards and browser surfaces
+    float accent[4];        // indigo accent (selection, tabs, focus rings)
 };
 
 // The engine's default palette (the warm charcoal + indigo scheme).

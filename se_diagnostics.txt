@@ -1,0 +1,14 @@
+[diag] 10000000 FPS | 0.000 ms/frame | 98 draws | 10 entities
+[diag] 587217 FPS | 54.91 ms/frame | 98 draws | 10 entities
+[diag] 31739 FPS | 58.11 ms/frame | 98 draws | 10 entities
+[diag] 1731 FPS | 58.10 ms/frame | 98 draws | 10 entities
+[diag] 110 FPS | 58.90 ms/frame | 98 draws | 10 entities
+[diag] 22 FPS | 59.00 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 59.37 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 58.23 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 58.65 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 58.58 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 56.68 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 59.48 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 56.68 ms/frame | 98 draws | 10 entities
+[diag] 17 FPS | 57.29 ms/frame | 98 draws | 10 entities

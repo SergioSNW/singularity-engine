@@ -21,14 +21,10 @@ static ImVec4 V4(const float c[4])
 }
 
 // --- Palette derivation -----------------------------------------------------
-// The six user-editable tokens above are the only "design inputs". Every other
-// style color is derived from them with these tiny helpers, so a live edit to
-// e.g. the accent token re-skins selection, tabs, scrollbars and focus rings
-// together instead of leaving orphaned stock colors behind.
 static ImVec4 Lerp(const ImVec4 &a, const ImVec4 &b, float t)
 {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+                 a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
 
 static ImVec4 Lighten(const ImVec4 &c, float t) { return Lerp(c, ImVec4(1, 1, 1, 1), t); }
@@ -39,19 +35,22 @@ static ImVec4 Over(const ImVec4 &bg, const ImVec4 &fg)
 {
     const float inv = 1.0f - fg.w;
     return ImVec4(fg.x * fg.w + bg.x * inv,
-                  fg.y * fg.w + bg.y * inv,
-                  fg.z * fg.w + bg.z * inv, 1.0f);
+                 fg.y * fg.w + bg.y * inv,
+                 fg.z * fg.w + bg.z * inv, 1.0f);
 }
 
 const Colors &DefaultColors()
 {
     static const Colors defaults = {
-        {0.12f, 0.12f, 0.12f, 1.0f},   // window_bg  pure matte charcoal
-        {0.16f, 0.16f, 0.16f, 1.0f},   // child_bg   panel recess
-        {0.14f, 0.14f, 0.14f, 1.0f},   // popup_bg
-        {0.18f, 0.18f, 0.18f, 1.0f},   // frame_bg   input fields
-        {0.85f, 0.85f, 0.85f, 1.0f},   // text       off-white
-        {0.345f, 0.553f, 0.961f, 1.0f},// accent     (kept for tabs/selection)
+        {0.12f, 0.12f, 0.12f, 1.0f},   // window_bg      matte charcoal base
+        {0.16f, 0.16f, 0.16f, 1.0f},   // child_bg       panel recess
+        {0.14f, 0.14f, 0.14f, 1.0f},   // popup_bg       menus / popovers
+        {0.18f, 0.18f, 0.18f, 1.0f},   // frame_bg       controls / inputs
+        {0.85f, 0.85f, 0.85f, 1.0f},   // text           off-white text
+        {0.05f, 0.05f, 0.05f, 1.0f},   // border         subtle outlines
+        {0.10f, 0.10f, 0.10f, 1.0f},   // secondary_bg   title / alternate fill
+        {0.14f, 0.14f, 0.16f, 1.0f},   // folder_bg      browser cards / explorer surfaces
+        {0.345f, 0.553f, 0.961f, 1.0f},// accent         indigo selection / tabs
     };
     return defaults;
 }
@@ -75,16 +74,14 @@ float ComputeDpiScale(void *window, void *renderer)
     int physical_w = 0, physical_h = 0;
     SDL_GetWindowSize(static_cast<SDL_Window *>(window), &logical_w, &logical_h);
     SDL_GetRendererOutputSize(static_cast<SDL_Renderer *>(renderer),
-                              &physical_w, &physical_h);
+                            &physical_w, &physical_h);
 
     float sx = (logical_w > 0) ? (float)physical_w / (float)logical_w : 1.0f;
     float sy = (logical_h > 0) ? (float)physical_h / (float)logical_h : 1.0f;
     return std::max(1.0f, std::max(sx, sy));
 }
 
-// The default glyph ranges omit box-drawing / geometric shapes (0x2500–0x25FF,
-// e.g. the "●" keyframe toggle) and misc symbols (0x2600–0x26FF). Extend the
-// stock range list so those glyphs rasterize when a font provides them.
+// The default glyph ranges omit box-drawing / geometric shapes (0x2500–0x25FF)
 static const ImWchar *GlyphRangesWithSymbols()
 {
     static ImWchar ranges[64];
@@ -119,7 +116,6 @@ static ImFont *LoadFont(const char *primary, const char *fallback,
     if (ImFont *font = io.Fonts->AddFontFromFileTTF(
             fallback2, pixel_size, nullptr, GlyphRangesWithSymbols()))
         return font;
-    // Last resort: keep the built-in font so the editor still opens.
     return io.Fonts->AddFontDefault();
 }
 
@@ -128,15 +124,12 @@ void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui, float base_mono)
     const float ui = base_ui * dpi_scale;
     const float mono = base_mono * dpi_scale;
 
-    // The bundled Roboto (assets/fonts, copied next to the executable) is the
-    // preferred UI face — a clean, modern sans-serif — with the Windows system
-    // fonts as fallback so the editor still opens without the assets folder.
     fonts.ui = LoadFont("assets/fonts/Roboto-Regular.ttf",
                         "C:/Windows/Fonts/segoeui.ttf",
                         "C:/Windows/Fonts/arial.ttf", ui);
     fonts.ui_bold = LoadFont("assets/fonts/Roboto-Medium.ttf",
-                             "C:/Windows/Fonts/seguisb.ttf",
-                             "C:/Windows/Fonts/arialbd.ttf", ui);
+                           "C:/Windows/Fonts/seguisb.ttf",
+                           "C:/Windows/Fonts/arialbd.ttf", ui);
     fonts.mono = LoadFont("C:/Windows/Fonts/CascadiaMono.ttf",
                           "C:/Windows/Fonts/consola.ttf",
                           "C:/Windows/Fonts/cour.ttf", mono);
@@ -145,204 +138,131 @@ void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui, float base_mono)
 void ConfigureStyle(float ui_scale, const Colors &colors)
 {
     ImGuiStyle &style = ImGui::GetStyle();
-
-    // Reset to stock defaults first so repeated calls (UI-scale changes, live
-    // theme edits) can never drift the palette or metrics.
     style = ImGuiStyle();
     ImGui::StyleColorsDark();
 
-    // Hardcoded slate-gray theme: injected immediately after the dark default
-    // is applied so every boot forces these exact colors regardless of saved
-    // settings, JSON files, or prior sessions.
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
-    style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
-    style.Colors[ImGuiCol_PopupBg]  = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
-    style.Colors[ImGuiCol_Border]   = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
-    style.Colors[ImGuiCol_Text]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-    style.Colors[ImGuiCol_Header]   = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
-    style.Colors[ImGuiCol_HeaderActive]  = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
+    const ImVec4 window = V4(colors.window_bg);
+    const ImVec4 child = V4(colors.child_bg);
+    const ImVec4 popup = V4(colors.popup_bg);
+    const ImVec4 frame = V4(colors.frame_bg);
+    const ImVec4 border = V4(colors.border);
+    const ImVec4 secondary = V4(colors.secondary_bg);
+    const ImVec4 folder = V4(colors.folder_bg);
+    const ImVec4 text = V4(colors.text);
+    const ImVec4 accent = V4(colors.accent);
 
-    // --- Metrics: breathable padding, generous spacing, soft rounding ---
-    style.WindowPadding    = ImVec2(16.0f, 16.0f);
-    style.FramePadding     = ImVec2(8.0f, 6.0f);
-    style.CellPadding      = ImVec2(8.0f, 6.0f);
-    style.ItemSpacing      = ImVec2(10.0f, 8.0f);
-    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
-    style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
-    style.IndentSpacing    = 22.0f;
-    style.ScrollbarSize    = 14.0f;
-    style.GrabMinSize      = 10.0f;
-
-    // Borders: crisp 1px near-black lines delimit every panel.
-    style.WindowBorderSize   = 1.0f;
-    style.ChildBorderSize    = 1.0f;
-    style.PopupBorderSize    = 1.0f;
-    style.FrameBorderSize    = 1.0f;
-    style.TabBorderSize      = 0.0f;
-
-    style.WindowRounding    = 2.0f;
-    style.ChildRounding     = 2.0f;
-    style.FrameRounding     = 2.0f;
-    style.PopupRounding     = 2.0f;
-    style.ScrollbarRounding = 2.0f;
-    style.GrabRounding      = 2.0f;
-    style.TabRounding       = 2.0f;
-    style.TabBarOverlineSize = 1.0f; // selected-tab highlight
-
-    style.WindowTitleAlign    = ImVec2(0.5f, 0.5f);
-    style.WindowMenuButtonPosition = ImGuiDir_Right;
-
-    // --- Colors: derive the full palette from the user tokens ---
-    const ImVec4 window  = V4(colors.window_bg);
-    const ImVec4 child   = V4(colors.child_bg);
-    const ImVec4 popup   = V4(colors.popup_bg);
-    const ImVec4 frame   = V4(colors.frame_bg);
-    const ImVec4 text    = V4(colors.text);
-    const ImVec4 accent  = V4(colors.accent);
-
-    const ImVec4 textMuted   = Lerp(text, window, 0.45f);
-    const ImVec4 textBright  = Lerp(text, ImVec4(1, 1, 1, 1), 0.24f);
-
-    const ImVec4 menuBg      = Darken(window, 0.05f);
-    const ImVec4 titleBg     = Darken(window, 0.02f);
-    const ImVec4 titleActive = Lerp(window, accent, 0.07f);
-
-    const ImVec4 frameHovered = Lerp(frame, ImVec4(1, 1, 1, 1), 0.06f);
-    const ImVec4 frameActive  = Lerp(frame, ImVec4(1, 1, 1, 1), 0.12f);
-
-    // Buttons warm up toward the accent on hover/active so any button reads as
-    // a professional, reactive control; the primary-action tint lives in
-    // PushPrimaryButtonColor().
-    const ImVec4 button        = Lerp(frame, ImVec4(1, 1, 1, 1), 0.03f);
-    const ImVec4 buttonHovered = Lerp(frame, accent, 0.20f);
-    const ImVec4 buttonActive  = Lerp(frame, accent, 0.32f);
-
-    const ImVec4 border        = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
-    const ImVec4 borderBright  = Lerp(window, ImVec4(1, 1, 1, 1), 0.13f);
-    const ImVec4 separator     = Lerp(window, ImVec4(1, 1, 1, 1), 0.06f);
-
-    const ImVec4 scrollbarBg     = Darken(window, 0.03f);
-    const ImVec4 scrollbarGrab   = Lerp(window, ImVec4(1, 1, 1, 1), 0.26f);
-    const ImVec4 scrollbarActive = Lerp(window, ImVec4(1, 1, 1, 1), 0.34f);
-
+    const ImVec4 textMuted = Lerp(text, window, 0.45f);
+    const ImVec4 accentSoft = Over(window, ImVec4(accent.x, accent.y, accent.z, 48.0f / 255.0f));
+    const ImVec4 accentTint = Over(window, ImVec4(accent.x, accent.y, accent.z, 96.0f / 255.0f));
     const ImVec4 accentHovered = Lighten(accent, 0.06f);
-    const ImVec4 accentActive  = Darken(accent, 0.08f);
-
-    // Accent tints (alpha composited over the window background).
-    const ImVec4 accentSoft   = Over(window, ImVec4(accent.x, accent.y, accent.z, 48.0f / 255.0f));
-    const ImVec4 accentTint   = Over(window, ImVec4(accent.x, accent.y, accent.z, 96.0f / 255.0f));
-    const ImVec4 accentStrong = Over(window, ImVec4(accent.x, accent.y, accent.z, 160.0f / 255.0f));
-
-    const ImVec4 tab           = Darken(window, 0.02f);
-    const ImVec4 tabHovered    = Lerp(window, accent, 0.16f);
-    const ImVec4 tabSelected   = Lerp(window, accent, 0.12f);
-    const ImVec4 tabDimmed     = Lerp(window, ImVec4(1, 1, 1, 1), 0.01f);
-
-    const ImVec4 tableHeader   = Lerp(window, ImVec4(1, 1, 1, 1), 0.08f);
+    const ImVec4 accentActive = Darken(accent, 0.08f);
+    const ImVec4 button = Lerp(frame, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.03f);
+    const ImVec4 buttonHovered = Lerp(frame, accent, 0.20f);
+    const ImVec4 buttonActive = Lerp(frame, accent, 0.32f);
+    const ImVec4 separator = Lerp(window, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.06f);
+    const ImVec4 scrollbarBg = Darken(window, 0.03f);
+    const ImVec4 scrollbarGrab = Lerp(window, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.26f);
+    const ImVec4 scrollbarActive = Lerp(window, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.34f);
+    const ImVec4 tab = secondary;
+    const ImVec4 tabHovered = Lerp(window, accent, 0.16f);
+    const ImVec4 tabSelected = Lerp(window, accent, 0.12f);
+    const ImVec4 tabDimmed = Lerp(window, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.01f);
+    const ImVec4 tableHeader = Lerp(window, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.08f);
 
     s_accent = accent;
 
-    ImVec4 *colors_out = style.Colors;
+    style.Colors[ImGuiCol_WindowBg] = window;
+    style.Colors[ImGuiCol_ChildBg] = folder;
+    style.Colors[ImGuiCol_PopupBg] = popup;
+    style.Colors[ImGuiCol_Border] = border;
+    style.Colors[ImGuiCol_BorderShadow] = rgb(0, 0, 0, 0);
+    style.Colors[ImGuiCol_MenuBarBg] = secondary;
+    style.Colors[ImGuiCol_TitleBg] = secondary;
+    style.Colors[ImGuiCol_TitleBgActive] = secondary;
+    style.Colors[ImGuiCol_TitleBgCollapsed] = secondary;
 
-    // Windows / surfaces.
-    colors_out[ImGuiCol_WindowBg]             = window;
-    colors_out[ImGuiCol_ChildBg]              = child;
-    colors_out[ImGuiCol_PopupBg]              = popup;
-    colors_out[ImGuiCol_Border]               = border;
-    colors_out[ImGuiCol_BorderShadow]         = rgb(0, 0, 0, 0);
-    colors_out[ImGuiCol_MenuBarBg]            = menuBg;
+    style.Colors[ImGuiCol_FrameBg] = frame;
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.26f, 0.26f, 0.26f, 1.0f);
 
-    // Title bars.
-    colors_out[ImGuiCol_TitleBg]              = titleBg;
-    colors_out[ImGuiCol_TitleBgActive]        = titleActive;
-    colors_out[ImGuiCol_TitleBgCollapsed]     = menuBg;
+    style.Colors[ImGuiCol_Text] = text;
+    style.Colors[ImGuiCol_TextDisabled] = textMuted;
+    style.Colors[ImGuiCol_TextSelectedBg] = accentSoft;
 
-    // Frames / inputs.
-    colors_out[ImGuiCol_FrameBg]              = frame;
-    colors_out[ImGuiCol_FrameBgHovered]       = frameHovered;
-    colors_out[ImGuiCol_FrameBgActive]        = frameActive;
+    style.Colors[ImGuiCol_Button] = button;
+    style.Colors[ImGuiCol_ButtonHovered] = buttonHovered;
+    style.Colors[ImGuiCol_ButtonActive] = buttonActive;
 
-    // Text.
-    colors_out[ImGuiCol_Text]                 = text;
-    colors_out[ImGuiCol_TextDisabled]         = textMuted;
-    colors_out[ImGuiCol_TextSelectedBg]       = accentSoft;
-
-    // Buttons.
-    colors_out[ImGuiCol_Button]               = button;
-    colors_out[ImGuiCol_ButtonHovered]        = buttonHovered;
-    colors_out[ImGuiCol_ButtonActive]         = buttonActive;
-
-    // Headers (selectable list items, collapsing headers) — neutral matte gray.
-    colors_out[ImGuiCol_Header]               = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
-    colors_out[ImGuiCol_HeaderHovered]        = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
-    colors_out[ImGuiCol_HeaderActive]         = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
-
-    // Checkbox / slider grabs and focus.
-    colors_out[ImGuiCol_CheckMark]            = accent;
-    colors_out[ImGuiCol_SliderGrab]           = accent;
-    colors_out[ImGuiCol_SliderGrabActive]     = accentHovered;
-
-    // Tabs.
-    colors_out[ImGuiCol_Tab]                  = tab;
-    colors_out[ImGuiCol_TabHovered]           = tabHovered;
-    colors_out[ImGuiCol_TabSelected]          = tabSelected;
-    colors_out[ImGuiCol_TabSelectedOverline]  = accent;
-    colors_out[ImGuiCol_TabDimmed]            = tabDimmed;
-    colors_out[ImGuiCol_TabDimmedSelected]    = tabSelected;
-    colors_out[ImGuiCol_TabDimmedSelectedOverline] = accentTint;
-
-    // Separators.
-    colors_out[ImGuiCol_Separator]            = separator;
-    colors_out[ImGuiCol_SeparatorHovered]     = accent;
-    colors_out[ImGuiCol_SeparatorActive]      = accentHovered;
-
-    // Scrollbars.
-    colors_out[ImGuiCol_ScrollbarBg]          = scrollbarBg;
-    colors_out[ImGuiCol_ScrollbarGrab]        = scrollbarGrab;
-    colors_out[ImGuiCol_ScrollbarGrabHovered] = scrollbarActive;
-    colors_out[ImGuiCol_ScrollbarGrabActive]  = accent;
-
-    // Tables.
-    colors_out[ImGuiCol_TableHeaderBg]        = tableHeader;
-    colors_out[ImGuiCol_TableBorderStrong]    = border;
-    colors_out[ImGuiCol_TableBorderLight]     = separator;
-    colors_out[ImGuiCol_TableRowBg]           = rgb(0, 0, 0, 0);
-    colors_out[ImGuiCol_TableRowBgAlt]        = rgb(0xFF, 0xFF, 0xFF, 12);
-
-    // Drag-drop / docking previews.
-    colors_out[ImGuiCol_DragDropTarget]       = accent;
-    colors_out[ImGuiCol_DockingPreview]       = accentStrong;
-    colors_out[ImGuiCol_DockingEmptyBg]       = Darken(window, 0.08f);
-    colors_out[ImGuiCol_ModalWindowDimBg]     = rgb(0, 0, 0, 150);
-
-    // Plot widget.
-    colors_out[ImGuiCol_PlotHistogram]        = accent;
-    colors_out[ImGuiCol_PlotHistogramHovered] = accentHovered;
-    colors_out[ImGuiCol_PlotLines]            = textMuted;
-    colors_out[ImGuiCol_PlotLinesHovered]     = accent;
-
-    // Nav highlight (keyboard focus ring).
-    colors_out[ImGuiCol_NavHighlight]         = accent;
-    colors_out[ImGuiCol_NavWindowingHighlight] = accentTint;
-    colors_out[ImGuiCol_NavWindowingDimBg]    = rgb(0, 0, 0, 150);
-
-    // Re-assert the hardcoded slate-gray theme after the derived palette so
-    // these exact values always win on every boot.
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
-    style.Colors[ImGuiCol_ChildBg]  = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
-    style.Colors[ImGuiCol_PopupBg]  = ImVec4(0.14f, 0.14f, 0.14f, 1.0f);
-    style.Colors[ImGuiCol_Border]   = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
-    style.Colors[ImGuiCol_Text]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-    style.Colors[ImGuiCol_Header]   = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_Header] = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
     style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.0f);
-    style.Colors[ImGuiCol_HeaderActive]  = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+
+    style.Colors[ImGuiCol_Tab] = tab;
+    style.Colors[ImGuiCol_TabHovered] = tabHovered;
+    style.Colors[ImGuiCol_TabSelected] = tabSelected;
+    style.Colors[ImGuiCol_TabSelectedOverline] = accent;
+    style.Colors[ImGuiCol_TabDimmed] = tabDimmed;
+    style.Colors[ImGuiCol_TabDimmedSelected] = tabSelected;
+    style.Colors[ImGuiCol_TabDimmedSelectedOverline] = accentTint;
+
+    style.Colors[ImGuiCol_CheckMark] = accent;
+    style.Colors[ImGuiCol_SliderGrab] = accent;
+    style.Colors[ImGuiCol_SliderGrabActive] = accentHovered;
+
+    style.Colors[ImGuiCol_Separator] = separator;
+    style.Colors[ImGuiCol_SeparatorHovered] = accent;
+    style.Colors[ImGuiCol_SeparatorActive] = accentHovered;
+
+    style.Colors[ImGuiCol_ScrollbarBg] = scrollbarBg;
+    style.Colors[ImGuiCol_ScrollbarGrab] = scrollbarGrab;
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = scrollbarActive;
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = accent;
+
+    style.Colors[ImGuiCol_TableHeaderBg] = tableHeader;
+    style.Colors[ImGuiCol_TableBorderStrong] = border;
+    style.Colors[ImGuiCol_TableBorderLight] = separator;
+    style.Colors[ImGuiCol_TableRowBg] = rgb(0, 0, 0, 0);
+    style.Colors[ImGuiCol_TableRowBgAlt] = rgb(0xFF, 0xFF, 0xFF, 12);
+
+    style.Colors[ImGuiCol_DragDropTarget] = accent;
+    style.Colors[ImGuiCol_DockingPreview] = accentTint;
+    style.Colors[ImGuiCol_DockingEmptyBg] = secondary;
+    style.Colors[ImGuiCol_ModalWindowDimBg] = rgb(0, 0, 0, 150);
+
+    style.Colors[ImGuiCol_PlotHistogram] = accent;
+    style.Colors[ImGuiCol_PlotHistogramHovered] = accentHovered;
+    style.Colors[ImGuiCol_PlotLines] = textMuted;
+    style.Colors[ImGuiCol_PlotLinesHovered] = accent;
+
+    style.Colors[ImGuiCol_NavHighlight] = accent;
+    style.Colors[ImGuiCol_NavWindowingHighlight] = accentTint;
+    style.Colors[ImGuiCol_NavWindowingDimBg] = rgb(0, 0, 0, 150);
+
+    style.WindowPadding = ImVec2(16.0f, 16.0f);
+    style.FramePadding = ImVec2(8.0f, 6.0f);
+    style.CellPadding = ImVec2(8.0f, 6.0f);
+    style.ItemSpacing = ImVec2(10.0f, 8.0f);
+    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+    style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
+    style.IndentSpacing = 22.0f;
+    style.ScrollbarSize = 14.0f;
+    style.GrabMinSize = 10.0f;
     style.WindowBorderSize = 1.0f;
     style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.TabBorderSize = 0.0f;
+    style.WindowRounding = 2.0f;
+    style.ChildRounding = 2.0f;
+    style.FrameRounding = 2.0f;
+    style.PopupRounding = 2.0f;
+    style.ScrollbarRounding = 2.0f;
+    style.GrabRounding = 2.0f;
+    style.TabRounding = 2.0f;
+    style.TabBarOverlineSize = 1.0f;
+    style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
+    style.WindowMenuButtonPosition = ImGuiDir_Right;
 
-    // Apply the user's global UI zoom to every metric.
     style.ScaleAllSizes(ui_scale);
 }
 

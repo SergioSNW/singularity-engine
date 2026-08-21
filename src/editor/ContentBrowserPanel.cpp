@@ -400,8 +400,10 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
 {
     ImGui::PushID(path.c_str());
 
-    // Dark card background so individual items stand out from the panel.
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
+    // Let the browser card colors follow the active editor theme rather than a
+    // hardcoded black surface, so the content grid stays in sync with live edits.
+    const ImVec4 browser_card_bg = ImGui::GetStyleColorVec4(ImGuiCol_ChildBg);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, browser_card_bg);
 
     if (col > 0)
         ImGui::SameLine();
@@ -449,11 +451,11 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
     const ImVec2 pmin = ImGui::GetItemRectMin();
     const ImVec2 pmax = ImGui::GetItemRectMax();
     const ImU32 card_bg = selected
-        ? IM_COL32(50, 55, 70, 255)
+        ? IM_COL32(78, 111, 185, 220)
         : ImGui::GetColorU32(ImGuiCol_ChildBg);
-    dl->AddRectFilled(pmin, pmax, card_bg, 4.0f);
+    dl->AddRectFilled(pmin, pmax, card_bg, 6.0f);
     if (selected)
-        dl->AddRect(pmin, pmax, IM_COL32(88, 141, 245, 200), 4.0f, 0, 1.5f);
+        dl->AddRect(pmin, pmax, IM_COL32(110, 160, 255, 210), 6.0f, 0, 1.5f);
 
     // Thumbnail preview centered inside the card.
     const float box = std::min(m_thumb_scale, cell_w - 16.0f);
@@ -491,35 +493,41 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            // Real folder icon: a golden tab on the top-left corner over the
-            // body rectangle (exact draw logic).
+            // Modern folder glyph: sharper body + top tab with a brighter accent
+            // to feel more like a contemporary file explorer than a gold-tinted
+            // legacy folder icon.
             const ImVec2 f_min = box_min;
             const ImVec2 f_max = box_max;
-            const ImU32 folder_color = IM_COL32(180, 150, 80, 255); // Muted golden folder
+            const ImU32 folder_color = IM_COL32(90, 130, 220, 255);
+            const ImU32 folder_highlight = IM_COL32(150, 182, 255, 210);
 
-            // Folder Tab (Top Left)
-            const ImVec2 tab_max = ImVec2(f_min.x + (f_max.x - f_min.x) * 0.4f, f_min.y + 12.0f);
-            dl->AddRectFilled(f_min, tab_max, folder_color, 2.0f, ImDrawFlags_RoundCornersTop);
-
-            // Folder Body
-            const ImVec2 body_min = ImVec2(f_min.x, f_min.y + 10.0f);
-            dl->AddRectFilled(body_min, f_max, folder_color, 3.0f, ImDrawFlags_RoundCornersAll);
+            const ImVec2 tab_max = ImVec2(f_min.x + (f_max.x - f_min.x) * 0.42f,
+                                         f_min.y + 12.0f);
+            dl->AddRectFilled(f_min, tab_max, folder_color, 4.0f, ImDrawFlags_RoundCornersTop);
+            dl->AddRectFilled(ImVec2(f_min.x, f_min.y + 8.0f), f_max,
+                              folder_color, 5.0f, ImDrawFlags_RoundCornersAll);
+            dl->AddLine(ImVec2(f_min.x + 6.0f, f_min.y + 16.0f),
+                        ImVec2(f_max.x - 6.0f, f_min.y + 16.0f),
+                        folder_highlight, 1.5f);
         }
         else
         {
-            const float icon = std::min(box * 0.55f, 64.0f);
+            const float icon = std::min(box * 0.58f, 64.0f);
             const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
-            const float fw = icon * 0.7f, fh = icon * 0.85f;
-            const float fold = icon * 0.22f;
+            const float fw = icon * 0.72f, fh = icon * 0.88f;
+            const float fold = icon * 0.28f;
             const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
             const ImVec2 br(c.x + fw * 0.5f, c.y + fh * 0.5f);
             const ImVec2 points[] = { tl, ImVec2(br.x - fold, tl.y),
                 ImVec2(br.x, tl.y + fold), br, tl };
             dl->AddConvexPolyFilled(points, 5, col);
+            dl->AddRectFilled(ImVec2(br.x - fold * 0.7f, tl.y + 2.0f),
+                              ImVec2(br.x - 2.0f, br.y * 0.35f + tl.y * 0.65f),
+                              IM_COL32(255, 255, 255, 80), 2.0f);
             dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
-                        IM_COL32(180, 180, 190, 80), 1.5f);
+                        IM_COL32(200, 200, 220, 90), 1.2f);
             dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
-                        IM_COL32(180, 180, 190, 80), 1.5f);
+                        IM_COL32(200, 200, 220, 90), 1.2f);
         }
     }
 
@@ -662,33 +670,36 @@ void ContentBrowserPanel::DrawListRow(const std::string &path, FileKind kind)
         const ImU32 col = BadgeColor(kind);
         if (kind == FileKind::Folder)
         {
-            // Real folder icon via ImDrawList: golden tab on the top-left
-            // corner over the body rectangle (scaled to the list thumbnail).
-            const ImU32 folder_color = IM_COL32(180, 150, 80, 255);
+            const ImU32 folder_color = IM_COL32(90, 130, 220, 255);
+            const ImU32 folder_highlight = IM_COL32(163, 191, 255, 220);
             const float fw = box_max.x - box_min.x;
             const float fh = box_max.y - box_min.y;
-            // Folder Tab (Top Left)
-            const ImVec2 tab_max(box_min.x + fw * 0.4f, box_min.y + fh * 0.30f);
-            dl->AddRectFilled(box_min, tab_max, folder_color, 1.5f, ImDrawFlags_RoundCornersTop);
-            // Folder Body
+            const ImVec2 tab_max(box_min.x + fw * 0.42f, box_min.y + fh * 0.32f);
+            dl->AddRectFilled(box_min, tab_max, folder_color, 2.0f, ImDrawFlags_RoundCornersTop);
             const ImVec2 body_min(box_min.x, box_min.y + fh * 0.24f);
-            dl->AddRectFilled(body_min, box_max, folder_color, 2.0f, ImDrawFlags_RoundCornersAll);
+            dl->AddRectFilled(body_min, box_max, folder_color, 3.0f, ImDrawFlags_RoundCornersAll);
+            dl->AddLine(ImVec2(box_min.x + 4.0f, box_min.y + fh * 0.4f),
+                        ImVec2(box_max.x - 4.0f, box_min.y + fh * 0.4f),
+                        folder_highlight, 1.0f);
         }
         else
         {
-            const float icon = box * 0.75f;
+            const float icon = box * 0.72f;
             const ImVec2 c(box_min.x + box * 0.5f, box_min.y + box * 0.5f);
             const float fw = icon * 0.7f, fh = icon * 0.85f;
-            const float fold = icon * 0.22f;
+            const float fold = icon * 0.24f;
             const ImVec2 tl(c.x - fw * 0.5f, c.y - fh * 0.5f);
             const ImVec2 br(c.x + fw * 0.5f, c.y + fh * 0.5f);
             const ImVec2 points[] = { tl, ImVec2(br.x - fold, tl.y),
                 ImVec2(br.x, tl.y + fold), br, tl };
             dl->AddConvexPolyFilled(points, 5, col);
+            dl->AddRectFilled(ImVec2(br.x - fold * 0.9f, tl.y + 2.0f),
+                              ImVec2(br.x - 2.0f, br.y * 0.35f + tl.y * 0.65f),
+                              IM_COL32(255, 255, 255, 80), 2.0f);
             dl->AddLine(ImVec2(br.x - fold, tl.y), ImVec2(br.x - fold, tl.y + fold),
-                        IM_COL32(180, 180, 190, 80), 1.0f);
+                        IM_COL32(190, 190, 210, 90), 1.0f);
             dl->AddLine(ImVec2(br.x - fold, tl.y + fold), ImVec2(br.x, tl.y + fold),
-                        IM_COL32(180, 180, 190, 80), 1.0f);
+                        IM_COL32(190, 190, 210, 90), 1.0f);
         }
     }
 
