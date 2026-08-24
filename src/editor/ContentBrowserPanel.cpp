@@ -3,6 +3,8 @@
 #include "SceneManager.h"
 #include "SceneSerializer.h"
 #include "editor/ScriptEditorPanel.h"
+#include "editor/Theme.h"
+#include "editor/UiText.h"
 #include "Material.h"
 #include "Mesh.h"
 #include "Texture.h"
@@ -17,6 +19,11 @@
 #include <string>
 
 namespace fs = std::filesystem;
+
+// Sentinel for m_current when browsing the virtual Primitives folder (Cube/
+// Wall/Floor/Ramp) instead of a real assets/ directory. Never touches
+// RefreshFiles()/the filesystem -- see DrawPrimitivesFolder().
+static const std::string kPrimitivesVirtualPath = "__primitives__";
 
 namespace {
 
@@ -194,6 +201,12 @@ void ContentBrowserPanel::DrawFolderTree()
 {
     ImGui::BeginChild("##content_tree", ImVec2(200.0f, 0.0f), true);
 
+    // Pinned, not scanned: the built-in block-out shapes always sit above the
+    // real asset tree, since they're never actually present on disk.
+    if (ImGui::Selectable("Primitives", m_current == kPrimitivesVirtualPath))
+        m_current = kPrimitivesVirtualPath;
+    ImGui::Separator();
+
     if (ImGui::TreeNodeEx("Assets", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
         for (const std::string &dir : m_dirs)
@@ -210,6 +223,66 @@ void ContentBrowserPanel::DrawFolderTree()
             ImGui::PopID();
         }
         ImGui::TreePop();
+    }
+
+    ImGui::EndChild();
+}
+
+void ContentBrowserPanel::DrawPrimitivesFolder()
+{
+    ImGui::BeginChild("##content_primitives", ImVec2(0.0f, 0.0f));
+
+    if (ImGui::Button("Up"))
+        Navigate(m_root);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Primitives");
+    ImGui::Separator();
+    TextDisabledWrapped("Drag a shape onto the Viewport to place it -- a cyan "
+                        "wireframe previews exactly where it will land on the "
+                        "landscape/ground before you drop it.");
+    ImGui::Spacing();
+
+    struct PrimitiveEntry { const char *label; const char *path; };
+    static const PrimitiveEntry kPrimitives[] = {
+        { "Cube",  kBuiltinCubePath },
+        { "Wall",  kBuiltinWallPath },
+        { "Floor", kBuiltinFloorPath },
+        { "Ramp",  kBuiltinRampPath },
+    };
+
+    const float cell_w = 90.0f;
+    const float cell_h = 64.0f;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const int cols = std::max(1, (int)((avail + spacing) / (cell_w + spacing)));
+
+    int col = 0;
+    for (const PrimitiveEntry &prim : kPrimitives)
+    {
+        ImGui::PushID(prim.path);
+        if (col > 0)
+            ImGui::SameLine();
+
+        // Same drag-source convention as a real Mesh card (DrawItem): payload
+        // type "MESH", payload data the asset path -- here one of the
+        // kBuiltin*Path constants instead of a filesystem path. The viewport
+        // drop handler and the ghost preview already treat any "MESH"
+        // payload identically regardless of where the path resolves, so
+        // nothing downstream needed to change for these to work.
+        ImGui::Selectable(prim.label, false, ImGuiSelectableFlags_DontClosePopups,
+                          ImVec2(cell_w, cell_h));
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+        {
+            ImGui::SetDragDropPayload("MESH", prim.path, std::strlen(prim.path) + 1,
+                                      ImGuiCond_Once);
+            ImGui::TextUnformatted(prim.label);
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Drag onto the Viewport to place a %s.", prim.label);
+
+        col = (col + 1) % cols;
+        ImGui::PopID();
     }
 
     ImGui::EndChild();
@@ -292,8 +365,15 @@ void ContentBrowserPanel::DrawToolbar()
         const bool active = (m_filter == filter_values[i]);
         if (i > 0)
             ImGui::SameLine();
+        // `active` was previously computed and discarded -- every filter
+        // chip looked identical regardless of which one was actually
+        // selected. Accent-tint the active chip so it's visible at a glance.
+        if (active)
+            Theme::PushPrimaryButtonColor();
         if (ImGui::SmallButton(filter_labels[i]))
             m_filter = filter_values[i];
+        if (active)
+            Theme::PopPrimaryButtonColor();
     }
 }
 
@@ -313,7 +393,7 @@ void ContentBrowserPanel::DrawCreateFolderRow()
         return;
 
     ImGui::PushID("new_folder");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 160.0f);
+    ImGui::SetNextItemWidth(std::max(100.0f, ImGui::GetContentRegionAvail().x - 160.0f));
     ImGui::InputText("##name", m_new_folder, sizeof(m_new_folder),
                      ImGuiInputTextFlags_EnterReturnsTrue);
 
@@ -357,7 +437,7 @@ void ContentBrowserPanel::DrawRenameRow()
     ImGui::TextUnformatted(("Rename: " + Leaf(m_rename_path)).c_str());
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 160.0f);
+    ImGui::SetNextItemWidth(std::max(100.0f, ImGui::GetContentRegionAvail().x - 160.0f));
     const bool committed = ImGui::InputText(
         "##name", m_rename_buffer, sizeof(m_rename_buffer),
         ImGuiInputTextFlags_EnterReturnsTrue);
@@ -446,16 +526,21 @@ void ContentBrowserPanel::DrawItem(const std::string &path, FileKind kind,
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         OpenItem(path, kind);
 
-    // Dark-slate card background behind the icon + text.
+    // Card background behind the icon + text. The selection tint/border used
+    // to be a hardcoded blue independent of the theme -- it wouldn't follow a
+    // live accent-color edit in Editor Settings. Both now derive from the
+    // theme's accent token, and the rounding matches the rest of the UI
+    // instead of its own hardcoded 6px.
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 pmin = ImGui::GetItemRectMin();
     const ImVec2 pmax = ImGui::GetItemRectMax();
+    const float rounding = ImGui::GetStyle().FrameRounding;
     const ImU32 card_bg = selected
-        ? IM_COL32(78, 111, 185, 220)
+        ? ImGui::GetColorU32(ImGuiCol_CheckMark, 0.45f)
         : ImGui::GetColorU32(ImGuiCol_ChildBg);
-    dl->AddRectFilled(pmin, pmax, card_bg, 6.0f);
+    dl->AddRectFilled(pmin, pmax, card_bg, rounding);
     if (selected)
-        dl->AddRect(pmin, pmax, IM_COL32(110, 160, 255, 210), 6.0f, 0, 1.5f);
+        dl->AddRect(pmin, pmax, ImGui::GetColorU32(ImGuiCol_CheckMark), rounding, 0, 1.5f);
 
     // Thumbnail preview centered inside the card.
     const float box = std::min(m_thumb_scale, cell_w - 16.0f);
@@ -781,6 +866,18 @@ void ContentBrowserPanel::ContextMenu(const std::string &path, FileKind kind)
             action = "Open in Script Editor";
         if (action && ImGui::MenuItem(action))
             OpenItem(path, kind);
+
+        // Placement mode: click-to-spawn at the cursor's landscape/ground
+        // point, as many times as you like, instead of one instance at the
+        // origin. Meshes have no other spawn path from the browser at all.
+        if (kind == FileKind::Mesh || kind == FileKind::Prefab)
+        {
+            if (ImGui::MenuItem("Place in Scene"))
+            {
+                if (on_arm_placement)
+                    on_arm_placement(path, kind == FileKind::Prefab);
+            }
+        }
         ImGui::Separator();
     }
 
@@ -951,6 +1048,15 @@ void ContentBrowserPanel::OnImGuiRender(float dt)
 
     ImGui::Begin("Content Browser", nullptr, ImGuiWindowFlags_NoCollapse);
 
+    // This panel now lives in a short, wide strip along the bottom of the
+    // editor -- the theme's default padding/thumbnail size (tuned for a
+    // full-height panel) left room for barely one row of cards. Tighter
+    // local spacing plus a smaller default thumbnail (see m_thumb_scale)
+    // gets several rows visible at a glance, closer to Unity/Unreal's
+    // compact asset browsers.
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 5.0f));
+
     // Record the window rect for OS file-drop routing (the editor checks
     // whether a dropped file landed over this panel before choosing a folder).
     m_window_min = ImGui::GetWindowPos();
@@ -959,7 +1065,9 @@ void ContentBrowserPanel::OnImGuiRender(float dt)
 
     DrawFolderTree();
     ImGui::SameLine();
-    if (m_list_view)
+    if (m_current == kPrimitivesVirtualPath)
+        DrawPrimitivesFolder();
+    else if (m_list_view)
         DrawFileList();
     else
         DrawFileGrid();
@@ -977,6 +1085,7 @@ void ContentBrowserPanel::OnImGuiRender(float dt)
         ImGui::Text("%s", label);
     }
 
+    ImGui::PopStyleVar(2);
     ImGui::End();
 
     DrawConfirmDeleteModal();

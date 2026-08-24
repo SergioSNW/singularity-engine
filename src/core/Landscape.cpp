@@ -3,8 +3,14 @@
 #include "Components.h"
 #include "Mesh.h"
 
+// STB_IMAGE_IMPLEMENTATION is already provided by Texture.cpp -- this
+// translation unit only needs the declarations, matching the convention
+// stb_image.h itself documents for multi-file use.
+#include "stb/stb_image.h"
+
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 
 namespace
@@ -54,6 +60,23 @@ Mat4 AffineInverse(const Mat4 &m)
     return inv;
 }
 
+// Smooth per-vertex normal at grid vertex (r, c) via central differences of
+// the height field -- the standard heightfield-normal technique, and cheaper
+// than accumulating + averaging the surrounding triangles' face normals.
+// Neighbors clamp at the grid edge (one-sided difference there) instead of
+// wrapping or reading out of bounds.
+Vec3 GridNormal(const std::vector<float> &heights, int r, int c, int stride,
+               int res, float cell)
+{
+    const int rm = std::max(r - 1, 0), rp = std::min(r + 1, res);
+    const int cm = std::max(c - 1, 0), cp = std::min(c + 1, res);
+    const float dx = (heights[(size_t)r * stride + cp] -
+                      heights[(size_t)r * stride + cm]) / (float)(cp - cm) / cell;
+    const float dz = (heights[(size_t)rp * stride + c] -
+                      heights[(size_t)rm * stride + c]) / (float)(rp - rm) / cell;
+    return Vec3Normalize(Vec3{ -dx, 1.0f, -dz });
+}
+
 } // namespace
 
 void LandscapeInitialize(LandscapeComponent &landscape)
@@ -63,6 +86,91 @@ void LandscapeInitialize(LandscapeComponent &landscape)
     // Default vertex color: white (1,1,1) so unpainted terrain uses the material color.
     landscape.colors.assign((size_t)(res + 1) * (res + 1) * 3, 1.0f);
     landscape.mesh_dirty = true;
+}
+
+bool LandscapeLoadHeightmap(LandscapeComponent &landscape, const std::string &path,
+                            int target_resolution, std::string *error)
+{
+    // Resolve the same way TextureLibrary does: try as-given, then fall back
+    // to assets/textures/ (heightmaps are grayscale images and naturally
+    // live alongside regular textures).
+    std::string resolved = path;
+    std::error_code ec;
+    if (!std::filesystem::exists(resolved, ec))
+    {
+        const std::string alt = "assets/textures/" + path;
+        if (std::filesystem::exists(alt, ec))
+            resolved = alt;
+        else
+        {
+            if (error) *error = "heightmap file not found: '" + path + "'";
+            return false;
+        }
+    }
+
+    int img_w = 0, img_h = 0, channels = 0;
+    unsigned char *pixels = stbi_load(resolved.c_str(), &img_w, &img_h, &channels, 4);
+    if (!pixels)
+    {
+        if (error) *error = "cannot decode heightmap '" + path + "' (" +
+                            std::string(stbi_failure_reason() ? stbi_failure_reason() : "unknown") + ")";
+        return false;
+    }
+
+    const int res = std::clamp(target_resolution, kMinHeightmapResolution, kMaxHeightmapResolution);
+    const int stride = res + 1;
+    const size_t count = (size_t)stride * stride;
+
+    std::vector<float> new_heights(count);
+
+    // Bilinear-sample the source image's luminance at each grid vertex,
+    // mapping the grid's [0, res] index range onto the image's pixel range so
+    // the whole image covers the whole grid regardless of how their
+    // resolutions compare to each other.
+    const float src_x_scale = (img_w > 1) ? (float)(img_w - 1) / (float)res : 0.0f;
+    const float src_y_scale = (img_h > 1) ? (float)(img_h - 1) / (float)res : 0.0f;
+
+    const auto lum_at = [&](int px, int py) -> float {
+        const unsigned char *p = &pixels[((size_t)py * img_w + px) * 4];
+        return (0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]) / 255.0f;
+    };
+    const auto sample_luminance = [&](float fx, float fy) -> float {
+        const int x0 = std::clamp((int)fx, 0, img_w - 1);
+        const int y0 = std::clamp((int)fy, 0, img_h - 1);
+        const int x1 = std::min(x0 + 1, img_w - 1);
+        const int y1 = std::min(y0 + 1, img_h - 1);
+        const float tx = fx - (float)x0;
+        const float ty = fy - (float)y0;
+        const float l00 = lum_at(x0, y0);
+        const float l10 = lum_at(x1, y0);
+        const float l01 = lum_at(x0, y1);
+        const float l11 = lum_at(x1, y1);
+        return l00 * (1.0f - tx) * (1.0f - ty) + l10 * tx * (1.0f - ty) +
+               l01 * (1.0f - tx) * ty        + l11 * tx * ty;
+    };
+
+    for (int r = 0; r < stride; ++r)
+    {
+        const float sy = (float)r * src_y_scale;
+        for (int c = 0; c < stride; ++c)
+        {
+            const float sx = (float)c * src_x_scale;
+            new_heights[(size_t)r * stride + c] =
+                landscape.base_height + sample_luminance(sx, sy) * landscape.heightmap_scale;
+        }
+    }
+
+    stbi_image_free(pixels);
+
+    landscape.resolution = res;
+    landscape.heights = std::move(new_heights);
+    landscape.colors.assign(count * 3, 1.0f);
+    landscape.heightmap_path = path;
+    landscape.mesh_dirty = true;
+    LandscapeRebuildMesh(landscape);
+
+    if (error) error->clear();
+    return true;
 }
 
 void LandscapeRebuildMesh(LandscapeComponent &landscape)
@@ -93,6 +201,8 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
     const size_t tri_count = (size_t)res * res * 2;
     mesh.positions.reserve(tri_count * 3);
     mesh.uvs.reserve(tri_count * 3);
+    mesh.normals.reserve(tri_count * 3);
+    mesh.colors.reserve(tri_count * 3 * 3);
 
     float min_y = landscape.heights[0];
     float max_y = landscape.heights[0];
@@ -101,6 +211,27 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
         min_y = std::min(min_y, landscape.heights[i]);
         max_y = std::max(max_y, landscape.heights[i]);
     }
+
+    // Smooth per-vertex normals, one per grid vertex (not per triangle-soup
+    // entry) -- shared vertices get the same normal so lighting doesn't seam
+    // at triangle edges. Precomputed once here rather than inline below since
+    // each grid vertex is touched by up to 6 soup entries.
+    //
+    // `static` + resize() rather than a fresh local vector: this function is
+    // the sculpt hot path (mesh_dirty is set every frame while dragging the
+    // brush, per the reuse comment above), so a per-call heap alloc/free
+    // here would churn the allocator continuously for the entire length of
+    // every stroke. resize() only grows the backing buffer when the new
+    // count is larger, matching the reuse discipline `landscape.mesh` above
+    // already relies on -- every index in [0, count) is unconditionally
+    // overwritten below before use, so stale data from a previous (possibly
+    // differently-sized, if another landscape entity was rebuilt in between)
+    // call is never read.
+    static std::vector<Vec3> vnorm;
+    vnorm.resize(count);
+    for (int r = 0; r <= res; ++r)
+        for (int c = 0; c <= res; ++c)
+            vnorm[(size_t)r * stride + c] = GridNormal(landscape.heights, r, c, stride, res, cell);
 
     for (int r = 0; r < res; ++r)
     {
@@ -122,6 +253,17 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
             mesh.positions.push_back(v00);
             mesh.positions.push_back(v01);
             mesh.positions.push_back(v11);
+
+            const Vec3 &n00 = vnorm[(size_t)r * stride + c];
+            const Vec3 &n10 = vnorm[(size_t)r * stride + c + 1];
+            const Vec3 &n01 = vnorm[(size_t)(r + 1) * stride + c];
+            const Vec3 &n11 = vnorm[(size_t)(r + 1) * stride + c + 1];
+            mesh.normals.push_back(n00);
+            mesh.normals.push_back(n11);
+            mesh.normals.push_back(n10);
+            mesh.normals.push_back(n00);
+            mesh.normals.push_back(n01);
+            mesh.normals.push_back(n11);
 
             // Per-vertex colors from the landscape paint layer.
             auto push_color = [&](int vr, int vc) {

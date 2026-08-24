@@ -64,6 +64,7 @@ void EnvironmentFX::Destroy()
     m_out.clear();
     m_sky_w = m_sky_h = 0;
     m_work_w = m_work_h = 0;
+    m_bloom_w = m_bloom_h = 0;
     m_sky_sig = m_work_sig = 0;
 }
 
@@ -277,26 +278,42 @@ void EnvironmentFX::RebuildLUT(const EnvironmentSettings &env)
 void EnvironmentFX::EnsureWork(SDL_Renderer *renderer, const EnvironmentSettings &env,
                                int src_w, int src_h)
 {
-    int work_w = std::max(1, (int)std::lround(src_w * env.post_scale));
-    int work_h = std::max(1, (int)std::lround(src_h * env.post_scale));
+    // The graded output is always full source resolution -- post_scale no
+    // longer touches it (see the class comment in the header).
+    const int work_w = std::max(1, src_w);
+    const int work_h = std::max(1, src_h);
 
-    if (m_work && m_work_w == work_w && m_work_h == work_h)
-        return;
+    if (!m_work || m_work_w != work_w || m_work_h != work_h)
+    {
+        if (m_work)
+            SDL_DestroyTexture(m_work);
+        m_work = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                   SDL_TEXTUREACCESS_STREAMING, work_w, work_h);
+        m_work_w = work_w;
+        m_work_h = work_h;
+        m_work_sig = 0;
+        m_lin.assign((size_t)work_w * work_h * 3, 0.0f);
+        m_out.assign((size_t)work_w * work_h, 0xFF000000u);
+    }
 
-    if (m_work)
-        SDL_DestroyTexture(m_work);
-    m_work = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
-                               SDL_TEXTUREACCESS_STREAMING, work_w, work_h);
-    m_work_w = work_w;
-    m_work_h = work_h;
-    m_work_sig = 0;
-    m_lin.assign((size_t)work_w * work_h * 3, 0.0f);
-    m_out.assign((size_t)work_w * work_h, 0xFF000000u);
-
-    const int bw = std::max(1, (work_w + 1) / 2);
-    const int bh = std::max(1, (work_h + 1) / 2);
-    m_bloom.assign((size_t)bw * bh * 3, 0.0f);
-    m_tmp.assign((size_t)bw * bh * 3, 0.0f);
+    // Bloom keeps the previous "half of the post-scaled working resolution"
+    // sizing, now expressed directly against post_scale since the working
+    // resolution itself no longer shrinks. Checked independently of the
+    // block above: post_scale can change (the user drags the slider)
+    // without the output resolution changing at all.
+    // Minimum 2 in each axis: the bilinear sample in PostProcess always reads
+    // one texel past (bx0, by0), so a 1-wide/tall buffer would read out of
+    // bounds. Only reachable at extreme post_scale on a tiny region, but
+    // guard it rather than rely on region sizes staying "reasonable".
+    const int bw = std::max(2, (int)std::lround(work_w * env.post_scale * 0.5f));
+    const int bh = std::max(2, (int)std::lround(work_h * env.post_scale * 0.5f));
+    if (bw != m_bloom_w || bh != m_bloom_h)
+    {
+        m_bloom_w = bw;
+        m_bloom_h = bh;
+        m_bloom.assign((size_t)bw * bh * 3, 0.0f);
+        m_tmp.assign((size_t)bw * bh * 3, 0.0f);
+    }
 }
 
 void EnvironmentFX::BuildBloom(float *bloom, int bloom_w, int bloom_h,
@@ -422,46 +439,30 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
                              raw.data(), (int)((size_t)w * 4)) != 0)
         return false;
 
-    // Downsample to the working resolution into m_lin (linear RGB floats).
+    // Unpack into m_lin (linear RGB floats) at full resolution. This used to
+    // be a block-averaging downsample; now that m_work is always exactly
+    // w x h (see EnsureWork), it's an exact 1:1 unpack instead.
     RebuildLUT(env);
     const int ww = m_work_w;
     const int wh = m_work_h;
     for (int j = 0; j < wh; ++j)
     {
-        const int y0 = (int)((float)j / (float)wh * h);
-        const int y1 = std::min(h - 1, (int)((float)(j + 1) / (float)wh * h));
+        const uint32_t *row = &raw[(size_t)j * w];
+        float *dst_row = &m_lin[(size_t)j * ww * 3];
         for (int i = 0; i < ww; ++i)
         {
-            const int x0 = (int)((float)i / (float)ww * w);
-            const int x1 = std::min(w - 1, (int)((float)(i + 1) / (float)ww * w));
-
-            float r = 0.0f, g = 0.0f, b = 0.0f;
-            int n = 0;
-            for (int yy = y0; yy <= y1; ++yy)
-            {
-                const uint32_t *row = &raw[(size_t)yy * w];
-                for (int xx = x0; xx <= x1; ++xx)
-                {
-                    const uint32_t p = row[xx];
-                    r += (p >> 24) & 0xFF;
-                    g += (p >> 16) & 0xFF;
-                    b += (p >> 8) & 0xFF;
-                    ++n;
-                }
-            }
-            r /= 255.0f * n;
-            g /= 255.0f * n;
-            b /= 255.0f * n;
-            float *dst = &m_lin[((size_t)j * ww + i) * 3];
-            dst[0] = r;
-            dst[1] = g;
-            dst[2] = b;
+            const uint32_t p = row[i];
+            dst_row[(size_t)i * 3 + 0] = ((p >> 24) & 0xFF) / 255.0f;
+            dst_row[(size_t)i * 3 + 1] = ((p >> 16) & 0xFF) / 255.0f;
+            dst_row[(size_t)i * 3 + 2] = ((p >> 8) & 0xFF) / 255.0f;
         }
     }
 
-    // Bloom: half-res bright pass + gaussian blur (bilinear sampling on apply).
-    const int bw = std::max(1, (ww + 1) / 2);
-    const int bh = std::max(1, (wh + 1) / 2);
+    // Bloom: post_scale-sized bright pass + gaussian blur (bilinear sampling
+    // on apply below). Dimensions come from EnsureWork, not derived from ww/
+    // wh here -- ww/wh are always full source resolution now.
+    const int bw = m_bloom_w;
+    const int bh = m_bloom_h;
     if (env.post_bloom_enabled)
         BuildBloom(m_bloom.data(), bw, bh, m_lin.data(), ww, wh, env);
 
@@ -475,11 +476,17 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
     pp.temperature = env.post_temperature;
     pp.tonemap_enabled = env.post_tonemap_enabled;
 
+    // Bloom is no longer always exactly half of the working resolution (its
+    // size is now driven directly by post_scale), so the full-res -> bloom-
+    // space mapping below uses the actual ratio rather than a hardcoded 0.5.
+    const float bloom_ry = (float)bh / (float)wh;
+    const float bloom_rx = (float)bw / (float)ww;
+
     for (int j = 0; j < wh; ++j)
     {
-        // Bilinear sampling of the half-res bloom buffer: compute fractional
-        // position and blend the 4 nearest texels for smooth bloom falloff.
-        const float bfy = std::min((float)j * 0.5f, (float)(bh - 1));
+        // Bilinear sampling of the bloom buffer: compute fractional position
+        // and blend the 4 nearest texels for smooth bloom falloff.
+        const float bfy = std::min((float)j * bloom_ry, (float)(bh - 1));
         const int by0 = std::max(0, std::min(bh - 2, (int)bfy));
         const int by1 = by0 + 1;
         const float fy = bfy - (float)by0;
@@ -490,7 +497,7 @@ bool EnvironmentFX::PostProcess(SDL_Renderer *renderer, SDL_Texture *source,
             float bloom[3] = { 0.0f, 0.0f, 0.0f };
             if (env.post_bloom_enabled)
             {
-                const float bfx = std::min((float)i * 0.5f, (float)(bw - 1));
+                const float bfx = std::min((float)i * bloom_rx, (float)(bw - 1));
                 const int bx0 = std::max(0, std::min(bw - 2, (int)bfx));
                 const int bx1 = bx0 + 1;
                 const float fx = bfx - (float)bx0;

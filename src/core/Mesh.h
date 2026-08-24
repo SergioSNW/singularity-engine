@@ -26,6 +26,24 @@ struct Mesh
     Vec3 bounds_max{0.0f, 0.0f, 0.0f};
 };
 
+// Path keys for the always-available structural primitives (block-out level
+// design: Cube, Wall, Floor, Ramp). These never resolve to a file --
+// MeshLibrary registers them in its cache at construction, and the normal
+// GetOrLoad(entity.mesh.path) resolution path already serves a cache hit
+// before ever touching the filesystem, so setting an entity's mesh.path to
+// one of these "just works" through every existing render/spawn/placement
+// path with no special-casing, the same way the historical builtin cube
+// (used as the fallback for an *empty* mesh.path) already does.
+extern const char *const kBuiltinCubePath;
+extern const char *const kBuiltinWallPath;
+extern const char *const kBuiltinFloorPath;
+extern const char *const kBuiltinRampPath;
+
+// Short, human-readable name for a builtin primitive path (e.g. a spawned
+// entity's default tag, or a UI label) -- nullptr if `path` isn't one of the
+// kBuiltin*Path constants above.
+const char *BuiltinPrimitiveDisplayName(const std::string &path);
+
 // Asset-side mesh cache. Loads Wavefront .obj files once and hands out stable
 // pointers keyed by asset path. The path is resolved against the current
 // working directory and, as a fallback, against `assets/meshes/`.

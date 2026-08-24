@@ -2,6 +2,7 @@
 
 #include "Texture.h"
 #include "editor/Theme.h"
+#include "editor/UiText.h"
 
 #include <imgui.h>
 #include <algorithm>
@@ -45,6 +46,32 @@ std::vector<std::string> ListTextureAssets()
     }
     std::sort(out.begin(), out.end());
     return out;
+}
+
+// ImGui's default layout puts the label after the control on the same line,
+// reserving only ~1/3 of the row for it -- fine at full window width, but a
+// label like "Metallic Multiplier" gets clipped once this panel is docked
+// into a ~20%-wide rail. Stacking the label on its own line above a
+// full-width control (like Unreal/Unity property panels) stays correct at
+// any column width instead of requiring the user to widen the panel.
+bool LabeledSlider(const char *label, float *v, float min, float max, const char *fmt = "%.2f")
+{
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::PushID(label);
+    const bool changed = ImGui::SliderFloat("##v", v, min, max, fmt);
+    ImGui::PopID();
+    return changed;
+}
+
+bool LabeledColorEdit4(const char *label, float col[4])
+{
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::PushID(label);
+    const bool changed = ImGui::ColorEdit4("##v", col);
+    ImGui::PopID();
+    return changed;
 }
 
 } // namespace
@@ -160,9 +187,15 @@ void MaterialPanel::CreateFromWizard()
 // asset list. Changes dirty the working copy and push it live immediately.
 void MaterialPanel::DrawTextureSlot(const char *label, std::string &slot)
 {
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::PushID(label);
     const char *preview = slot.empty() ? "None" : slot.c_str();
-    if (!ImGui::BeginCombo(label, preview))
+    if (!ImGui::BeginCombo("##v", preview))
+    {
+        ImGui::PopID();
         return;
+    }
     if (ImGui::Selectable("None", slot.empty()))
     {
         slot.clear();
@@ -180,6 +213,7 @@ void MaterialPanel::DrawTextureSlot(const char *label, std::string &slot)
         }
     }
     ImGui::EndCombo();
+    ImGui::PopID();
 }
 
 void MaterialPanel::OnImGuiRender(float dt)
@@ -191,10 +225,21 @@ void MaterialPanel::OnImGuiRender(float dt)
 
     ImGui::Begin("Material Editor", &m_visible, ImGuiWindowFlags_NoCollapse);
 
+    // This panel spends most of its life docked into a narrow ~20% rail with
+    // a dozen-plus stacked fields; the theme's default padding is tuned for
+    // full-width panels and wastes vertical room here, forcing more
+    // scrolling than the content needs.
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 5.0f));
+
     RefreshList();
 
-    const float list_w = 170.0f;
-    ImGui::BeginChild("##material_list", ImVec2(list_w, 0.0f), true);
+    // Single vertical column: the material list sits in a fixed-height strip
+    // above the editor fields instead of a side-by-side split, so the panel
+    // stays usable docked into a narrow ~20%-width rail (a fixed-width list
+    // pane next to the fields left almost nothing for the fields themselves).
+    const float list_h = 140.0f;
+    ImGui::BeginChild("##material_list", ImVec2(0.0f, list_h), true);
     ImGui::TextDisabled("Materials");
     ImGui::Separator();
     for (const std::string &filename : m_materials)
@@ -205,7 +250,7 @@ void MaterialPanel::OnImGuiRender(float dt)
     }
     ImGui::EndChild();
 
-    ImGui::SameLine();
+    ImGui::Spacing();
 
     ImGui::BeginChild("##material_editor", ImVec2(0.0f, 0.0f), false);
 
@@ -227,7 +272,9 @@ void MaterialPanel::OnImGuiRender(float dt)
     }
     else
     {
-        if (ImGui::InputText("Name", m_name_buffer, sizeof(m_name_buffer)))
+        ImGui::TextUnformatted("Name");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::InputText("##name", m_name_buffer, sizeof(m_name_buffer)))
         {
             m_dirty = true;
             PushLive();
@@ -240,15 +287,14 @@ void MaterialPanel::OnImGuiRender(float dt)
 
         // --- Albedo -------------------------------------------------------
         ImGui::TextUnformatted("Albedo");
-        if (ImGui::ColorEdit4("Diffuse Tint", m_edit.color))
+        if (LabeledColorEdit4("Diffuse Tint", m_edit.color))
         {
             m_dirty = true;
             PushLive();
         }
         ImGui::TextDisabled("Multiplies the texture; white = un-tinted");
 
-        if (ImGui::SliderFloat("Albedo Multiplier", &m_edit.albedo_multiplier,
-                               0.0f, 2.0f, "%.2f"))
+        if (LabeledSlider("Albedo Multiplier", &m_edit.albedo_multiplier, 0.0f, 2.0f))
         {
             m_dirty = true;
             PushLive();
@@ -287,8 +333,7 @@ void MaterialPanel::OnImGuiRender(float dt)
         if (ImGui::CollapsingHeader("Normal", ImGuiTreeNodeFlags_DefaultOpen))
         {
             DrawTextureSlot("Normal Map", m_edit.normal_texture);
-            if (ImGui::SliderFloat("Normal Strength", &m_edit.normal_strength,
-                                   0.0f, 2.0f, "%.2f"))
+            if (LabeledSlider("Normal Strength", &m_edit.normal_strength, 0.0f, 2.0f))
             {
                 m_dirty = true;
                 PushLive();
@@ -300,14 +345,13 @@ void MaterialPanel::OnImGuiRender(float dt)
         // --- Metallic -----------------------------------------------------
         if (ImGui::CollapsingHeader("Metallic", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (ImGui::SliderFloat("Metallic", &m_edit.metallic, 0.0f, 1.0f, "%.2f"))
+            if (LabeledSlider("Metallic", &m_edit.metallic, 0.0f, 1.0f))
             {
                 m_dirty = true;
                 PushLive();
             }
             DrawTextureSlot("Metallic Map", m_edit.metallic_texture);
-            if (ImGui::SliderFloat("Metallic Multiplier", &m_edit.metallic_multiplier,
-                                   0.0f, 2.0f, "%.2f"))
+            if (LabeledSlider("Metallic Multiplier", &m_edit.metallic_multiplier, 0.0f, 2.0f))
             {
                 m_dirty = true;
                 PushLive();
@@ -318,14 +362,13 @@ void MaterialPanel::OnImGuiRender(float dt)
         // --- Roughness ----------------------------------------------------
         if (ImGui::CollapsingHeader("Roughness", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (ImGui::SliderFloat("Roughness", &m_edit.roughness, 0.0f, 1.0f, "%.2f"))
+            if (LabeledSlider("Roughness", &m_edit.roughness, 0.0f, 1.0f))
             {
                 m_dirty = true;
                 PushLive();
             }
             DrawTextureSlot("Roughness Map", m_edit.roughness_texture);
-            if (ImGui::SliderFloat("Roughness Multiplier", &m_edit.roughness_multiplier,
-                                   0.0f, 2.0f, "%.2f"))
+            if (LabeledSlider("Roughness Multiplier", &m_edit.roughness_multiplier, 0.0f, 2.0f))
             {
                 m_dirty = true;
                 PushLive();
@@ -337,14 +380,13 @@ void MaterialPanel::OnImGuiRender(float dt)
         // --- Ambient Occlusion -------------------------------------------
         if (ImGui::CollapsingHeader("Ambient Occlusion", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (ImGui::SliderFloat("AO", &m_edit.ao, 0.0f, 1.0f, "%.2f"))
+            if (LabeledSlider("AO", &m_edit.ao, 0.0f, 1.0f))
             {
                 m_dirty = true;
                 PushLive();
             }
             DrawTextureSlot("AO Map", m_edit.ao_texture);
-            if (ImGui::SliderFloat("AO Multiplier", &m_edit.ao_multiplier,
-                                   0.0f, 2.0f, "%.2f"))
+            if (LabeledSlider("AO Multiplier", &m_edit.ao_multiplier, 0.0f, 2.0f))
             {
                 m_dirty = true;
                 PushLive();
@@ -377,13 +419,17 @@ void MaterialPanel::OnImGuiRender(float dt)
     if (ImGui::Button("New Material..."))
         OpenCreateWizard();
     Theme::PopPrimaryButtonColor();
-    ImGui::SameLine();
-    ImGui::TextDisabled("Opens the material authoring wizard");
+    TextDisabledWrapped("Opens the material authoring wizard");
 
     if (!m_status.empty())
         ImGui::TextDisabled("%s", m_status.c_str());
 
     ImGui::EndChild();
+
+    // The compact padding above is specific to this panel's narrow-rail
+    // fields; the wizard modal below is a normal-sized floating window and
+    // should keep the theme's regular spacing.
+    ImGui::PopStyleVar(2);
 
     // --- Create New Material wizard modal --------------------------------
     if (m_wizard_open)

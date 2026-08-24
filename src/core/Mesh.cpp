@@ -89,6 +89,138 @@ static Mesh BuildCubeMesh()
     return mesh;
 }
 
+// --- built-in structural primitives (Wall / Floor / Ramp) ---
+//
+// Wall and Floor reuse the cube's face/edge topology (CUBE_FACES/CUBE_EDGES
+// index into *any* 8-corner box with the same corner layout: 0-3 at the min-Z
+// face going around low-Y/high-Y, 4-7 the same at max-Z), just with per-axis
+// half-extents instead of a fixed 0.5, and the vertical range pivoted at the
+// *base* (y0 = 0) rather than centered like the cube. That base pivot is
+// deliberate: these are meant to be placed directly onto a landscape hit
+// point (Application::ComputeDropWorldPos), and a center-pivoted box would
+// spawn half-buried in the surface instead of sitting on top of it.
+static Mesh BuildBoxMesh(const char *name, float half_x, float y0, float y1, float half_z)
+{
+    const Vec3 corners[8] = {
+        { -half_x, y0, -half_z },  // 0
+        {  half_x, y0, -half_z },  // 1
+        {  half_x, y1, -half_z },  // 2
+        { -half_x, y1, -half_z },  // 3
+        { -half_x, y0,  half_z },  // 4
+        {  half_x, y0,  half_z },  // 5
+        {  half_x, y1,  half_z },  // 6
+        { -half_x, y1,  half_z },  // 7
+    };
+
+    Mesh mesh;
+    mesh.name = name;
+    mesh.positions.reserve(36);
+    mesh.uvs.reserve(36);
+    for (int f = 0; f < 6; ++f)
+    {
+        const int *idx = CUBE_FACES[f];
+        const Vec3 &a = corners[idx[0]];
+        const Vec3 &b = corners[idx[1]];
+        const Vec3 &c = corners[idx[2]];
+        const Vec3 &d = corners[idx[3]];
+        mesh.positions.push_back(a);
+        mesh.positions.push_back(b);
+        mesh.positions.push_back(c);
+        mesh.positions.push_back(a);
+        mesh.positions.push_back(c);
+        mesh.positions.push_back(d);
+        const Vec2 &t0 = CUBE_FACE_UVS[f][0];
+        const Vec2 &t1 = CUBE_FACE_UVS[f][1];
+        const Vec2 &t2 = CUBE_FACE_UVS[f][2];
+        const Vec2 &t3 = CUBE_FACE_UVS[f][3];
+        mesh.uvs.push_back(t0);
+        mesh.uvs.push_back(t1);
+        mesh.uvs.push_back(t2);
+        mesh.uvs.push_back(t0);
+        mesh.uvs.push_back(t2);
+        mesh.uvs.push_back(t3);
+    }
+    mesh.edge_lines.reserve(24);
+    for (int i = 0; i < 12; ++i)
+    {
+        mesh.edge_lines.push_back(corners[CUBE_EDGES[i][0]]);
+        mesh.edge_lines.push_back(corners[CUBE_EDGES[i][1]]);
+    }
+    mesh.bounds_min = { -half_x, y0, -half_z };
+    mesh.bounds_max = {  half_x, y1,  half_z };
+    return mesh;
+}
+
+// A right-triangle wedge: flat base at y=0, rising from y=0 at x=-half_x to
+// y=height at x=+half_x, constant across the full z extent. Base-pivoted
+// like the wall/floor, for the same "sits on the placement point" reason.
+//
+// Six corners (a triangular prism: two mirrored triangle cross-sections
+// extruded along Z) and five faces -- bottom, the vertical high-end face, the
+// sloped ramp surface, and two triangular end caps. Every face's winding was
+// verified by hand (cross(b-a, c-a) checked against the expected outward
+// direction for each face) rather than assumed, since a wedge has no
+// symmetry to lean on the way the box corners do.
+static Mesh BuildRampMesh(float half_x, float height, float half_z)
+{
+    const Vec3 p0{ -half_x, 0.0f,      -half_z };  // low end, back
+    const Vec3 p1{  half_x, 0.0f,      -half_z };  // base under high end, back
+    const Vec3 p2{  half_x, height,    -half_z };  // top of high end, back
+    const Vec3 p3{ -half_x, 0.0f,       half_z };  // low end, front
+    const Vec3 p4{  half_x, 0.0f,       half_z };  // base under high end, front
+    const Vec3 p5{  half_x, height,     half_z };  // top of high end, front
+
+    Mesh mesh;
+    mesh.name = "Ramp Primitive";
+    mesh.positions.reserve(24);
+    mesh.uvs.reserve(24);
+
+    auto quad = [&](const Vec3 &a, const Vec3 &b, const Vec3 &c, const Vec3 &d) {
+        mesh.positions.push_back(a); mesh.positions.push_back(b); mesh.positions.push_back(c);
+        mesh.positions.push_back(a); mesh.positions.push_back(c); mesh.positions.push_back(d);
+        mesh.uvs.push_back({0.0f, 1.0f}); mesh.uvs.push_back({1.0f, 1.0f}); mesh.uvs.push_back({1.0f, 0.0f});
+        mesh.uvs.push_back({0.0f, 1.0f}); mesh.uvs.push_back({1.0f, 0.0f}); mesh.uvs.push_back({0.0f, 0.0f});
+    };
+    auto tri = [&](const Vec3 &a, const Vec3 &b, const Vec3 &c) {
+        mesh.positions.push_back(a); mesh.positions.push_back(b); mesh.positions.push_back(c);
+        mesh.uvs.push_back({0.0f, 0.0f}); mesh.uvs.push_back({1.0f, 0.0f}); mesh.uvs.push_back({0.5f, 1.0f});
+    };
+
+    quad(p0, p1, p4, p3);   // bottom            (outward -Y)
+    quad(p1, p2, p5, p4);   // high-end vertical  (outward +X)
+    quad(p0, p3, p5, p2);   // slope              (outward up + toward -X)
+    tri(p0, p2, p1);        // back cap, z=-half_z (outward -Z)
+    tri(p3, p4, p5);        // front cap, z=+half_z (outward +Z)
+
+    mesh.edge_lines.reserve(18);
+    const Vec3 edges[9][2] = {
+        {p0,p1},{p1,p2},{p2,p0}, {p3,p4},{p4,p5},{p5,p3}, {p0,p3},{p1,p4},{p2,p5},
+    };
+    for (const auto &e : edges)
+    {
+        mesh.edge_lines.push_back(e[0]);
+        mesh.edge_lines.push_back(e[1]);
+    }
+
+    mesh.bounds_min = { -half_x, 0.0f,   -half_z };
+    mesh.bounds_max = {  half_x, height,  half_z };
+    return mesh;
+}
+
+const char *const kBuiltinCubePath  = "__builtin_cube__";
+const char *const kBuiltinWallPath  = "__builtin_wall__";
+const char *const kBuiltinFloorPath = "__builtin_floor__";
+const char *const kBuiltinRampPath  = "__builtin_ramp__";
+
+const char *BuiltinPrimitiveDisplayName(const std::string &path)
+{
+    if (path == kBuiltinCubePath)  return "Cube";
+    if (path == kBuiltinWallPath)  return "Wall";
+    if (path == kBuiltinFloorPath) return "Floor";
+    if (path == kBuiltinRampPath)  return "Ramp";
+    return nullptr;
+}
+
 // --- .obj parsing ---
 
 namespace {
@@ -340,7 +472,23 @@ MeshLibrary::MeshLibrary()
 {
     Mesh cube = BuildCubeMesh();
     ComputeVertexNormals(cube);
-    m_meshes.emplace("__builtin_cube__", std::move(cube));
+    m_meshes.emplace(kBuiltinCubePath, std::move(cube));
+
+    // Block-out primitives: 4m-wide wall (3m tall, 0.3m thick), a 4x4m floor
+    // slab (0.2m thick), and a 4m-long, 2m-high, 3m-wide ramp. Generous but
+    // plain round numbers -- meant to be scaled per-instance via the
+    // transform, not precisely sized up front.
+    Mesh wall = BuildBoxMesh("Wall Primitive", 2.0f, 0.0f, 3.0f, 0.15f);
+    ComputeVertexNormals(wall);
+    m_meshes.emplace(kBuiltinWallPath, std::move(wall));
+
+    Mesh floor = BuildBoxMesh("Floor Primitive", 2.0f, 0.0f, 0.2f, 2.0f);
+    ComputeVertexNormals(floor);
+    m_meshes.emplace(kBuiltinFloorPath, std::move(floor));
+
+    Mesh ramp = BuildRampMesh(2.0f, 2.0f, 1.5f);
+    ComputeVertexNormals(ramp);
+    m_meshes.emplace(kBuiltinRampPath, std::move(ramp));
 }
 
 const Mesh* MeshLibrary::Load(const std::string &path, std::string *error)
@@ -382,7 +530,7 @@ const Mesh* MeshLibrary::GetOrLoad(const std::string &path, std::string *error)
 
 const Mesh* MeshLibrary::GetBuiltinCube() const
 {
-    return Get("__builtin_cube__");
+    return Get(kBuiltinCubePath);
 }
 
 size_t MeshLibrary::ResidentBytes() const

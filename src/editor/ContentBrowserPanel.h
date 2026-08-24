@@ -43,7 +43,10 @@ struct SDL_Renderer;
 // (drag payload "PREFAB"); mesh (.obj) assets drag onto the Hierarchy or the
 // viewport to spawn an entity (payload "MESH"); material (.mat) and image
 // assets drag onto the Inspector's Material section to assign them (payloads
-// "MATERIAL"/"TEXTURE").
+// "MATERIAL"/"TEXTURE"). Mesh and prefab items also have a "Place in Scene"
+// context menu entry (on_arm_placement) that arms the toolbar's Placement
+// Mode instead of a single drag: every viewport click after that spawns
+// another instance at the landscape/ground point under the cursor.
 class ContentBrowserPanel : public EditorPanel
 {
 public:
@@ -61,6 +64,12 @@ public:
     // Invoked when a scene asset is double-clicked. The Application wires this
     // to LoadSceneFile so m_scene_path / status / play-mode guard stay in sync.
     std::function<void(const std::string &)> on_load_scene;
+
+    // Invoked by a Mesh/Prefab item's "Place in Scene" context menu entry.
+    // The Application wires this to arm placement mode with the given asset
+    // (bool = is a prefab, vs. a bare mesh) so the next viewport click spawns
+    // it at the landscape/ground point under the cursor.
+    std::function<void(const std::string &path, bool is_prefab)> on_arm_placement;
 
     // Re-scan the assets tree and the current folder. Called after OS file
     // drops ingest new assets (Phase 23) so they appear without a manual
@@ -90,6 +99,11 @@ private:
     void DrawToolbar();
     void DrawFileGrid();
     void DrawFileList();
+    // Virtual "Primitives" folder (Cube/Wall/Floor/Ramp): not a real directory
+    // -- these never touch RefreshFiles()/the filesystem -- so it's a fully
+    // separate draw path rather than woven into DrawFileGrid/List, which
+    // assume every entry is a real path with rename/delete/duplicate.
+    void DrawPrimitivesFolder();
     void DrawCreateFolderRow();
     void DrawRenameRow();
     void DrawConfirmDeleteModal();
@@ -127,7 +141,7 @@ private:
     // Phase 31 view state: list-vs-grid layout, thumbnail size slider, live
     // search text, and the active category chip (All/Meshes/Materials/...).
     bool m_list_view = false;
-    float m_thumb_scale = 120.0f;                 // preview box size (px)
+    float m_thumb_scale = 64.0f;                  // preview box size (px)
     char m_search[64] = {};                      // substring filter on names
     AssetCatalog::AssetFilter m_filter = AssetCatalog::AssetFilter::All;
 

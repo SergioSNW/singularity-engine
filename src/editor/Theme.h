@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 struct ImFont;
 
 // UI theme and font pipeline for the editor. Centralizes the two things that
@@ -41,8 +43,8 @@ void LoadFonts(Fonts &fonts, float dpi_scale, float base_ui = 18.0f,
 // Everything else in the style (borders, hovers, tints, tabs, scrollbars) is
 // derived from these at ConfigureStyle time, so tweaking one token re-skins the
 // whole editor coherently. Stored as 0-1 RGBA floats (no ImGui dependency in
-// this header). Not persisted: the core colors are hardcoded and re-asserted
-// every frame.
+// this header). Live edits are saved to disk (see SaveColors) and reloaded on
+// the next launch, so customization survives a restart.
 struct Colors
 {
     float window_bg[4];      // main window / surface background
@@ -58,6 +60,23 @@ struct Colors
 
 // The engine's default palette (the warm charcoal + indigo scheme).
 const Colors &DefaultColors();
+
+// Default location for the persisted palette, relative to the working
+// directory the editor is launched from (matches the "assets/..." convention
+// used by LoadFonts).
+extern const char *const kColorsPath;
+
+// Write `colors` to `path` as JSON, creating parent directories as needed.
+// Returns false on I/O failure (path unwritable, etc.); the caller can
+// ignore the result since a failed save just means the palette won't survive
+// a restart, not a broken session.
+bool SaveColors(const Colors &colors, const std::string &path = kColorsPath);
+
+// Read a previously saved palette from `path` into `out`. Returns false (and
+// leaves `out` untouched) if the file doesn't exist or fails to parse, so
+// callers should seed `out` from DefaultColors() first and only overwrite it
+// on success.
+bool LoadColors(Colors &out, const std::string &path = kColorsPath);
 
 // Rebuild the ImGui style from scratch using `colors` and apply `ui_scale` to
 // every style metric. Rebuilding from `ImGuiStyle()` first keeps the palette

@@ -1,4 +1,5 @@
 #include "InspectorPanel.h"
+#include "UiText.h"
 #include "SelectionState.h"
 #include "Scene.h"
 #include "Entity.h"
@@ -482,7 +483,7 @@ void InspectorPanel::OnImGuiRender(float dt)
             }
             ImGui::EndDragDropTarget();
         }
-        ImGui::TextDisabled("Drag a .mat / image from the Content Browser to assign");
+        TextDisabledWrapped("Drag a .mat / image from the Content Browser to assign");
         ImGui::PopID();
     }
 
@@ -539,7 +540,7 @@ void InspectorPanel::OnImGuiRender(float dt)
                 entity->mesh.path.clear();
                 m_mesh_buffer[0] = '\0';
             });
-        ImGui::TextDisabled("OBJ assets under assets/meshes/; empty = cube primitive");
+        TextDisabledWrapped("OBJ assets under assets/meshes/; empty = cube primitive");
         ImGui::PopID();
     }
 
@@ -620,7 +621,7 @@ void InspectorPanel::OnImGuiRender(float dt)
             CommitEdit("Edit Collider Layers", [this, entity, layers]() {
                 entity->collider.layers = layers;
             });
-        ImGui::TextDisabled("Membership bits; toggle pairs in the Collision Matrix panel");
+        TextDisabledWrapped("Membership bits; toggle pairs in the Collision Matrix panel");
 
         // Phase 36 physics material: an optional .pmat asset (assets/physics/).
         // Empty = the library's Default material (friction 0.5, restitution 0.1).
@@ -693,7 +694,7 @@ void InspectorPanel::OnImGuiRender(float dt)
             }
         }
 
-        ImGui::TextDisabled("Solid blocks solids; Trigger is pass-through (events only)");
+        TextDisabledWrapped("Solid blocks solids; Trigger is pass-through (events only)");
         ImGui::PopID();
     }
 
@@ -881,7 +882,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         EndEditSessionIfReleased();
         ImGui::DragFloat("Shadow Distance##Light", &entity->light.shadow_distance, 0.5f, 0.0f, 500.0f);
         EndEditSessionIfReleased();
-        ImGui::TextDisabled("Light travels along 'Direction'; faces toward the source are lit");
+        TextDisabledWrapped("Light travels along 'Direction'; faces toward the source are lit");
         ImGui::PopID();
     }
 

@@ -825,6 +825,37 @@ static void RenderMeshWireframe(SDL_Renderer *renderer, const Mat4 &view_proj,
     }
 }
 
+// Translucent cyan wireframe preview of a not-yet-placed asset. Deliberately
+// a separate function from RenderMeshWireframe rather than an added
+// parameter on it: that one is shared by the opaque Wireframe render mode
+// and (elsewhere) selection outlines, and both need to stay hard-edged and
+// fully opaque. FillTri/DrawTriangles (the solid-fill path) has no alpha
+// channel at all -- SDL_Color there is hardcoded to 255 -- so a translucent
+// *filled* ghost isn't available without extending that pipeline; the line
+// path, in contrast, already goes through SDL_RenderDrawLine, which respects
+// SDL_SetRenderDrawColor's alpha and SDL_SetRenderDrawBlendMode directly, so
+// translucency here needs no pipeline changes at all.
+static void RenderGhostMesh(SDL_Renderer *renderer, const Mat4 &view_proj,
+                            float near_p, int w, int h, const Mat4 &world,
+                            const Mesh &mesh, int *draw_calls = nullptr)
+{
+    if (!renderer)
+        return;
+    SDL_BlendMode prev_mode = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(renderer, &prev_mode);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 80, 220, 255, 170);
+
+    for (size_t i = 0; i + 1 < mesh.edge_lines.size(); i += 2)
+    {
+        Vec3 a = Mat4TransformPoint(world, mesh.edge_lines[i]);
+        Vec3 b = Mat4TransformPoint(world, mesh.edge_lines[i + 1]);
+        DrawProjectedLine(renderer, view_proj, near_p, w, h, a, b, draw_calls);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, prev_mode);
+}
+
 static void DrawTriangles(SDL_Renderer *renderer, std::vector<FillTri> &tris, int w, int h,
                           int *draw_calls = nullptr)
 {
@@ -980,18 +1011,25 @@ void Application::RenderViewportTarget()
             // Phase 37 post-processing (bloom, tone map, color grade) runs on
             // the graded pixels but *before* the editor overlay, so selection
             // bounds and the gizmo stay crisp and ungraded.  Bypass entirely
-            // in lightweight modes (Unlit/Wireframe) or when bloom is off and
-            // every colour-grading parameter sits at its neutral default — the
-            // ~55 ms SDL_RenderReadPixels readback is not worth the cost.
+            // in lightweight modes (Unlit/Wireframe) or when the pass would be
+            // visually a no-op — the ~55 ms SDL_RenderReadPixels readback plus
+            // a full-resolution CPU grade is not worth paying for pixels that
+            // wouldn't change. Tolerance-based, not exact ==: a slider rarely
+            // lands on the bit-exact neutral value, so exact equality made
+            // this fast path effectively unreachable in practice.
             {
                 const bool lightweight =
                     m_overlay.render_mode != ViewportRenderMode::Lit;
+                constexpr float kEps = 0.01f;
+                const bool bloom_negligible =
+                    !m_environment.post_bloom_enabled ||
+                    m_environment.post_bloom_strength < kEps;
                 const bool grades_neutral =
-                    !m_environment.post_bloom_enabled &&
-                    m_environment.post_exposure  == 1.0f &&
-                    m_environment.post_saturation == 1.0f &&
-                    m_environment.post_contrast   == 1.0f &&
-                    m_environment.post_temperature == 0.0f;
+                    bloom_negligible &&
+                    std::fabs(m_environment.post_exposure  - 1.0f) < kEps &&
+                    std::fabs(m_environment.post_saturation - 1.0f) < kEps &&
+                    std::fabs(m_environment.post_contrast   - 1.0f) < kEps &&
+                    std::fabs(m_environment.post_temperature) < kEps;
                 if (m_environment.post_enabled && !lightweight && !grades_neutral)
                     m_fx.PostProcess(renderer, m_viewport_target, rx, ry, rw, rh,
                                      m_environment);
@@ -1000,6 +1038,8 @@ void Application::RenderViewportTarget()
             if (is_primary && m_state == EngineState::Editor && m_gizmo)
                 RenderEditorOverlay(renderer, view_proj, pose, near_p, rw, rh,
                                     m_draw_calls);
+            if (is_primary && m_state == EngineState::Editor)
+                RenderPlacementGhost(renderer, view_proj, near_p, rw, rh);
         }
     }
 
@@ -1314,6 +1354,42 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     }
 }
 
+void Application::RenderPlacementGhost(SDL_Renderer *renderer, const Mat4 &view_proj,
+                                       float near_p, int w, int h)
+{
+    if (!renderer || !m_mesh_library || !m_viewport || !m_viewport->IsHovered())
+        return;
+
+    // What to preview: an armed placement-mode asset, or -- peeked globally,
+    // not just inside a drop-target block -- a Content Browser drag
+    // currently in flight over the viewport. Prefabs are skipped: they can
+    // reference multiple entities/meshes, and a single-mesh ghost would be
+    // misleading, so no ghost beats a wrong one.
+    std::string mesh_path;
+    if (m_placement_mode && !m_placement_is_prefab && !m_placement_asset_path.empty())
+    {
+        mesh_path = m_placement_asset_path;
+    }
+    else if (const ImGuiPayload *payload = ImGui::GetDragDropPayload())
+    {
+        if (payload->IsDataType("MESH") && payload->Data)
+            mesh_path = static_cast<const char *>(payload->Data);
+    }
+    if (mesh_path.empty())
+        return;
+
+    const Mesh *mesh = m_mesh_library->GetOrLoad(mesh_path);
+    if (!mesh)
+        return;
+
+    Vec3 pos;
+    if (!ComputeDropWorldPosFromMouse(pos))
+        return;
+
+    const Mat4 world = Mat4Translate(pos.x, pos.y, pos.z);
+    RenderGhostMesh(renderer, view_proj, near_p, w, h, world, *mesh, &m_draw_calls);
+}
+
 Entity *Application::FindActiveCamera() const
 {
     if (!m_scene)
@@ -1593,8 +1669,8 @@ void Application::RenderMaterialPreview()
     {
         Vec3 fwd, right, up;
         CameraBasis(pose, fwd, right, up);
-        m_fx.DrawSky(renderer, m_environment, &pose.position.x,
-                     &fwd.x, &right.x, &up.x, pose.fov, 0, 0, w, h);
+        m_fx_preview.DrawSky(renderer, m_environment, &pose.position.x,
+                             &fwd.x, &right.x, &up.x, pose.fov, 0, 0, w, h);
     }
 
     // Active material: the working copy the Material Editor pushed live (the
@@ -1641,8 +1717,9 @@ void Application::RenderMaterialPreview()
     DrawTriangles(renderer, tris, w, h, &m_draw_calls);
 
     // Post-processing (bloom + grade + ACES + gamma LUT) like the viewport.
+    // Uses m_fx_preview, not m_fx -- see the member comment in Application.h.
     if (m_environment.post_enabled)
-        m_fx.PostProcess(renderer, m_material_preview, 0, 0, w, h, m_environment);
+        m_fx_preview.PostProcess(renderer, m_material_preview, 0, 0, w, h, m_environment);
 
     SDL_SetRenderTarget(renderer, nullptr);
 }
@@ -2311,6 +2388,59 @@ void Application::UpdateLandscapeBrush(const GizmoFrame &gf, float dt)
     }
 }
 
+void Application::UpdateAssetPlacement(const GizmoFrame &gf)
+{
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        m_placement_mode = false;
+        m_scene_status = "Placement mode cancelled";
+        return;
+    }
+    if (!m_scene || !m_selection || m_placement_asset_path.empty())
+        return;
+    if (!gf.hovered || gf.vp_width <= 1.0f || gf.vp_height <= 1.0f)
+        return;
+    // Only on the click transition, not every frame LMB happens to be down --
+    // this is a one-shot spawn per click, not a paint stroke.
+    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        return;
+
+    Vec3 pos{0.0f, 0.0f, 0.0f};
+    if (!ComputeDropWorldPos(gf.mouse_x, gf.mouse_y, gf.vp_width, gf.vp_height, pos))
+        return;
+
+    if (m_placement_is_prefab)
+    {
+        std::string error;
+        if (Entity *spawned = SceneSerializer::LoadPrefab(*m_scene, m_placement_asset_path, nullptr, &error))
+        {
+            spawned->transform.position[0] = pos.x;
+            spawned->transform.position[1] = pos.y;
+            spawned->transform.position[2] = pos.z;
+            if (m_history)
+                m_history->PushSpawn(*spawned,
+                    ("Place prefab '" + m_placement_asset_path + "'").c_str());
+            m_selection->entity_id = spawned->id;
+            m_selection->entity_name = spawned->tag.tag;
+            m_scene_status = "Placed prefab '" + m_placement_asset_path + "'";
+        }
+        else
+        {
+            m_scene_status = "Place failed: " + error;
+        }
+    }
+    else
+    {
+        SpawnMeshEntity(m_placement_asset_path, pos);
+    }
+    // Single-shot commit: the ghost preview showed exactly what was about to
+    // land, so the click is a deliberate "yes, here" rather than the start of
+    // a repeat-stamp stroke. Staying armed after a click that already landed
+    // made a second, unintended click (e.g. the release of a slightly-too-
+    // slow double-click) spawn a silent duplicate on top of the first.
+    m_placement_mode = false;
+}
+
 // --- Phase 35 animation & timeline foundation --------------------------------
 
 void Application::ApplyTimeline(float dt)
@@ -2586,19 +2716,32 @@ void Application::DeleteSelection()
     PushToast("Deleted '" + name + "'");
 }
 
-void Application::SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position)
+void Application::SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position,
+                                  const char *display_name)
 {
     if (!m_scene || mesh_path.empty())
         return;
 
-    // Display name = file stem, e.g. "assets/meshes/gear.obj" -> "gear".
-    const size_t slash = mesh_path.find_last_of('/');
-    const std::string leaf = (slash == std::string::npos)
-        ? mesh_path : mesh_path.substr(slash + 1);
-    std::string name = leaf;
-    const size_t dot = name.rfind('.');
-    if (dot != std::string::npos)
-        name = name.substr(0, dot);
+    std::string name;
+    if (display_name && *display_name)
+    {
+        name = display_name;
+    }
+    else if (const char *builtin_name = BuiltinPrimitiveDisplayName(mesh_path))
+    {
+        name = builtin_name;
+    }
+    else
+    {
+        // Display name = file stem, e.g. "assets/meshes/gear.obj" -> "gear".
+        const size_t slash = mesh_path.find_last_of('/');
+        const std::string leaf = (slash == std::string::npos)
+            ? mesh_path : mesh_path.substr(slash + 1);
+        name = leaf;
+        const size_t dot = name.rfind('.');
+        if (dot != std::string::npos)
+            name = name.substr(0, dot);
+    }
 
     Entity &created = m_scene->CreateEntity(name.empty() ? "Mesh" : name);
     created.mesh.path = mesh_path;
@@ -2641,6 +2784,40 @@ bool Application::ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h
                 Vec3Scale(up, ny * tan_half)),
         Vec3Scale(fwd, -1.0f)));
 
+    // Prefer the landscape surface under the cursor over the flat y=0 plane,
+    // so a dropped/placed asset lands on the terrain instead of floating
+    // above it or burying into it. Same ray-vs-heightfield test the sculpt
+    // brush already uses (UpdateLandscapeBrush); nearest hit wins if more
+    // than one landscape entity is in the scene.
+    if (m_scene)
+    {
+        bool found = false;
+        float best_t = 0.0f;
+        Vec3 best_hit{};
+        for (auto &e : m_scene->GetEntities())
+        {
+            if (!e->landscape.enabled)
+                continue;
+            const Mat4 world = m_scene->ComputeWorldMatrix(*e);
+            Vec3 hit;
+            float t;
+            if (LandscapeRaycast(e->landscape, world, cam_pos, dir, t, hit) &&
+                (!found || t < best_t))
+            {
+                found = true;
+                best_t = t;
+                best_hit = hit;
+            }
+        }
+        if (found)
+        {
+            out = best_hit;
+            return true;
+        }
+    }
+
+    // Fallback: flat y=0 grid plane (no landscape in the scene, or every one
+    // was missed by the ray).
     if (std::fabs(dir.y) < 1e-6f)
         return false;
     float t = (0.0f - cam_pos.y) / dir.y;
@@ -2789,8 +2966,16 @@ void Application::DrawStatusBar(float dt)
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
     ImGui::Begin("##StatusBar", nullptr, flags);
 
-    ImGui::TextColored(ImVec4(m_theme_colors.accent[0], m_theme_colors.accent[1],
-                              m_theme_colors.accent[2], m_theme_colors.accent[3]),
+    // Lightened rather than the raw accent: on the status bar's dark fill the
+    // plain accent read as too low-contrast to comfortably read (and a
+    // user-customized accent could be even darker), so blend it toward white
+    // instead of trusting the accent's own brightness.
+    const ImVec4 workspace_badge(
+        m_theme_colors.accent[0] + (1.0f - m_theme_colors.accent[0]) * 0.40f,
+        m_theme_colors.accent[1] + (1.0f - m_theme_colors.accent[1]) * 0.40f,
+        m_theme_colors.accent[2] + (1.0f - m_theme_colors.accent[2]) * 0.40f,
+        m_theme_colors.accent[3]);
+    ImGui::TextColored(workspace_badge,
                        "%s", WorkspaceManager::WorkspaceName(m_workspace_manager.GetWorkspace()));
     ImGui::SameLine();
     ImGui::TextDisabled("%s", m_scene_status.empty() ? "Ready" : m_scene_status.c_str());
@@ -3268,10 +3453,13 @@ bool Application::Init(int width, int height, const char *title)
     Theme::LoadFonts(m_fonts, m_dpi_scale);
     ImGui::GetIO().FontGlobalScale = 1.0f / m_dpi_scale;
 
-    // Start from the canonical matte slate-gray defaults, then apply the live
-    // theme state from the editor settings object so any session-customized
-    // colors remain in effect during startup and reapply cycles.
+    // Start from the canonical matte slate-gray defaults, then overlay a
+    // saved customization if one exists. Logged (not silent) so a palette
+    // that looks "stuck" after editing DefaultColors() in code is easy to
+    // trace back to config/theme.json instead of looking like a style bug.
     m_theme_colors = Theme::DefaultColors();
+    if (Theme::LoadColors(m_theme_colors))
+        ConsoleInfo("Theme: loaded custom palette from " + std::string(Theme::kColorsPath));
 
     Theme::ConfigureStyle(1.0f, m_theme_colors);
     ImGui_ImplSDL2_InitForSDLRenderer(
@@ -3383,9 +3571,9 @@ bool Application::Init(int width, int height, const char *title)
     octahedron.transform.scale[0] = 1.5f;
     octahedron.transform.scale[1] = 1.5f;
     octahedron.transform.scale[2] = 1.5f;
-    octahedron.material.color[0] = 0.95f;
-    octahedron.material.color[1] = 0.80f;
-    octahedron.material.color[2] = 0.40f;
+    octahedron.material.color[0] = 0.85f;
+    octahedron.material.color[1] = 0.65f;
+    octahedron.material.color[2] = 0.20f;
 
     // Demo gameplay script: spinning octahedron while in play mode. The file
     // is shipped under assets/scripts/ (copied next to the executable).
@@ -3396,18 +3584,18 @@ bool Application::Init(int width, int height, const char *title)
     icosahedron.transform.position[0] = 3.0f;
     icosahedron.transform.position[1] = 1.1f;
     icosahedron.transform.position[2] = 1.0f;
-    icosahedron.material.color[0] = 0.45f;
-    icosahedron.material.color[1] = 0.85f;
-    icosahedron.material.color[2] = 0.95f;
+    icosahedron.material.color[0] = 0.20f;
+    icosahedron.material.color[1] = 0.65f;
+    icosahedron.material.color[2] = 0.80f;
 
     Entity &pyramid = m_scene->CreateEntity("Pyramid");
     pyramid.mesh.path = "pyramid.obj";
     pyramid.transform.position[0] = -3.2f;
     pyramid.transform.position[1] = 0.75f;
     pyramid.transform.position[2] = 1.0f;
-    pyramid.material.color[0] = 0.85f;
-    pyramid.material.color[1] = 0.45f;
-    pyramid.material.color[2] = 0.80f;
+    pyramid.material.color[0] = 0.70f;
+    pyramid.material.color[1] = 0.25f;
+    pyramid.material.color[2] = 0.65f;
 
     // Phase 14 demo: the physics bridge. A solid Wall stops the script-driven
     // Bouncer (penetration-preventing separation), and a pass-through Trigger
@@ -3625,10 +3813,12 @@ bool Application::Init(int width, int height, const char *title)
     // Live theme customizer + grid snapping config + viewport navigation
     // tuning: owns no state itself — it edits Application's token set (and
     // SnapSettings / EditorCameraSettings) and asks for a ConfigureStyle
-    // re-apply on every theme change.
+    // re-apply plus a disk save on every theme change, so customization
+    // survives a restart (see Theme::kColorsPath).
     m_settings_panel = new SettingsPanel(&m_theme_colors, &m_snap, &m_camera_settings,
                                          [this]() {
         Theme::ConfigureStyle(m_ui_scale, m_theme_colors);
+        Theme::SaveColors(m_theme_colors);
     });
     m_panels.push_back(std::shared_ptr<SettingsPanel>(m_settings_panel));
 
@@ -3737,6 +3927,12 @@ bool Application::Init(int width, int height, const char *title)
                                                 m_material_library, m_texture_library,
                                                 m_window->GetNativeRenderer(), m_mesh_library);
     m_content_browser->on_load_scene = [this](const std::string &path) { LoadSceneFile(path); };
+    m_content_browser->on_arm_placement = [this](const std::string &path, bool is_prefab) {
+        m_placement_mode = true;
+        m_placement_asset_path = path;
+        m_placement_is_prefab = is_prefab;
+        m_scene_status = "Placement mode: click the viewport to place '" + path + "' (Esc to cancel)";
+    };
     m_panels.push_back(std::shared_ptr<ContentBrowserPanel>(m_content_browser));
     cp.Register({ "Toggle Content Browser", "View", "", [this]() {
         if (m_content_browser)
@@ -4140,6 +4336,45 @@ void Application::Run()
                         ImGui::SetTooltip(
                             "Toggle grid snapping. Hold Ctrl during a gizmo drag to "
                             "snap temporarily. Steps are set in Editor Settings.");
+                    ImGui::SameLine();
+
+                    // Placement mode toggle (see UpdateAssetPlacement). Armed by
+                    // a Content Browser item's "Place in Scene" context menu
+                    // entry, not from here -- this button is for turning an
+                    // active session off early, or resuming with the last
+                    // armed asset. Disabled (nothing to place yet) until
+                    // something has been armed at least once this session.
+                    std::string place_label = "Place";
+                    if (!m_placement_asset_path.empty())
+                    {
+                        if (const char *builtin_name = BuiltinPrimitiveDisplayName(m_placement_asset_path))
+                        {
+                            place_label = std::string("Place: ") + builtin_name;
+                        }
+                        else
+                        {
+                            const size_t slash = m_placement_asset_path.find_last_of('/');
+                            place_label = "Place: " + (slash == std::string::npos
+                                ? m_placement_asset_path : m_placement_asset_path.substr(slash + 1));
+                        }
+                    }
+                    if (m_placement_mode)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
+                    }
+                    ImGui::BeginDisabled(m_placement_asset_path.empty());
+                    if (ImGui::Button(place_label.c_str()))
+                        m_placement_mode = !m_placement_mode;
+                    ImGui::EndDisabled();
+                    if (m_placement_mode)
+                        ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(m_placement_mode
+                            ? "Click the viewport to place another copy. Esc or "
+                              "click here to stop."
+                            : "Right-click a mesh or prefab in the Content Browser "
+                              "and choose 'Place in Scene' to arm this.");
                     ImGui::SameLine();
                 }
 
@@ -4560,9 +4795,14 @@ void Application::Run()
 
                 // Phase 34 viewport override: in Landscape Mode the brush
                 // replaces the gizmo — the same mouse + camera context drives
-                // the terrain pick and paint strokes.
+                // the terrain pick and paint strokes. Placement mode is the
+                // same idea for spawning assets: a click places instead of
+                // selecting/dragging, so it also takes the gizmo's place
+                // rather than running alongside it.
                 if (IsLandscapeSculptMode())
                     UpdateLandscapeBrush(gf, (float)dt);
+                else if (m_placement_mode)
+                    UpdateAssetPlacement(gf);
                 else
                     m_gizmo->Update(gf);
             }
@@ -4667,6 +4907,7 @@ void Application::Shutdown()
     m_environment_panel = nullptr;
     m_profiler_panel = nullptr;
     m_fx.Destroy();
+    m_fx_preview.Destroy();
 
     // Tear the console pipes down before the window/SDL go away so no further
     // stdout traffic can target a closed pipe.

@@ -1,4 +1,5 @@
 #include "SettingsPanel.h"
+#include "UiText.h"
 
 #include <imgui.h>
 
@@ -54,7 +55,7 @@ void SettingsPanel::OnImGuiRender(float dt)
         return;
     }
 
-    ImGui::TextUnformatted("Locked slate-gray theme — the editor re-applies the canonical matte palette on each change.");
+    ImGui::TextWrapped("Matte slate-gray theme — edits below apply live and are saved to disk automatically.");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -84,7 +85,7 @@ void SettingsPanel::OnImGuiRender(float dt)
     if (ImGui::Button("Close"))
         m_visible = false;
 
-    ImGui::TextDisabled("Theme is hardcoded at startup and reasserted by the core style pass; changes are session-only and not persisted.");
+    TextDisabledWrapped("Saved to config/theme.json and reloaded on the next launch. Reset to Default also clears the saved file.");
 
     // --- Grid & Snapping (Phase 18) ---
     ImGui::Spacing();
@@ -99,7 +100,7 @@ void SettingsPanel::OnImGuiRender(float dt)
                      1.0f, 1.0f, 360.0f, "%.0f");
     ImGui::DragFloat("Scale step", &m_snap->scale,
                      0.05f, 0.01f, 10.0f, "%.2f");
-    ImGui::TextDisabled("Hold Ctrl during a gizmo drag to snap regardless of "
+    TextDisabledWrapped("Hold Ctrl during a gizmo drag to snap regardless of "
                         "the toggle. Steps are not persisted.");
 
     // --- Viewport navigation (Phase 25) ---
@@ -112,7 +113,7 @@ void SettingsPanel::OnImGuiRender(float dt)
                        1.0f, 40.0f, "%.1f");
     ImGui::SliderFloat("Rotation Sensitivity", &m_camera_settings->rotation_sensitivity,
                        0.05f, 1.0f, "%.2f");
-    ImGui::TextDisabled("Right-click in the viewport to fly: WASD to move, "
+    TextDisabledWrapped("Right-click in the viewport to fly: WASD to move, "
                         "QE to rise/lower, mouse to look. Settings are "
                         "session-only.");
 

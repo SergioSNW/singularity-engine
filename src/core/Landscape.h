@@ -2,8 +2,22 @@
 
 #include "EngineMath.h"
 
+#include <string>
+
 struct LandscapeComponent;
 struct Mat4;
+
+// Grid resolution LandscapeLoadHeightmap will build a heightmap up to,
+// independent of the source image's native pixel size. This bounds more than
+// the one-time import cost: LandscapeRebuildMesh reruns every single frame
+// while the user is actively sculpting (LandscapeSculpt sets mesh_dirty on
+// every stroke tick, by design, for live feedback), so the resolution here
+// caps the worst-case *per-frame* CPU cost, not just a one-shot load. 128 is
+// 4x the historical default (64) in cell count -- enough headroom to look
+// meaningfully more detailed without turning every sculpt stroke into a
+// multi-frame stall. Raise with real profiling data, not by feel.
+constexpr int kMaxHeightmapResolution = 128;
+constexpr int kMinHeightmapResolution = 4;
 
 // Phase 34 landscape & topology design suite: procedural heightfield terrain
 // with live sculpting. The LandscapeComponent owns the height grid + the
@@ -35,6 +49,20 @@ struct LandscapeBrushSettings
 
 // Fill `heights` with `base_height`, sized for `resolution`.
 void LandscapeInitialize(LandscapeComponent &landscape);
+
+// Load a grayscale-intensity heightmap image (any format stb_image supports)
+// from `path` and rebuild `landscape` from it: the image is bilinearly
+// resampled onto a (target_resolution+1)^2 grid -- independent of the source
+// image's native size, and clamped to [kMinHeightmapResolution,
+// kMaxHeightmapResolution] -- so a huge source texture still yields a grid
+// the rasterizer can handle. Each vertex's height is
+// `base_height + luminance * heightmap_scale`. Also rebuilds `landscape.mesh`
+// (with smooth normals) so it is ready to render immediately. On success,
+// sets `landscape.heightmap_path` to `path` and `landscape.resolution` to the
+// clamped target. Returns false and fills `error` on failure (file not
+// found, decode failure), leaving `landscape` unchanged.
+bool LandscapeLoadHeightmap(LandscapeComponent &landscape, const std::string &path,
+                            int target_resolution, std::string *error = nullptr);
 
 // Rebuild `landscape.mesh` from `heights`: a triangle-soup grid (winding faces
 // +Y), a sparse wireframe and the local AABB. Sets mesh_dirty = false.

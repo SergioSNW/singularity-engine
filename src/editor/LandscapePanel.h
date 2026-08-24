@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include <functional>
+#include <string>
 
 class Scene;
 struct SelectionState;
@@ -33,4 +34,12 @@ private:
     LandscapeBrushSettings *m_brush;
     std::function<void()> m_on_create_landscape;
     bool m_visible = true;
+
+    // Phase A heightmap import staging: the chosen source image and target
+    // grid resolution are edited here before the user commits with "Load
+    // Heightmap" (which is what actually touches the target entity), plus a
+    // one-line status/error readout from the last attempt.
+    std::string m_heightmap_pending_path;
+    int m_heightmap_target_resolution = 64;  // matches the historical sculpt-terrain default
+    std::string m_heightmap_status;
 };

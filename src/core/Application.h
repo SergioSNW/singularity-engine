@@ -124,6 +124,14 @@ private:
     void RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_proj,
                              const EditorCamera &pose, float near_p, int w, int h,
                              int &draw_calls);
+
+    // Placement-mode / drag-drop ghost preview: a translucent cyan wireframe
+    // of whatever mesh is about to be placed (armed via placement mode, or
+    // being dragged from the Content Browser), tracking the landscape/ground
+    // raycast hit under the mouse every frame. See UpdateAssetPlacement for
+    // the click-to-commit half of this workflow.
+    void RenderPlacementGhost(SDL_Renderer *renderer, const Mat4 &view_proj,
+                              float near_p, int w, int h);
     bool CaptureSceneCamera(Entity &camera_entity, EditorCamera &out);
     bool ResolveCameraPose(const CameraEntry &entry, EditorCamera &out);
     bool BuildViewProjFromPose(const EditorCamera &pose, float near_p,
@@ -184,6 +192,14 @@ private:
     bool IsLandscapeSculptMode() const;
     void UpdateLandscapeBrush(const GizmoFrame &gf, float dt);
 
+    // Asset placement mode: a modal alternative to the gizmo (like landscape
+    // sculpting) for spawning many copies of one asset quickly. Armed via the
+    // Content Browser's "Place in Scene" context menu item, which sets the
+    // pending asset and turns the mode on; toggled off from the toolbar or
+    // Escape. While active, a viewport click spawns the armed mesh/prefab at
+    // the raycast hit point (landscape surface, or the y=0 plane if none).
+    void UpdateAssetPlacement(const GizmoFrame &gf);
+
     // Phase 35 animation & timeline foundation:
     //   ApplyTimeline        - editor Update stage: advance the global clock
     //                          (wrap/clamp per Loop) and write the sampled pose
@@ -231,7 +247,11 @@ private:
     //                            plane (same ray math as the gizmo controller).
     //   ComputeDropWorldPosFromMouse - convenience: drop pos from GetMousePos.
     void ProcessExternalDrops();
-    void SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position);
+    // `display_name`, when non-null, overrides the tag derived from the mesh
+    // path's filename -- used for builtin primitives ("__builtin_wall__"
+    // would otherwise become the entity's literal tag).
+    void SpawnMeshEntity(const std::string &mesh_path, const Vec3 &position,
+                         const char *display_name = nullptr);
     bool ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h, Vec3 &out);
     bool ComputeDropWorldPosFromMouse(Vec3 &out);
 
@@ -355,8 +375,17 @@ private:
     // Phase 37 environment stack: the global settings (sky/fog/post) that the
     // EnvironmentFX pass consumes every frame. m_fx owns all of its SDL
     // textures/buffers and caches the sky + LUT across frames.
+    //
+    // m_fx serves the main viewport; m_fx_preview serves the Material
+    // Preview panel. They must NOT share one instance: EnvironmentFX caches
+    // its buffers by region size, and the preview's region is a different
+    // size from the viewport's. A shared instance would destroy/recreate its
+    // (now full-resolution, since post_scale only sizes bloom) work texture
+    // and buffers every single frame whenever both are visible in the same
+    // workspace -- exactly what "Shading & Assets" does by design.
     EnvironmentSettings m_environment;
     EnvironmentFX m_fx;
+    EnvironmentFX m_fx_preview;
     std::string m_environment_asset_path;
 
     // Editor grid-snapping configuration (Phase 18): steps for the translate/
@@ -416,6 +445,12 @@ private:
     bool m_landscape_brush_valid = false;
     Vec3 m_landscape_brush_center{0.0f, 0.0f, 0.0f};
     bool m_landscape_sculpting = false;
+
+    // Asset placement mode (see UpdateAssetPlacement): the armed asset and
+    // whether it's a prefab (LoadPrefab) or a bare mesh (SpawnMeshEntity).
+    bool m_placement_mode = false;
+    std::string m_placement_asset_path;
+    bool m_placement_is_prefab = false;
 
     // Phase 35 animation & timeline foundation: the Application-owned global
     // timeline clock + the bridge the Timeline panel and the Inspector's

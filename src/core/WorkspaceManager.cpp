@@ -108,7 +108,10 @@ void WorkspaceManager::RebuildLayout()
         case Workspace::Scripting:
         {
             // Scripting workspace: split into two columns.  Left column 65%
-            // width holds Script Editor (top 75%) above Console (bottom 25%).
+            // width holds Script Editor (top 75%) above Content Browser +
+            // Console tabbed together (bottom 25%) -- the class doc promises
+            // "the whole IDE is part of the unified dock", which needs the
+            // Content Browser docked here too, not left floating.
             // Right column 35% holds the Viewport.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.65f, &left, &right);
 
@@ -116,6 +119,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.25f, &console_bot, &ide_top);
 
             ImGui::DockBuilderDockWindow(kScriptEditorWindow, ide_top);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, console_bot);
             ImGui::DockBuilderDockWindow(kConsoleWindow, console_bot);
             ImGui::DockBuilderDockWindow(kViewportWindow, right);
 
@@ -124,24 +128,29 @@ void WorkspaceManager::RebuildLayout()
         }
         case Workspace::ShadingAndAssets:
         {
-            // Shading & Assets workspace: three-column layout.  Left column
-            // holds the Material Preview (top) and Content Browser (bottom).
-            // Center is the Viewport for inspecting shaded geometry.  Right
-            // column holds the Material Editor (top) and Environment panel
-            // (bottom).
-            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.20f, &left, &center);
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, &right, &center);
-
-            ImGuiID left_top, left_bot;
-            ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.45f, &left_bot, &left_top);
+            // Shading & Assets workspace: Content Browser is a full-width
+            // bottom strip -- its grid of thumbnail cards reads best wide,
+            // not squeezed into a narrow side column. Above that, three
+            // columns: Material Preview (left), Viewport (center), and a
+            // 20%-wide right rail. The right rail is vertically stacked
+            // top/bottom (Material Editor + Inspector + Editor Settings over
+            // Environment + Console + Stats), each group keeping its own
+            // real vertical room instead of being flattened into one tab
+            // strip.
+            ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Down, 0.25f, &bottom, &top);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.20f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
 
             ImGuiID right_top, right_bot;
             ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.55f, &right_bot, &right_top);
 
-            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, left_top);
-            ImGui::DockBuilderDockWindow(kContentBrowserWindow, left_bot);
+            ImGui::DockBuilderDockWindow(kMaterialPreviewWindow, left);
+            ImGui::DockBuilderDockWindow(kContentBrowserWindow, bottom);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            dock_right_rail(right_top);
             ImGui::DockBuilderDockWindow(kMaterialEditorWindow, right_top);
+            ImGui::DockBuilderDockWindow(kStatsWindow, right_bot);
+            ImGui::DockBuilderDockWindow(kConsoleWindow, right_bot);
             ImGui::DockBuilderDockWindow(kEnvironmentWindow, right_bot);
             break;
         }
@@ -173,9 +182,12 @@ void WorkspaceManager::RebuildLayout()
         {
             // Landscape Mode: terrain-authoring workspace.  The left rail
             // holds the Hierarchy (top) and Landscape brush/tools (bottom).
-            // The Viewport fills the entire center+right area for maximum
-            // sculpting room.
+            // The right rail tabs Inspector over Editor Settings -- previously
+            // absent from this workspace entirely, leaving no way to inspect
+            // the selected entity while sculpting.  The Viewport still gets
+            // the bulk of the width for sculpting room.
             ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left, 0.20f, &left, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.20f, &right, &center);
 
             ImGuiID left_top, left_bot;
             ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.50f, &left_bot, &left_top);
@@ -183,6 +195,7 @@ void WorkspaceManager::RebuildLayout()
             ImGui::DockBuilderDockWindow(kHierarchyWindow, left_top);
             ImGui::DockBuilderDockWindow(kLandscapeWindow, left_bot);
             ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            dock_right_rail(right);
             m_code_window_node = 0;
             break;
         }

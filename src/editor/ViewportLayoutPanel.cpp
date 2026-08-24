@@ -1,4 +1,5 @@
 #include "ViewportLayoutPanel.h"
+#include "UiText.h"
 
 #include "core/CameraManager.h"
 
@@ -24,9 +25,9 @@ void ViewportLayoutPanel::OnImGuiRender(float dt)
         return;
     }
 
-    ImGui::TextDisabled("Camera stack: each entry renders the scene into its "
+    TextDisabledWrapped("Camera stack: each entry renders the scene into its "
                         "own viewport region (higher z on top).");
-    ImGui::TextDisabled("Exactly one entry is primary: it owns editor picking, "
+    TextDisabledWrapped("Exactly one entry is primary: it owns editor picking, "
                         "gizmos and asset drops.");
     ImGui::Separator();
 

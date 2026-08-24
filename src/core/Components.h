@@ -127,7 +127,7 @@ struct DirectionalLightComponent
 {
     bool    active = false;
     float   color[3] = { 1.0f, 1.0f, 1.0f };
-    float   intensity = 0.85f;
+    float   intensity = 0.75f;
     float   direction[3] = { 0.4f, -0.8f, -0.45f };
     float   ambient = 0.10f;
     float   shadow_strength = 0.6f;
@@ -154,4 +154,12 @@ struct LandscapeComponent
     std::vector<float> colors;     // (resolution+1)^2 * 3 row-major RGB; painted vertex colors
     std::shared_ptr<Mesh> mesh;    // generated geometry (null until built)
     bool mesh_dirty = true;        // rebuild `mesh` from `heights`
+
+    // Phase A heightmap import: `heights` above can come from an image
+    // instead of sculpting. Kept as plain state (not a one-shot action) so
+    // the Landscape panel can show what's currently loaded and re-import at
+    // a different scale/resolution. Empty path = heights are hand-sculpted
+    // or procedural, not image-derived.
+    std::string heightmap_path;
+    float heightmap_scale = 5.0f;  // world-unit height multiplier for the loaded heightmap
 };

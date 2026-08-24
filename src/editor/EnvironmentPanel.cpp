@@ -1,4 +1,5 @@
 #include "EnvironmentPanel.h"
+#include "UiText.h"
 
 #include "core/Environment.h"
 
@@ -37,7 +38,7 @@ void EnvironmentPanel::OnImGuiRender(float dt)
 
     ImGui::Begin("Environment & Shading", &m_visible, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::TextDisabled("Global sky, fog and post-processing (not part of undo).");
+    TextDisabledWrapped("Global sky, fog and post-processing (not part of undo).");
     ImGui::Spacing();
 
     if (ImGui::Button("Reload"))
@@ -94,16 +95,21 @@ void EnvironmentPanel::OnImGuiRender(float dt)
     if (ImGui::CollapsingHeader("Post-Processing", ImGuiTreeNodeFlags_DefaultOpen))
     {
         DrawSectionHeader("Enable Post", &m_settings->post_enabled);
+        if (!m_settings->post_enabled)
+            TextDisabledWrapped("Off by default: this is a CPU readback + full-res "
+                                "grade, not a free GPU effect -- expect a real frame "
+                                "cost when you turn it on.");
         if (m_settings->post_enabled)
         {
-            DrawSlider("Working Scale", &m_settings->post_scale, 0.1f, 1.0f, "%.2f");
-            ImGui::Separator();
             DrawSectionHeader("Bloom", &m_settings->post_bloom_enabled);
             if (m_settings->post_bloom_enabled)
             {
                 DrawSlider("Threshold", &m_settings->post_bloom_threshold, 0.0f, 2.0f);
                 DrawSlider("Strength", &m_settings->post_bloom_strength, 0.0f, 2.0f);
                 DrawSlider("Radius", &m_settings->post_bloom_radius, 1.0f, 4.0f);
+                DrawSlider("Bloom Scale", &m_settings->post_scale, 0.1f, 1.0f, "%.2f");
+                TextDisabledWrapped("Lower = cheaper, softer bloom. The rest of "
+                                    "the image always renders at full resolution.");
             }
             ImGui::Separator();
             DrawSectionHeader("Tone Mapping", &m_settings->post_tonemap_enabled);

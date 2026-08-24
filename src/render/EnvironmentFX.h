@@ -20,13 +20,19 @@ struct SDL_Texture;
 // the camera basis (position/fwd/fov), the region size, or the sky settings
 // change; otherwise the cached texture is blitted as-is (cheap).
 //
-// Post: reads an RGBA8888 render target (or a sub-rect of it) at the working
-// resolution = region * post_scale, runs bloom (threshold -> half-res gaussian
-// blur -> additive, sampled nearest) then exposure / temperature / saturation /
-// contrast / ACES / gamma-LUT, writes the result to a streaming work texture,
-// and blits it back over the region. Only cost when enabled and when the
-// pixels actually changed (we do not know that here, so it runs every frame —
-// but never more than once per region per frame).
+// Post: reads an RGBA8888 render target (or a sub-rect of it) at full source
+// resolution, runs bloom on a separate, smaller buffer (threshold -> gaussian
+// blur -> bilinear-sampled additive composite) sized by post_scale, then
+// applies exposure / temperature / saturation / contrast / ACES / gamma-LUT
+// grading to every full-resolution pixel, writes the result to a streaming
+// work texture, and blits it back over the region at 1:1. post_scale only
+// controls bloom's internal resolution (cheap to shrink -- bloom is meant to
+// look soft) so it trades bloom cost/fidelity for FPS without softening the
+// rest of the image; it used to scale the whole pipeline's resolution,
+// which is why turning it down used to blur the entire scene. Only cost
+// when enabled and when the pixels actually changed (we do not know that
+// here, so it runs every frame — but never more than once per region per
+// frame).
 class EnvironmentFX
 {
 public:
@@ -76,14 +82,16 @@ private:
     std::vector<uint32_t> m_sky_pixels;
 
     // --- post ---
-    SDL_Texture *m_work = nullptr;   // streaming working-res texture
+    SDL_Texture *m_work = nullptr;   // streaming full-res work texture
     int m_work_w = 0;
     int m_work_h = 0;
     uint64_t m_work_sig = 0;
-    std::vector<float>  m_lin;       // working-res scene RGB floats
-    std::vector<float>  m_bloom;     // half-res blurred bright pass
-    std::vector<float>  m_tmp;       // blur scratch (half res)
-    std::vector<uint32_t> m_out;     // working-res RGBA output
+    std::vector<float>  m_lin;       // full-res scene RGB floats
+    std::vector<float>  m_bloom;     // post_scale-sized blurred bright pass
+    std::vector<float>  m_tmp;       // blur scratch (same size as m_bloom)
+    std::vector<uint32_t> m_out;     // full-res RGBA output
+    int m_bloom_w = 0;               // bloom buffer dims -- resized independently
+    int m_bloom_h = 0;               // of m_work since post_scale no longer affects it
     uint8_t m_lut[4096];             // tonemap + gamma lookup
     uint8_t m_lut_tonemap = 0xFF;    // cache: rebuilt when gamma/tonemap change
     float   m_lut_gamma = -1.0f;

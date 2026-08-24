@@ -4,8 +4,39 @@
 #include "core/Landscape.h"
 #include "core/Scene.h"
 #include "SelectionState.h"
+#include "editor/Theme.h"
+#include "editor/UiText.h"
 
+#include <algorithm>
+#include <filesystem>
 #include <utility>
+
+namespace
+{
+
+// Image assets under assets/textures/ (BMP/PNG/JPG/...) -- heightmaps are
+// grayscale-intensity images, so they live alongside regular textures rather
+// than needing their own asset folder. Matches MaterialPanel's
+// ListTextureAssets() convention.
+std::vector<std::string> ListHeightmapAssets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("assets/textures", ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::string path = entry.path().filename().string();
+        const std::string ext = (path.size() > 4) ? path.substr(path.size() - 4) : std::string();
+        if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".tga" || ext == ".gif")
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+} // namespace
 
 LandscapePanel::LandscapePanel(Scene *scene, SelectionState *selection,
                                LandscapeBrushSettings *brush,
@@ -96,6 +127,61 @@ void LandscapePanel::OnImGuiRender(float dt)
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Create another landscape terrain");
+
+    ImGui::Separator();
+
+    // --- Heightmap import (Phase A) --------------------------------------
+    // Collapsed by default so the panel stays minimal when you're just
+    // sculpting -- most sessions won't touch this every time.
+    if (target && ImGui::CollapsingHeader("Heightmap"))
+    {
+        ImGui::PushID("heightmap");
+
+        const char *preview = m_heightmap_pending_path.empty()
+            ? "Select image..." : m_heightmap_pending_path.c_str();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##source", preview))
+        {
+            const std::vector<std::string> images = ListHeightmapAssets();
+            if (images.empty())
+                ImGui::TextDisabled("No images in assets/textures/");
+            for (const std::string &img : images)
+            {
+                const bool selected = (img == m_heightmap_pending_path);
+                if (ImGui::Selectable(img.c_str(), selected))
+                    m_heightmap_pending_path = img;
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::SliderFloat("Scale", &target->landscape.heightmap_scale, 0.1f, 50.0f, "%.1f");
+        ImGui::SliderInt("Resolution", &m_heightmap_target_resolution,
+                         kMinHeightmapResolution, kMaxHeightmapResolution);
+
+        const bool can_load = !m_heightmap_pending_path.empty();
+        ImGui::BeginDisabled(!can_load);
+        Theme::PushPrimaryButtonColor();
+        if (ImGui::Button("Load Heightmap", ImVec2(-1.0f, 0.0f)))
+        {
+            std::string load_error;
+            if (LandscapeLoadHeightmap(target->landscape, m_heightmap_pending_path,
+                                       m_heightmap_target_resolution, &load_error))
+                m_heightmap_status = "Loaded " + m_heightmap_pending_path + " (" +
+                                     std::to_string(m_heightmap_target_resolution + 1) + "x" +
+                                     std::to_string(m_heightmap_target_resolution + 1) + ")";
+            else
+                m_heightmap_status = load_error;
+        }
+        Theme::PopPrimaryButtonColor();
+        ImGui::EndDisabled();
+
+        if (!target->landscape.heightmap_path.empty())
+            ImGui::TextDisabled("Current: %s", target->landscape.heightmap_path.c_str());
+        if (!m_heightmap_status.empty())
+            TextDisabledWrapped(m_heightmap_status.c_str());
+
+        ImGui::PopID();
+    }
 
     ImGui::Separator();
 

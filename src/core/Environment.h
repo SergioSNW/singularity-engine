@@ -22,20 +22,23 @@
 //   max(camY - worldY, 0))). Density grows below the camera height and decays
 //   above it, so valleys fill with haze while hilltops stay clear.
 // Post — a CPU post-processing chain run on the final viewport pixels:
-//   bloom (thresholded bright pass, gaussian-blurred at half working res, added
-//   back scaled by strength), then exposure + temperature + saturation +
-//   contrast, an ACES filmic tone map, and output gamma. Everything runs at an
-//   internal working resolution = target * post_scale (post_scale is the AA/
-//   thermal knob: 0.5 = half of the supersampled target).
+//   bloom (thresholded bright pass, gaussian-blurred on a buffer sized by
+//   post_scale, bilinear-sampled back and added scaled by strength), then
+//   exposure + temperature + saturation + contrast, an ACES filmic tone map,
+//   and output gamma applied to every full-resolution pixel. post_scale only
+//   sizes the bloom buffer (cheap to shrink -- bloom is meant to look soft)
+//   so it trades bloom cost/fidelity for frame time without softening the
+//   rest of the image; it used to scale the whole post pipeline's working
+//   resolution, which blurred the entire viewport at low settings.
 struct EnvironmentSettings
 {
     // --- Sky ---
     bool sky_enabled = true;
     float sky_color_top[3] = { 0.06f, 0.12f, 0.28f };      // zenith stop (dark moody blue)
-    float sky_color_horizon[3] = { 0.35f, 0.40f, 0.48f };  // horizon stop (slate-gray)
+    float sky_color_horizon[3] = { 0.22f, 0.25f, 0.32f };  // horizon stop (slate-gray)
     float sky_sun_color[3] = { 1.0f, 0.93f, 0.82f };
-    float sky_sun_intensity = 0.9f;
-    float sky_sun_glow = 0.38f;     // glow radius (fraction of the shorter axis)
+    float sky_sun_intensity = 0.65f;
+    float sky_sun_glow = 0.22f;     // glow radius (fraction of the shorter axis)
     float sky_sun_disk = 0.012f;    // bright disk radius (same units)
     float sky_sun_yaw = 35.0f;      // sun direction heading (degrees)
     float sky_sun_pitch = 42.0f;    // sun direction elevation (degrees)
@@ -43,24 +46,32 @@ struct EnvironmentSettings
 
     // --- Fog ---
     bool fog_enabled = true;
-    float fog_color[3] = { 0.35f, 0.40f, 0.48f };
+    float fog_color[3] = { 0.22f, 0.25f, 0.32f };
     float fog_density = 0.012f;     // 1/world-unit base extinction
     float fog_height_falloff = 0.08f;// exponential density falloff with height
     float fog_start = 5.0f;         // distance at which fog begins
 
     // --- Post-processing ---
-    bool post_enabled = true;
+    // Off by default: this is a CPU software-rasterizer readback pass
+    // (SDL_RenderReadPixels + a full-resolution per-pixel grade), not a free
+    // GPU post effect. It costs ~200ms/frame even with tuned "reasonable"
+    // values, which tanks the editor to 3-5 FPS in every workspace since
+    // Lit mode is the default render mode everywhere. Bloom/grading are an
+    // opt-in polish layer now, not an always-on tax -- flip "Enable Post" in
+    // the Environment & Shading panel when you actually want them and are
+    // willing to pay for them.
+    bool post_enabled = false;
     float post_exposure = 1.0f;
     float post_gamma = 2.2f;        // output gamma (display curve)
     bool post_bloom_enabled = true;
     float post_bloom_threshold = 0.92f;  // luminance above which pixels bloom
-    float post_bloom_strength = 0.2f;    // additive gain of the blurred pass
+    float post_bloom_strength = 0.12f;   // additive gain of the blurred pass
     float post_bloom_radius = 2.0f;      // gaussian blur radius (1..4)
     bool post_tonemap_enabled = true;    // ACES filmic tone map
     float post_saturation = 1.0f;        // 0 = grayscale, 2 = vivid
-    float post_contrast = 1.05f;         // pivot 0.5
+    float post_contrast = 1.10f;         // pivot 0.5
     float post_temperature = 0.0f;       // -1 cool (blue) .. +1 warm (orange)
-    float post_scale = 0.5f;             // working res fraction of the target
+    float post_scale = 1.0f;             // bloom buffer resolution fraction (output stays full-res)
 };
 
 // Serialize to / from the .env JSON layout described above.

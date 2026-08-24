@@ -21,12 +21,14 @@
 //                        sidebar, tab bar and code pane in a single window)
 //                        beside the Content Browser + Console tabs, so the
 //                        whole IDE is part of the unified dock.
-//   * ShadingAndAssets — an asset/material workspace: the Material Editor is
-//                        the primary right-rail authoring zone, with Inspector
-//                        + Editor Settings + Content Browser tabbed beneath it
-//                        and a bottom Console + Stats tab group, maximizing the
-//                        viewport for inspecting shaded geometry. The Script
-//                        Editor stays free-floating here.
+//   * ShadingAndAssets — an asset/material workspace: the Content Browser is
+//                        a full-width strip along the bottom (its card grid
+//                        reads best wide). Above it, Material Preview owns
+//                        the left column, the Viewport is center-stage, and a
+//                        20%-wide right rail stacks Material Editor + the
+//                        Inspector + Editor Settings over Environment &
+//                        Shading + Console + Stats. The Script Editor stays
+//                        free-floating here.
 //   * Landscape        — a terrain-authoring workspace: the Landscape panel
 //                        owns the right rail (brush + tool palette) with the
 //                        Inspector + Editor Settings tabbed beneath it, and the
