@@ -2378,7 +2378,8 @@ void Application::UpdateLandscapeBrush(const GizmoFrame &gf, float dt)
                         m_landscape_brush.radius / std::max(scale, 1e-6f),
                         m_landscape_brush.strength * dt,
                         m_landscape_brush.falloff,
-                        m_landscape_brush.paint_color);
+                        m_landscape_brush.paint_color,
+                        m_landscape_brush.falloff_profile);
     }
     if (!lmb && m_landscape_sculpting)
     {
@@ -2439,6 +2440,117 @@ void Application::UpdateAssetPlacement(const GizmoFrame &gf)
     // made a second, unintended click (e.g. the release of a slightly-too-
     // slow double-click) spawn a silent duplicate on top of the first.
     m_placement_mode = false;
+}
+
+void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
+{
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        m_paint_mode = false;
+        if (m_painting_stroke && m_history)
+            m_history->EndEntityEdit();
+        m_painting_stroke = false;
+        m_paint_stroke_target = -1;
+        return;
+    }
+
+    const bool lmb = gf.hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    const bool ready = m_scene && gf.hovered && gf.vp_width > 1.0f && gf.vp_height > 1.0f && lmb;
+    if (!ready)
+    {
+        // Mouse released, or drifted off the viewport mid-drag: close any
+        // open transaction rather than leave it dangling until the next
+        // stroke starts (same discipline as UpdateLandscapeBrush).
+        if (m_painting_stroke)
+        {
+            m_painting_stroke = false;
+            m_paint_stroke_target = -1;
+            if (m_history)
+                m_history->EndEntityEdit();
+        }
+        return;
+    }
+
+    // Same camera-basis ray as UpdateLandscapeBrush/ComputeDropWorldPos.
+    const float PI = 3.1415926535f;
+    const float nx = (2.0f * gf.mouse_x / gf.vp_width - 1.0f);
+    const float ny = (1.0f - 2.0f * gf.mouse_y / gf.vp_height);
+    const float tan_half = std::tan(gf.cam_fov * PI / 360.0f);
+    const float aspect = gf.vp_width / gf.vp_height;
+    const float p = gf.cam_pitch * PI / 180.0f;
+    const float y = gf.cam_yaw * PI / 180.0f;
+    const float sp = std::sin(p), cp = std::cos(p);
+    const float sy = std::sin(y), cy = std::cos(y);
+    const Vec3 right{ cy, 0.0f, -sy };
+    const Vec3 up{ sp * sy, cp, sp * cy };
+    const Vec3 fwd{ cp * sy, -sp, cp * cy };
+    const Vec3 dir = Vec3Normalize(Vec3Add(
+        Vec3Add(Vec3Scale(right, nx * tan_half * aspect),
+                Vec3Scale(up, ny * tan_half)),
+        Vec3Scale(fwd, -1.0f)));
+
+    const int preset_index = std::clamp(m_paint_material_index, 0, kLandscapePaintPaletteCount - 1);
+    const PaintMaterialPreset &preset = kLandscapePaintPalette[preset_index];
+
+    // Landscape surface first: a continuous per-vertex blend, same as the
+    // Landscape panel's own Paint tool, reusing its radius/strength/falloff
+    // so the two paint entry points feel identical when aimed at terrain.
+    Vec3 hit;
+    if (Entity *land = RaycastAnyLandscape(gf.cam_pos, dir, hit))
+    {
+        if (m_paint_stroke_target != land->id)
+        {
+            if (m_painting_stroke && m_history)
+                m_history->EndEntityEdit();
+            m_painting_stroke = true;
+            m_paint_stroke_target = land->id;
+            if (m_history)
+                m_history->BeginEntityEdit(land->id, "Paint Landscape");
+        }
+        const Mat4 world = m_scene->ComputeWorldMatrix(*land);
+        const Vec3 local = LandscapeWorldToLocal(world, hit);
+        const float scale = LandscapeWorldScale(world);
+        LandscapeSculpt(land->landscape, SculptTool::Paint, local,
+                        m_landscape_brush.radius / std::max(scale, 1e-6f),
+                        m_landscape_brush.strength * dt,
+                        m_landscape_brush.falloff, preset.color,
+                        m_landscape_brush.falloff_profile);
+        m_scene_status = std::string("Painting '") + land->tag.tag + "' with " + preset.name;
+        return;
+    }
+
+    // Otherwise a regular entity (Wall/Floor/Ramp/...): a discrete material
+    // swap, not a blend, so it only needs to happen once per entity per
+    // stroke -- re-touching the same entity while still held is a no-op.
+    if (Entity *ent = RaycastAnyEntity(gf.cam_pos, dir, GetPrimarySkipEntity()))
+    {
+        if (m_paint_stroke_target != ent->id)
+        {
+            if (m_painting_stroke && m_history)
+                m_history->EndEntityEdit();
+            m_painting_stroke = true;
+            m_paint_stroke_target = ent->id;
+            if (m_history)
+                m_history->BeginEntityEdit(ent->id, "Paint Material");
+            ent->material.color[0] = preset.color[0];
+            ent->material.color[1] = preset.color[1];
+            ent->material.color[2] = preset.color[2];
+            ent->material.material_path = preset.mat_file;
+            if (m_history)
+                m_history->EndEntityEdit();
+            m_scene_status = std::string("Painted '") + ent->tag.tag + "' with " + preset.name;
+        }
+        return;
+    }
+
+    // Ray hit neither: close any open stroke rather than leave it dangling.
+    if (m_painting_stroke)
+    {
+        m_painting_stroke = false;
+        m_paint_stroke_target = -1;
+        if (m_history)
+            m_history->EndEntityEdit();
+    }
 }
 
 // --- Phase 35 animation & timeline foundation --------------------------------
@@ -2786,34 +2898,14 @@ bool Application::ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h
 
     // Prefer the landscape surface under the cursor over the flat y=0 plane,
     // so a dropped/placed asset lands on the terrain instead of floating
-    // above it or burying into it. Same ray-vs-heightfield test the sculpt
-    // brush already uses (UpdateLandscapeBrush); nearest hit wins if more
-    // than one landscape entity is in the scene.
-    if (m_scene)
+    // above it or burying into it. Same ray-vs-heightfield test the sculpt/
+    // paint brushes use (RaycastAnyLandscape); nearest hit wins if more than
+    // one landscape entity is in the scene.
+    Vec3 land_hit;
+    if (RaycastAnyLandscape(cam_pos, dir, land_hit))
     {
-        bool found = false;
-        float best_t = 0.0f;
-        Vec3 best_hit{};
-        for (auto &e : m_scene->GetEntities())
-        {
-            if (!e->landscape.enabled)
-                continue;
-            const Mat4 world = m_scene->ComputeWorldMatrix(*e);
-            Vec3 hit;
-            float t;
-            if (LandscapeRaycast(e->landscape, world, cam_pos, dir, t, hit) &&
-                (!found || t < best_t))
-            {
-                found = true;
-                best_t = t;
-                best_hit = hit;
-            }
-        }
-        if (found)
-        {
-            out = best_hit;
-            return true;
-        }
+        out = land_hit;
+        return true;
     }
 
     // Fallback: flat y=0 grid plane (no landscape in the scene, or every one
@@ -2823,6 +2915,61 @@ bool Application::ComputeDropWorldPos(float sx, float sy, float vp_w, float vp_h
     float t = (0.0f - cam_pos.y) / dir.y;
     out = Vec3Add(cam_pos, Vec3Scale(dir, t));
     return true;
+}
+
+Entity *Application::RaycastAnyLandscape(const Vec3 &cam_pos, const Vec3 &dir, Vec3 &out_hit)
+{
+    if (!m_scene)
+        return nullptr;
+    Entity *best = nullptr;
+    float best_t = 0.0f;
+    Vec3 best_hit{};
+    for (auto &e : m_scene->GetEntities())
+    {
+        if (!e->landscape.enabled)
+            continue;
+        const Mat4 world = m_scene->ComputeWorldMatrix(*e);
+        Vec3 hit;
+        float t;
+        if (LandscapeRaycast(e->landscape, world, cam_pos, dir, t, hit) &&
+            (!best || t < best_t))
+        {
+            best = e.get();
+            best_t = t;
+            best_hit = hit;
+        }
+    }
+    if (best)
+        out_hit = best_hit;
+    return best;
+}
+
+Entity *Application::RaycastAnyEntity(const Vec3 &cam_pos, const Vec3 &dir, Entity *skip)
+{
+    if (!m_scene)
+        return nullptr;
+    Entity *best = nullptr;
+    float best_t = FLT_MAX;
+    for (auto &ep : m_scene->GetEntities())
+    {
+        Entity &e = *ep;
+        if (&e == skip || e.landscape.enabled)
+            continue;
+        const Mesh *mesh = ResolveEntityMesh(e);
+        if (!mesh)
+            continue;
+        const Mat4 world = m_scene->ComputeWorldMatrix(e);
+        Vec3 wmin, wmax;
+        TransformAABB(mesh->bounds_min, mesh->bounds_max, world, wmin, wmax);
+        float t_near, t_far;
+        if (RayAABB(cam_pos, dir, wmin, wmax, t_near, t_far) &&
+            t_near >= 0.0f && t_near < best_t)
+        {
+            best = &e;
+            best_t = t_near;
+        }
+    }
+    return best;
 }
 
 bool Application::ComputeDropWorldPosFromMouse(Vec3 &out)
@@ -3015,14 +3162,11 @@ void Application::DrawViewportToolbar()
         const ViewportRenderMode mode = (ViewportRenderMode)i;
         const bool active = (m_overlay.render_mode == mode);
         if (active)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
-        }
+            Theme::PushPrimaryButtonColor();
         if (ImGui::Button(ViewportOverlaySettings::RenderModeLabel(mode)))
             m_overlay.SetRenderMode(mode);
         if (active)
-            ImGui::PopStyleColor(2);
+            Theme::PopPrimaryButtonColor();
         if (i < (int)ViewportRenderMode::Unlit)
             ImGui::SameLine();
     }
@@ -3048,14 +3192,11 @@ void Application::DrawViewportToolbar()
     // Settings.
     const bool snap_on = m_snap.enabled;
     if (snap_on)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
-    }
+        Theme::PushPrimaryButtonColor();
     if (ImGui::Button(snap_on ? "Snap: ON" : "Snap: OFF"))
         m_snap.enabled = !m_snap.enabled;
     if (snap_on)
-        ImGui::PopStyleColor(2);
+        Theme::PopPrimaryButtonColor();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Toggle grid snapping. Hold Ctrl during a gizmo drag to snap temporarily.");
     ImGui::SameLine();
@@ -3781,7 +3922,8 @@ bool Application::Init(int width, int height, const char *title)
     // scene state — it edits the shared LandscapeBrushSettings and routes
     // terrain creation through the Application (spawn + undo + selection).
     m_landscape_panel = new LandscapePanel(m_scene, m_selection, &m_landscape_brush,
-        [this]() { CreateLandscape(); });
+        [this]() { CreateLandscape(); }, &m_paint_mode, &m_paint_material_index,
+        &m_placement_mode);
     m_panels.push_back(std::shared_ptr<LandscapePanel>(m_landscape_panel));
 
     // Phase 35: the track-based timeline editor. Reads the shared clock and
@@ -4308,14 +4450,11 @@ void Application::Run()
                             ImGui::SameLine();
                         const bool is_active = (m_gizmo->mode == modes[i]);
                         if (is_active)
-                        {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
-                        }
+                            Theme::PushPrimaryButtonColor();
                         if (ImGui::Button(mode_names[i]))
                             m_gizmo->SetMode(modes[i]);
                         if (is_active)
-                            ImGui::PopStyleColor(2);
+                            Theme::PopPrimaryButtonColor();
                     }
                     ImGui::SameLine();
 
@@ -4324,14 +4463,11 @@ void Application::Run()
                     // configured in the Editor Settings window.
                     const bool snap_on = m_snap.enabled;
                     if (snap_on)
-                    {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
-                    }
+                        Theme::PushPrimaryButtonColor();
                     if (ImGui::Button(snap_on ? "Snap: ON" : "Snap: OFF"))
                         m_snap.enabled = !m_snap.enabled;
                     if (snap_on)
-                        ImGui::PopStyleColor(2);
+                        Theme::PopPrimaryButtonColor();
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
                             "Toggle grid snapping. Hold Ctrl during a gizmo drag to "
@@ -4358,23 +4494,66 @@ void Application::Run()
                                 ? m_placement_asset_path : m_placement_asset_path.substr(slash + 1));
                         }
                     }
-                    if (m_placement_mode)
-                    {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.38f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.00f));
-                    }
+                    const bool place_was_active = m_placement_mode;
+                    if (place_was_active)
+                        Theme::PushPrimaryButtonColor();
                     ImGui::BeginDisabled(m_placement_asset_path.empty());
                     if (ImGui::Button(place_label.c_str()))
+                    {
                         m_placement_mode = !m_placement_mode;
+                        if (m_placement_mode)
+                            m_paint_mode = false;
+                    }
                     ImGui::EndDisabled();
-                    if (m_placement_mode)
-                        ImGui::PopStyleColor(2);
+                    if (place_was_active)
+                        Theme::PopPrimaryButtonColor();
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(m_placement_mode
                             ? "Click the viewport to place another copy. Esc or "
                               "click here to stop."
                             : "Right-click a mesh or prefab in the Content Browser "
                               "and choose 'Place in Scene' to arm this.");
+                    ImGui::SameLine();
+
+                    // Paint mode toggle (see UpdatePaintMode). Hold the left
+                    // mouse button over the landscape to blend the selected
+                    // material into the terrain, or over a placed primitive
+                    // to swap its material outright. The combo picks which
+                    // of the four built-in presets the brush applies; radius
+                    // and strength are shared with the Landscape panel's own
+                    // brush sliders rather than duplicated here.
+                    const bool paint_was_active = m_paint_mode;
+                    if (paint_was_active)
+                        Theme::PushPrimaryButtonColor();
+                    if (ImGui::Button("Paint"))
+                    {
+                        m_paint_mode = !m_paint_mode;
+                        if (m_paint_mode)
+                            m_placement_mode = false;
+                    }
+                    if (paint_was_active)
+                        Theme::PopPrimaryButtonColor();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(m_paint_mode
+                            ? "Hold left click on the landscape or a primitive "
+                              "to paint it. Esc or click here to stop."
+                            : "Paint the selected material onto the landscape "
+                              "or a placed primitive.");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(90.0f);
+                    if (ImGui::BeginCombo("##PaintMaterial", kLandscapePaintPalette[std::clamp(
+                            m_paint_material_index, 0, kLandscapePaintPaletteCount - 1)].name))
+                    {
+                        for (int i = 0; i < kLandscapePaintPaletteCount; ++i)
+                        {
+                            const bool selected = (i == m_paint_material_index);
+                            if (ImGui::Selectable(kLandscapePaintPalette[i].name, selected))
+                                m_paint_material_index = i;
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
                     ImGui::SameLine();
                 }
 
@@ -4795,11 +4974,23 @@ void Application::Run()
 
                 // Phase 34 viewport override: in Landscape Mode the brush
                 // replaces the gizmo — the same mouse + camera context drives
-                // the terrain pick and paint strokes. Placement mode is the
-                // same idea for spawning assets: a click places instead of
-                // selecting/dragging, so it also takes the gizmo's place
-                // rather than running alongside it.
-                if (IsLandscapeSculptMode())
+                // the terrain pick and paint strokes. Placement and Paint
+                // modes are the same idea for spawning/painting: a click acts
+                // instead of selecting/dragging, so each takes the gizmo's
+                // place rather than running alongside it.
+                //
+                // Paint Mode is checked first, ahead of IsLandscapeSculptMode():
+                // the latter goes true ambiently the moment a landscape exists
+                // and is targeted (e.g. right after "Create Landscape", which
+                // auto-targets it) and stays true for as long as the Landscape
+                // workspace is active -- it does not reflect an explicit choice
+                // the way the Paint toolbar toggle does. Without this ordering,
+                // toggling Paint Mode on while a landscape is targeted silently
+                // did nothing: every click still routed to the old sculpt brush
+                // (default tool Raise, which moves height, not color).
+                if (m_paint_mode)
+                    UpdatePaintMode(gf, (float)dt);
+                else if (IsLandscapeSculptMode())
                     UpdateLandscapeBrush(gf, (float)dt);
                 else if (m_placement_mode)
                     UpdateAssetPlacement(gf);

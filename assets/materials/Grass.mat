@@ -1,0 +1,6 @@
+{
+  "name": "Grass",
+  "color": [0.30, 0.55, 0.20, 1.0],
+  "metallic": 0.0,
+  "roughness": 0.85
+}

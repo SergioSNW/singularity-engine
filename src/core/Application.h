@@ -200,6 +200,30 @@ private:
     // the raycast hit point (landscape surface, or the y=0 plane if none).
     void UpdateAssetPlacement(const GizmoFrame &gf);
 
+    // Paint mode: a third modal alternative to the gizmo, toggled from the
+    // toolbar. Unlike sculpting (which only touches whatever landscape is
+    // pre-selected via LandscapeBrushSettings::target_id) this paints
+    // whatever the ray actually hits: a landscape surface gets the existing
+    // per-vertex SculptTool::Paint blend (reusing m_landscape_brush's
+    // radius/strength/falloff), and a regular entity (Wall/Floor/Ramp/...)
+    // gets the selected preset's flat color + .mat path assigned outright.
+    // Each distinct entity touched during one held-LMB drag is one undo
+    // transaction, same discipline as a sculpt stroke.
+    void UpdatePaintMode(const GizmoFrame &gf, float dt);
+
+    // Shared by ComputeDropWorldPos/UpdatePaintMode: raycast every landscape-
+    // enabled entity in the scene, returning the nearest hit (or nullptr if
+    // the ray missed all of them). `out_hit` is only written on a hit.
+    Entity *RaycastAnyLandscape(const Vec3 &cam_pos, const Vec3 &dir, Vec3 &out_hit);
+
+    // Ray-vs-world-AABB pick among ordinary (non-landscape) entities, mirroring
+    // GizmoController's private hover test but independently callable -- that
+    // one only runs inside the gizmo's own Update(), which paint/placement/
+    // sculpt mode all skip entirely while active. `skip` excludes one entity
+    // (e.g. the active camera) from consideration, same convention as
+    // RenderScenePass's skip_entity.
+    Entity *RaycastAnyEntity(const Vec3 &cam_pos, const Vec3 &dir, Entity *skip);
+
     // Phase 35 animation & timeline foundation:
     //   ApplyTimeline        - editor Update stage: advance the global clock
     //                          (wrap/clamp per Loop) and write the sampled pose
@@ -451,6 +475,15 @@ private:
     bool m_placement_mode = false;
     std::string m_placement_asset_path;
     bool m_placement_is_prefab = false;
+
+    // Paint mode (see UpdatePaintMode): which entry of the shared material
+    // palette (kPaintPalette in Application.cpp) is currently selected, and
+    // the in-progress-stroke bookkeeping that keeps each distinct entity
+    // touched during one held-LMB drag to a single undo transaction.
+    bool m_paint_mode = false;
+    int m_paint_material_index = 0;
+    bool m_painting_stroke = false;
+    int m_paint_stroke_target = -1;
 
     // Phase 35 animation & timeline foundation: the Application-owned global
     // timeline clock + the bridge the Timeline panel and the Inspector's

@@ -89,7 +89,14 @@ void ViewportPanel::OnImGuiRender(float dt)
         static const char *kDropTypes[] = { "PREFAB", "MESH", "MATERIAL", "TEXTURE" };
         for (const char *type : kDropTypes)
         {
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(type))
+            // AcceptNoDrawDefaultRect: ImGui's built-in "you can drop here"
+            // highlight is a heavy filled rect that hides the 3D scene (and
+            // our own cyan ghost preview, which needs to stay visible while
+            // dragging). We already give clear feedback via the ghost, so
+            // suppress ImGui's -- this only changes what gets drawn, not
+            // whether the payload is accepted.
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(
+                    type, ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
             {
                 const char *data = (const char *)payload->Data;
                 if (on_drop && data && *data)

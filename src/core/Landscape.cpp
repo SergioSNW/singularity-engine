@@ -22,6 +22,16 @@ float Smoothstep(float e0, float e1, float x)
     return t * t * (3.0f - 2.0f * t);
 }
 
+// Constant-rate falloff counterpart to Smoothstep, used for
+// BrushFalloffProfile::Sharp: same [e0, e1] fade band and the same "1 at e0,
+// 0 at e1" convention as `1 - Smoothstep(...)`, but a straight ramp instead
+// of an eased curve, so the edge reads as harder/more deliberate.
+float LinearFalloff(float e0, float e1, float x)
+{
+    const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return 1.0f - t;
+}
+
 Vec3 TransformPoint(const Mat4 &m, const Vec3 &p)
 {
     float w;
@@ -329,7 +339,8 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape)
 
 void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
                      const Vec3 &center, float radius, float strength,
-                     float falloff, const float paint_color[3])
+                     float falloff, const float paint_color[3],
+                     BrushFalloffProfile profile)
 {
     if (landscape.heights.empty() || landscape.resolution < 1 || radius <= 0.0f)
         return;
@@ -362,8 +373,10 @@ void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
             const float d2 = dr * dr + dc * dc;
             if (d2 > r2)
                 continue;
-            const float w = 1.0f - Smoothstep(r_cells - fade_in, r_cells,
-                                              std::sqrt(d2));
+            const float dist = std::sqrt(d2);
+            const float w = (profile == BrushFalloffProfile::Sharp)
+                ? LinearFalloff(r_cells - fade_in, r_cells, dist)
+                : 1.0f - Smoothstep(r_cells - fade_in, r_cells, dist);
             if (w <= 0.0f)
                 continue;
 
@@ -372,6 +385,9 @@ void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
             {
                 case SculptTool::Raise:
                     h += strength * w;
+                    break;
+                case SculptTool::Lower:
+                    h -= strength * w;
                     break;
                 case SculptTool::Smooth:
                 {

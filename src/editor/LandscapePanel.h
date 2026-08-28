@@ -19,9 +19,19 @@ struct LandscapeBrushSettings;
 class LandscapePanel : public EditorPanel
 {
 public:
+    // `paint_mode`/`paint_material_index` are the Application's toolbar Paint
+    // Mode state -- the panel's own "Mode: Sculpt / Paint" switch just toggles
+    // the same flag and material index the toolbar's Paint button/combo edit,
+    // so both entry points always agree on whether painting is active and
+    // which material is selected. `placement_mode` is cleared when the panel
+    // switches into Paint, matching the toolbar's own Paint/Place mutual
+    // exclusion, so a toolbar button never shows "active" for a mode that
+    // isn't actually running.
     LandscapePanel(Scene *scene, SelectionState *selection,
                    LandscapeBrushSettings *brush,
-                   std::function<void()> on_create_landscape);
+                   std::function<void()> on_create_landscape,
+                   bool *paint_mode, int *paint_material_index,
+                   bool *placement_mode);
     void OnImGuiRender(float dt) override;
 
     void SetVisible(bool visible) { m_visible = visible; }
@@ -33,6 +43,9 @@ private:
     SelectionState *m_selection;
     LandscapeBrushSettings *m_brush;
     std::function<void()> m_on_create_landscape;
+    bool *m_paint_mode;
+    int *m_paint_material_index;
+    bool *m_placement_mode;
     bool m_visible = true;
 
     // Phase A heightmap import staging: the chosen source image and target

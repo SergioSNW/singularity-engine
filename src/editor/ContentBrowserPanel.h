@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class SceneManager;
@@ -99,11 +100,13 @@ private:
     void DrawToolbar();
     void DrawFileGrid();
     void DrawFileList();
-    // Virtual "Primitives" folder (Cube/Wall/Floor/Ramp): not a real directory
-    // -- these never touch RefreshFiles()/the filesystem -- so it's a fully
-    // separate draw path rather than woven into DrawFileGrid/List, which
-    // assume every entry is a real path with rename/delete/duplicate.
-    void DrawPrimitivesFolder();
+    // The (path, kind) pairs to actually render for the current folder: real
+    // folders mirror m_files, but the real Assets root gets one synthetic
+    // "Primitives" folder card, and browsing into it lists the four builtin
+    // shapes (Cube/Wall/Floor/Ramp) -- none of which ever touch
+    // RefreshFiles()/the filesystem. Shared by DrawFileGrid and DrawFileList
+    // so grid/list view can't disagree about what's browsable.
+    std::vector<std::pair<std::string, FileKind>> VisibleEntries() const;
     void DrawCreateFolderRow();
     void DrawRenameRow();
     void DrawConfirmDeleteModal();

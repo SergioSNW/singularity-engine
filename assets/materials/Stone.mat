@@ -1,0 +1,6 @@
+{
+  "name": "Stone",
+  "color": [0.45, 0.42, 0.38, 1.0],
+  "metallic": 0.0,
+  "roughness": 0.75
+}

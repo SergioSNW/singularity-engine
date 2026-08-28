@@ -24,13 +24,29 @@ constexpr int kMinHeightmapResolution = 4;
 // generated mesh; this module owns geometry building, the sculpt kernels and
 // picking. Everything is pure data + math, so it is testable headlessly.
 
-// Which tool a brush stamp applies.
+// Which tool a brush stamp applies. Raise/Lower/Flatten/Smooth are the
+// terrain-sculpting brushes (edit height); Paint is the splatting brush
+// (edit per-vertex color) -- kept in the same enum since both are "brush
+// stamps" driven by the same radius/strength/falloff math in LandscapeSculpt,
+// but the editor UI presents them as two distinct modes, not one tool list.
 enum class SculptTool
 {
-    Raise,   // lift / lower the surface under the brush
-    Smooth,  // blur heights toward the local neighbourhood average
+    Raise,   // lift the surface under the brush
+    Lower,   // push the surface down under the brush
     Flatten, // pull heights toward the height under the brush center
+    Smooth,  // blur heights toward the local neighbourhood average
     Paint,   // apply vertex color (material) to the terrain surface
+};
+
+// Shape of the brush's edge transition, applied within the fade band that
+// `falloff` (below) sizes. Smooth eases in with a cubic curve, blending
+// gently into untouched terrain or a neighboring stroke. Sharp falls off at
+// a constant rate instead -- reads as a harder, more deliberate edge, useful
+// for cliffs or a crisp material boundary between two paint layers.
+enum class BrushFalloffProfile
+{
+    Smooth,
+    Sharp,
 };
 
 // Shared brush state: edited by the Landscape panel, consumed by the viewport
@@ -40,12 +56,35 @@ struct LandscapeBrushSettings
 {
     SculptTool tool = SculptTool::Raise;
     float radius = 3.0f;   // brush radius in world units
-    float strength = 0.5f; // per-second stamp amount
+    // Per-second stamp amount. Tuned so a brief, deliberate hold (a few
+    // hundred ms) reads as an immediate change instead of a slow fade-in --
+    // still adjustable down to 0.01 for fine, incremental strokes.
+    float strength = 1.5f;
     float falloff = 0.6f;  // 0 = hard edge, 1 = fully soft
+    BrushFalloffProfile falloff_profile = BrushFalloffProfile::Smooth;
     int target_id = -1;    // entity id being sculpted (-1 = none)
     // Paint mode: RGB color applied to vertices under the brush.
     float paint_color[3] = { 0.30f, 0.55f, 0.20f }; // default: grass green
 };
+
+// One shared material swatch list for every paint entry point -- the
+// Landscape panel's own Paint mode and the viewport toolbar's Paint Mode --
+// so both present the exact same palette instead of two independent lists
+// that happen to look similar. Colors are deliberately saturated and
+// distinct from one another (and from the default unpainted white) so a
+// stroke reads immediately, without needing a bound texture. `mat_file`
+// names a .mat asset under assets/materials/, used only when painting onto
+// an entity (LandscapeSculpt's Paint tool itself only ever touches
+// per-vertex color, never material_path).
+struct PaintMaterialPreset { const char *name; float color[3]; const char *mat_file; };
+inline constexpr PaintMaterialPreset kLandscapePaintPalette[] = {
+    { "Grass", { 0.30f, 0.55f, 0.20f }, "Grass.mat" },
+    { "Stone", { 0.45f, 0.42f, 0.38f }, "Stone.mat" },
+    { "Metal", { 0.35f, 0.45f, 0.62f }, "Metal.mat" },
+    { "Dirt",  { 0.40f, 0.28f, 0.15f }, "Dirt.mat" },
+};
+inline constexpr int kLandscapePaintPaletteCount =
+    (int)(sizeof(kLandscapePaintPalette) / sizeof(kLandscapePaintPalette[0]));
 
 // Fill `heights` with `base_height`, sized for `resolution`.
 void LandscapeInitialize(LandscapeComponent &landscape);
@@ -73,7 +112,8 @@ void LandscapeRebuildMesh(LandscapeComponent &landscape);
 // applied as-is (the caller scales it by dt for time-based strokes).
 void LandscapeSculpt(LandscapeComponent &landscape, SculptTool tool,
                      const Vec3 &center, float radius, float strength,
-                     float falloff, const float paint_color[3] = nullptr);
+                     float falloff, const float paint_color[3] = nullptr,
+                     BrushFalloffProfile profile = BrushFalloffProfile::Smooth);
 
 // Bilinear height sample at local (lx, lz). Returns `base_height` when the
 // grid is uninitialized.

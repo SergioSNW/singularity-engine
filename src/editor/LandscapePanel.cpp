@@ -40,11 +40,16 @@ std::vector<std::string> ListHeightmapAssets()
 
 LandscapePanel::LandscapePanel(Scene *scene, SelectionState *selection,
                                LandscapeBrushSettings *brush,
-                               std::function<void()> on_create_landscape)
+                               std::function<void()> on_create_landscape,
+                               bool *paint_mode, int *paint_material_index,
+                               bool *placement_mode)
     : m_scene(scene)
     , m_selection(selection)
     , m_brush(brush)
     , m_on_create_landscape(std::move(on_create_landscape))
+    , m_paint_mode(paint_mode)
+    , m_paint_material_index(paint_material_index)
+    , m_placement_mode(placement_mode)
 {
 }
 
@@ -191,62 +196,106 @@ void LandscapePanel::OnImGuiRender(float dt)
         return;
     }
 
-    // --- Tool palette ----------------------------------------------------
-    ImGui::TextDisabled("Tool");
-    const char *tool_names[] = { "Raise", "Smooth", "Flatten", "Paint" };
-    const char *tool_hints[] = {
-        "Lift or lower the surface under the brush.",
-        "Blur heights toward the local neighborhood average.",
-        "Pull heights toward the height under the brush center.",
-        "Apply vertex color (material) to the terrain surface.",
-    };
-    const int current_tool = (int)m_brush->tool;
-    for (int i = 0; i < 4; ++i)
+    // --- Mode: Sculpt vs Paint ---------------------------------------------
+    // Two distinct brushes share this panel and the sliders below: Sculpt
+    // edits height on the targeted terrain above (Raise/Lower/Flatten/
+    // Smooth); Paint edits material and, unlike Sculpt, isn't limited to the
+    // targeted terrain -- it reaches whatever landscape or placed primitive
+    // (Wall/Floor/Ramp/...) the cursor is over. *m_paint_mode is the exact
+    // flag the viewport toolbar's own Paint button reads and writes, so this
+    // switch and that button always agree on whether painting is active.
+    const bool has_paint_state = m_paint_mode && m_paint_material_index;
+    const bool paint_mode_active = has_paint_state && *m_paint_mode;
+    if (has_paint_state)
     {
-        if (i > 0)
-            ImGui::SameLine();
-        if (ImGui::RadioButton(tool_names[i], current_tool == i))
-            m_brush->tool = (SculptTool)i;
-    }
-    if (current_tool >= 0 && current_tool < 4)
-        ImGui::TextDisabled("%s", tool_hints[current_tool]);
-
-    // Material picker: only visible in Paint mode.
-    if (current_tool == (int)SculptTool::Paint)
-    {
-        ImGui::Spacing();
-        ImGui::TextDisabled("Material");
-        struct MaterialPreset { const char *name; float r, g, b; };
-        const MaterialPreset presets[] = {
-            { "Grass",  0.30f, 0.55f, 0.20f },
-            { "Rock",   0.45f, 0.42f, 0.38f },
-            { "Dirt",   0.40f, 0.28f, 0.15f },
-            { "Snow",   0.90f, 0.92f, 0.95f },
-            { "Sand",   0.76f, 0.70f, 0.50f },
-        };
-        for (const auto &p : presets)
+        ImGui::SeparatorText("Mode");
+        if (!paint_mode_active)
+            Theme::PushPrimaryButtonColor();
+        if (ImGui::Button("Sculpt", ImVec2(100.0f, 0.0f)))
+            *m_paint_mode = false;
+        if (!paint_mode_active)
+            Theme::PopPrimaryButtonColor();
+        ImGui::SameLine();
+        if (paint_mode_active)
+            Theme::PushPrimaryButtonColor();
+        if (ImGui::Button("Paint", ImVec2(100.0f, 0.0f)))
         {
-            if (ImGui::ColorButton(p.name, ImVec4(p.r, p.g, p.b, 1.0f),
-                                   0, ImVec2(20, 20)))
-            {
-                m_brush->paint_color[0] = p.r;
-                m_brush->paint_color[1] = p.g;
-                m_brush->paint_color[2] = p.b;
-            }
-            ImGui::SameLine();
-            ImGui::Text("%s", p.name);
+            *m_paint_mode = true;
+            if (m_placement_mode)
+                *m_placement_mode = false;
         }
-        ImGui::ColorEdit3("Custom", m_brush->paint_color,
-                          ImGuiColorEditFlags_NoInputs);
+        if (paint_mode_active)
+            Theme::PopPrimaryButtonColor();
+        ImGui::Spacing();
+    }
+
+    if (!paint_mode_active)
+    {
+        // --- Sculpt brush ---------------------------------------------------
+        ImGui::SeparatorText("Sculpt Brush");
+        const char *tool_names[] = { "Raise", "Lower", "Flatten", "Smooth" };
+        const char *tool_hints[] = {
+            "Lift the surface under the brush.",
+            "Push the surface down under the brush.",
+            "Pull heights toward the height under the brush center.",
+            "Blur heights toward the local neighborhood average.",
+        };
+        const SculptTool sculpt_tools[] = {
+            SculptTool::Raise, SculptTool::Lower, SculptTool::Flatten, SculptTool::Smooth,
+        };
+        int current_tool = 0;
+        for (int i = 0; i < 4; ++i)
+            if (m_brush->tool == sculpt_tools[i])
+                current_tool = i;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (i > 0)
+                ImGui::SameLine();
+            if (ImGui::RadioButton(tool_names[i], current_tool == i))
+                m_brush->tool = sculpt_tools[i];
+        }
+        ImGui::TextDisabled("%s", tool_hints[current_tool]);
+    }
+    else
+    {
+        // --- Paint material ---------------------------------------------
+        ImGui::SeparatorText("Material");
+        const int current_mat = std::clamp(*m_paint_material_index, 0,
+                                           kLandscapePaintPaletteCount - 1);
+        for (int i = 0; i < kLandscapePaintPaletteCount; ++i)
+        {
+            const PaintMaterialPreset &p = kLandscapePaintPalette[i];
+            ImGui::PushID(i);
+            const ImVec4 swatch(p.color[0], p.color[1], p.color[2], 1.0f);
+            ImGui::ColorButton("##swatch", swatch,
+                               ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
+                               ImVec2(22.0f, 22.0f));
+            ImGui::SameLine();
+            if (ImGui::Selectable(p.name, current_mat == i, 0, ImVec2(0.0f, 22.0f)))
+                *m_paint_material_index = i;
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("Applies to terrain (blended) or a single placed "
+                            "primitive (swapped outright).");
     }
 
     ImGui::Spacing();
 
-    // --- Brush controls --------------------------------------------------
-    ImGui::TextDisabled("Brush");
+    // --- Brush shape (shared by both modes) -------------------------------
+    ImGui::SeparatorText("Brush");
     ImGui::SliderFloat("Size", &m_brush->radius, 0.5f, 20.0f, "%.1f");
     ImGui::SliderFloat("Strength", &m_brush->strength, 0.01f, 2.0f, "%.2f");
     ImGui::SliderFloat("Falloff", &m_brush->falloff, 0.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Edge:");
+    ImGui::SameLine();
+    bool sharp_edge = (m_brush->falloff_profile == BrushFalloffProfile::Sharp);
+    if (ImGui::RadioButton("Smooth", !sharp_edge))
+        m_brush->falloff_profile = BrushFalloffProfile::Smooth;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Sharp", sharp_edge))
+        m_brush->falloff_profile = BrushFalloffProfile::Sharp;
+    ImGui::TextDisabled("Smooth eases into the surrounding surface; Sharp "
+                        "cuts a harder, more defined edge.");
 
     ImGui::Separator();
     if (target)
@@ -258,8 +307,13 @@ void LandscapePanel::OnImGuiRender(float dt)
             target->landscape.resolution + 1,
             target->landscape.size);
         ImGui::Spacing();
-        ImGui::TextDisabled("Hold LMB over the viewport and drag to paint.\n"
-                            "Stroke is undoable (Edit > Undo).");
+        if (paint_mode_active)
+            ImGui::TextDisabled("Hold LMB over the viewport to paint. "
+                                "Stroke is undoable (Edit > Undo).");
+        else
+            ImGui::TextDisabled("Hold LMB over the viewport and drag to sculpt "
+                                "'%s'. Stroke is undoable (Edit > Undo).",
+                                target->tag.tag.c_str());
     }
 
     ImGui::End();

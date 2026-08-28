@@ -21,9 +21,15 @@
 namespace fs = std::filesystem;
 
 // Sentinel for m_current when browsing the virtual Primitives folder (Cube/
-// Wall/Floor/Ramp) instead of a real assets/ directory. Never touches
-// RefreshFiles()/the filesystem -- see DrawPrimitivesFolder().
-static const std::string kPrimitivesVirtualPath = "__primitives__";
+// Wall/Floor/Ramp) instead of a real assets/ directory. Shaped like a real
+// child path of m_root ("assets") rather than an opaque token: that makes
+// the *existing* Up button, breadcrumb trail, and UnderRoot() checks work
+// for it with no special-casing, since they all just do generic string/path
+// manipulation on whatever m_current holds. RefreshFiles() safely no-ops for
+// it too (fs::directory_iterator on a path that doesn't exist just yields
+// nothing, via the error_code overload) -- GridEntries()/ListEntries() below
+// are what actually populate it with the four synthetic cards.
+static const std::string kPrimitivesVirtualPath = "assets/Primitives";
 
 namespace {
 
@@ -201,12 +207,6 @@ void ContentBrowserPanel::DrawFolderTree()
 {
     ImGui::BeginChild("##content_tree", ImVec2(200.0f, 0.0f), true);
 
-    // Pinned, not scanned: the built-in block-out shapes always sit above the
-    // real asset tree, since they're never actually present on disk.
-    if (ImGui::Selectable("Primitives", m_current == kPrimitivesVirtualPath))
-        m_current = kPrimitivesVirtualPath;
-    ImGui::Separator();
-
     if (ImGui::TreeNodeEx("Assets", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanFullWidth))
     {
         for (const std::string &dir : m_dirs)
@@ -228,64 +228,39 @@ void ContentBrowserPanel::DrawFolderTree()
     ImGui::EndChild();
 }
 
-void ContentBrowserPanel::DrawPrimitivesFolder()
+// The (path, kind) pairs DrawFileGrid/DrawFileList actually render for the
+// current folder. Real folders just mirror m_files (scanned by
+// RefreshFiles()); browsing the virtual Primitives folder instead lists the
+// four builtin shapes; and the real Assets root gets one synthetic "Primitives"
+// folder card prepended, which is the only place a user can navigate into it
+// from -- a normal folder among normal folders, not a special sidebar entry.
+// Kept as one shared helper (rather than duplicating this in both draw
+// functions) specifically so grid view and list view can never disagree
+// about what's actually browsable in a given folder.
+std::vector<std::pair<std::string, ContentBrowserPanel::FileKind>>
+ContentBrowserPanel::VisibleEntries() const
 {
-    ImGui::BeginChild("##content_primitives", ImVec2(0.0f, 0.0f));
+    std::vector<std::pair<std::string, FileKind>> out;
 
-    if (ImGui::Button("Up"))
-        Navigate(m_root);
-    ImGui::SameLine();
-    ImGui::TextUnformatted("Primitives");
-    ImGui::Separator();
-    TextDisabledWrapped("Drag a shape onto the Viewport to place it -- a cyan "
-                        "wireframe previews exactly where it will land on the "
-                        "landscape/ground before you drop it.");
-    ImGui::Spacing();
-
-    struct PrimitiveEntry { const char *label; const char *path; };
-    static const PrimitiveEntry kPrimitives[] = {
-        { "Cube",  kBuiltinCubePath },
-        { "Wall",  kBuiltinWallPath },
-        { "Floor", kBuiltinFloorPath },
-        { "Ramp",  kBuiltinRampPath },
-    };
-
-    const float cell_w = 90.0f;
-    const float cell_h = 64.0f;
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float avail = ImGui::GetContentRegionAvail().x;
-    const int cols = std::max(1, (int)((avail + spacing) / (cell_w + spacing)));
-
-    int col = 0;
-    for (const PrimitiveEntry &prim : kPrimitives)
+    if (m_current == kPrimitivesVirtualPath)
     {
-        ImGui::PushID(prim.path);
-        if (col > 0)
-            ImGui::SameLine();
-
-        // Same drag-source convention as a real Mesh card (DrawItem): payload
-        // type "MESH", payload data the asset path -- here one of the
-        // kBuiltin*Path constants instead of a filesystem path. The viewport
-        // drop handler and the ghost preview already treat any "MESH"
-        // payload identically regardless of where the path resolves, so
-        // nothing downstream needed to change for these to work.
-        ImGui::Selectable(prim.label, false, ImGuiSelectableFlags_DontClosePopups,
-                          ImVec2(cell_w, cell_h));
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
-        {
-            ImGui::SetDragDropPayload("MESH", prim.path, std::strlen(prim.path) + 1,
-                                      ImGuiCond_Once);
-            ImGui::TextUnformatted(prim.label);
-            ImGui::EndDragDropSource();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Drag onto the Viewport to place a %s.", prim.label);
-
-        col = (col + 1) % cols;
-        ImGui::PopID();
+        out.emplace_back(kBuiltinCubePath,  FileKind::Mesh);
+        out.emplace_back(kBuiltinWallPath,  FileKind::Mesh);
+        out.emplace_back(kBuiltinFloorPath, FileKind::Mesh);
+        out.emplace_back(kBuiltinRampPath,  FileKind::Mesh);
+        return out;
     }
 
-    ImGui::EndChild();
+    if (m_current == m_root)
+        out.emplace_back(kPrimitivesVirtualPath, FileKind::Folder);
+
+    for (const std::string &path : m_files)
+    {
+        std::error_code ec;
+        const bool is_dir = fs::is_directory(path, ec);
+        out.emplace_back(path, is_dir ? FileKind::Folder : Classify(path));
+    }
+    return out;
 }
 
 void ContentBrowserPanel::DrawToolbar()
@@ -652,13 +627,11 @@ void ContentBrowserPanel::DrawFileGrid()
     const float cell_w = (avail - spacing * (cols - 1)) / (float)cols;
     const float cell_h = m_thumb_scale + 34.0f;
 
+    const std::vector<std::pair<std::string, FileKind>> entries = VisibleEntries();
     int col = 0;
     int visible = 0;
-    for (const std::string &path : m_files)
+    for (const auto &[path, kind] : entries)
     {
-        std::error_code ec;
-        const bool is_dir = fs::is_directory(path, ec);
-        const FileKind kind = is_dir ? FileKind::Folder : Classify(path);
         if (!PassesFilter(path, kind))
             continue;
         DrawItem(path, kind, col, cols, cell_w, cell_h);
@@ -669,7 +642,7 @@ void ContentBrowserPanel::DrawFileGrid()
     if (visible == 0)
     {
         ImGui::Dummy(ImVec2(0.0f, 40.0f));
-        ImGui::TextDisabled(m_files.empty()
+        ImGui::TextDisabled(entries.empty()
             ? "Empty folder. Use 'New Folder' or drop assets here."
             : "No items match the current filter or search.");
     }
@@ -824,12 +797,10 @@ void ContentBrowserPanel::DrawFileList()
         ImGui::Separator();
     }
 
+    const std::vector<std::pair<std::string, FileKind>> entries = VisibleEntries();
     int visible = 0;
-    for (const std::string &path : m_files)
+    for (const auto &[path, kind] : entries)
     {
-        std::error_code ec;
-        const bool is_dir = fs::is_directory(path, ec);
-        const FileKind kind = is_dir ? FileKind::Folder : Classify(path);
         if (!PassesFilter(path, kind))
             continue;
         DrawListRow(path, kind);
@@ -839,7 +810,7 @@ void ContentBrowserPanel::DrawFileList()
     if (visible == 0)
     {
         ImGui::Dummy(ImVec2(0.0f, 40.0f));
-        ImGui::TextDisabled(m_files.empty()
+        ImGui::TextDisabled(entries.empty()
             ? "Empty folder. Use 'New Folder' or drop assets here."
             : "No items match the current filter or search.");
     }
@@ -867,9 +838,9 @@ void ContentBrowserPanel::ContextMenu(const std::string &path, FileKind kind)
         if (action && ImGui::MenuItem(action))
             OpenItem(path, kind);
 
-        // Placement mode: click-to-spawn at the cursor's landscape/ground
-        // point, as many times as you like, instead of one instance at the
-        // origin. Meshes have no other spawn path from the browser at all.
+        // Placement mode: click-to-spawn a single instance at the raycast
+        // point under the cursor, with a ghost preview while you aim it.
+        // Meshes have no other spawn path from the browser at all.
         if (kind == FileKind::Mesh || kind == FileKind::Prefab)
         {
             if (ImGui::MenuItem("Place in Scene"))
@@ -881,18 +852,29 @@ void ContentBrowserPanel::ContextMenu(const std::string &path, FileKind kind)
         ImGui::Separator();
     }
 
-    if (ImGui::MenuItem("Rename"))
+    // Rename/Duplicate/Delete only make sense for real files on disk. The
+    // synthetic Primitives folder and its four builtin shapes aren't -- they
+    // don't correspond to any path UnderRoot() would even need to check, so
+    // this is a positive check (skip the ops) rather than relying on
+    // UnderRoot() to reject them, which it wouldn't (the virtual path is
+    // deliberately shaped like a real child of assets/).
+    const bool is_builtin = (path == kPrimitivesVirtualPath) ||
+                            BuiltinPrimitiveDisplayName(path) != nullptr;
+    if (!is_builtin)
     {
-        m_rename_path = path;
-        std::strncpy(m_rename_buffer, Leaf(path).c_str(), sizeof(m_rename_buffer) - 1);
-        m_rename_buffer[sizeof(m_rename_buffer) - 1] = '\0';
-    }
-    if (ImGui::MenuItem("Duplicate"))
-        DuplicateAsset(path);
-    if (ImGui::MenuItem("Delete"))
-    {
-        m_pending_delete = path;
-        m_confirm_delete = true;
+        if (ImGui::MenuItem("Rename"))
+        {
+            m_rename_path = path;
+            std::strncpy(m_rename_buffer, Leaf(path).c_str(), sizeof(m_rename_buffer) - 1);
+            m_rename_buffer[sizeof(m_rename_buffer) - 1] = '\0';
+        }
+        if (ImGui::MenuItem("Duplicate"))
+            DuplicateAsset(path);
+        if (ImGui::MenuItem("Delete"))
+        {
+            m_pending_delete = path;
+            m_confirm_delete = true;
+        }
     }
 }
 
@@ -1065,9 +1047,7 @@ void ContentBrowserPanel::OnImGuiRender(float dt)
 
     DrawFolderTree();
     ImGui::SameLine();
-    if (m_current == kPrimitivesVirtualPath)
-        DrawPrimitivesFolder();
-    else if (m_list_view)
+    if (m_list_view)
         DrawFileList();
     else
         DrawFileGrid();

@@ -1543,8 +1543,120 @@ runs at 17-18 FPS (PostProcess active). Unlit / Wireframe modes bypass the
 ~55 ms `SDL_RenderReadPixels` readback, pushing effective frame time well under
 30 ms.
 
+## Phase 42 — Surface & Material Painting
+
+Phase 42 adds the engine's second landscape brush: painting. Where the
+existing Raise/Lower/Flatten/Smooth brushes edit `LandscapeComponent::heights`,
+Paint edits `LandscapeComponent::colors` — the same per-vertex buffer
+`LandscapeRebuildMesh` was already copying into `Mesh::colors`, and
+`EmitEntityTris` was already reading as the Gouraud-shaded albedo whenever a
+mesh carries vertex colors (see Phase 34/37). No renderer changes were needed
+to make painting *visible*; the work was entirely in getting a brush stroke
+to reach that buffer correctly, and in presenting sculpting and painting as
+two clearly distinct modes rather than two items buried in one tool list.
+
+### 42.1 Two Paint Entry Points, One Palette
+
+Painting can be driven from two places: a new viewport toolbar **Paint Mode**
+button (next to the existing Snap/Gizmo-mode/Place toggles), and the
+Landscape panel's own **Mode: Sculpt / Paint** switch. Both write the exact
+same `Application` state — `m_paint_mode` (bool) and `m_paint_material_index`
+(int) — so neither can show "active" while the other silently disagrees.
+
+The material choices themselves — Grass, Stone, Metal, Dirt — live in exactly
+one place: `kLandscapePaintPalette` in `Landscape.h`. Each entry pairs a
+saturated, mutually distinct RGB swatch (so a stroke reads immediately with
+no bound texture) with a `.mat` asset filename under `assets/materials/`.
+Metal is the one preset with a non-trivial PBR split (metallic 0.9,
+roughness 0.25) and a deliberately blue-tinted steel color, so it never reads
+as "another gray" next to Stone. Before this phase, the Landscape panel had
+its own independent five-preset list (Grass/Rock/Dirt/Snow/Sand) that the new
+toolbar feature would otherwise have duplicated with slightly different
+names and values; both now read from the one table.
+
+### 42.2 UpdatePaintMode and the Shared Raycast Helpers
+
+`Application::UpdatePaintMode(gf, dt)` follows the same per-frame viewport
+override pattern as `UpdateLandscapeBrush` and `UpdateAssetPlacement`: while
+the left mouse button is held over the viewport, it builds a pick ray from
+the same camera-basis math (`ComputeDropWorldPos`'s convention), then tries
+two raycasts in order:
+
+1. **`RaycastAnyLandscape`** — every landscape entity in the scene, nearest
+   hit wins. This is a genuinely new shared helper: the logic already existed
+   inline inside `ComputeDropWorldPos` (for drop-position resolution), and
+   rather than write a third near-identical copy for painting, it was
+   extracted once and both call sites now share it.
+2. **`RaycastAnyEntity`** — ray-vs-AABB (`RayAABB` + `TransformAABB`) over
+   every non-landscape entity with a resolvable mesh. New in this phase.
+
+A landscape hit runs a continuous blend through the existing
+`LandscapeSculpt(..., SculptTool::Paint, ...)` — the same function the
+Landscape panel's brush already called, reusing its radius/strength/falloff.
+An entity hit is a discrete, one-shot swap of `material.color` and
+`material.material_path`, wrapped in one `CommandHistory` undo transaction
+per entity per stroke (re-touching the same entity while the button is still
+held is a no-op, not a re-trigger).
+
+### 42.3 Brush Expansion: Lower and Falloff Profile
+
+Two additions to `LandscapeBrushSettings` apply to every sculpt/paint stroke,
+not just painting:
+
+- **`SculptTool::Lower`** — previously there was no way to push the surface
+  down through the UI; only `Raise` existed, always adding to height.
+- **`BrushFalloffProfile`** (`Smooth` / `Sharp`) — the brush's edge
+  transition can now ease in with the existing cubic Smoothstep curve, or
+  fall off at a constant linear rate (`LinearFalloff`, new in `Landscape.cpp`)
+  for a harder, more deliberate edge. Both curves share the same `falloff`
+  slider (fade-band width in `[0, r_cells]`); the profile only changes the
+  *shape* of the transition within that band, not its size.
+
+### 42.4 Two Bugs Found Getting Here
+
+Two defects surfaced during this phase, both instructive:
+
+**A `PushStyleColor`/`PopStyleColor` imbalance.** The Place and Paint toolbar
+buttons read the live mode flag both before drawing the button (to decide
+whether to push a highlight color) and after (to decide whether to pop it) —
+but the button's own click handler flips that flag in between. Clicking a
+button to turn a mode **on** therefore pushed nothing, then popped 2 colors
+that were never pushed, tripping ImGui's `EndFrame()` color-stack assertion
+and aborting the process. The fix is the same pattern the adjacent Snap
+toggle already used correctly: capture the flag into a local `const bool`
+*before* the button, and push/pop based on that captured value.
+
+**A dispatch-priority conflict.** The per-frame viewport override chain
+checked `IsLandscapeSculptMode()` ahead of `m_paint_mode`. That function
+returns true ambiently whenever a landscape exists and is targeted (creating
+one auto-targets it) and the Landscape workspace is active — not because the
+user asked for sculpting, just because the conditions happen to be true. Paint
+Mode is an explicit toolbar toggle. With the old ordering, turning Paint Mode
+on while a landscape was targeted did nothing visible: every click was still
+routed to the old sculpt brush (default tool Raise, height not color). The
+fix reorders the chain so the explicit toggle wins.
+
+### 42.5 Toolbar Accent Consistency
+
+While investigating the button crash, six separate toolbar toggle states
+(Render-mode pills, both Snap toggles, Gizmo mode selector, Place, Paint)
+turned out to share one copy-pasted, low-contrast literal color
+(`ImVec4(0.30, 0.30, 0.38, 1.0)`) for their "active" highlight — never the
+theme's own accent color, despite `Theme::PushPrimaryButtonColor()` already
+existing and being used correctly elsewhere (Load Heightmap, Save Material).
+All six now use that helper, so every "this control is active" state in the
+editor reads from one consistent, theme-aware accent instead of six
+hand-picked near-duplicates.
+
+### 42.6 Verification
+
+Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only, both
+pre-existing and unrelated). Process launches and runs without crashing
+across every change in this phase. Painting confirmed visually working
+end-to-end by direct user testing after the dispatch-order fix.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
-advanced content browser & thumbnail generator, and the v0.40.0-alpha visual &
-UI polish sprint.*
+advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
+UI polish sprint, and the v0.41.0-alpha surface & material painting system.*
 

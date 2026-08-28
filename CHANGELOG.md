@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.41.0-alpha] — 2026-08-28
+
+### Added
+
+- **Landscape material painting** (`src/core/Landscape.{h,cpp}`, `Application::UpdatePaintMode`): a new toolbar **Paint Mode**, independent of the pre-existing Landscape-panel sculpt brush, that blends a selected material into the terrain's per-vertex color layer (`LandscapeComponent::colors`) or swaps the flat material outright on a placed primitive (Wall/Floor/Ramp/Cube). Raycasts through the same camera-basis math as `UpdateAssetPlacement`/`UpdateLandscapeBrush` (`RaycastAnyLandscape`, and the new `RaycastAnyEntity` — ray-vs-AABB over every non-landscape entity, factored out for this feature and shared with placement's drop-position resolution).
+- **Shared paint material palette** (`Landscape.h`: `PaintMaterialPreset`, `kLandscapePaintPalette`, `kLandscapePaintPaletteCount`): one canonical four-swatch list — Grass, Stone, Metal, Dirt — with deliberately saturated, mutually distinct colors (so a stroke reads immediately without a bound texture) plus a matching `.mat` asset each (`assets/materials/{Grass,Stone,Metal,Dirt}.mat`, the last with a genuine PBR split: metallic 0.9 / roughness 0.25, tinted steel-blue rather than neutral gray so it's visually unmistakable from the others). Both the toolbar's Paint Mode and the Landscape panel's own Paint mode read this one list, replacing what were previously two independent, differently-named preset sets (Grass/Rock/Dirt/Snow/Sand vs. Grass/Stone/Metal/Dirt).
+- **Lower sculpt tool** (`SculptTool::Lower`, `Landscape.cpp`): terrain sculpting now has an explicit Raise/Lower pair instead of Raise-only (there was previously no UI path to push the surface down).
+- **Brush falloff profile** (`BrushFalloffProfile::{Smooth,Sharp}`, `LandscapeBrushSettings::falloff_profile`): the brush edge can now ease in with the existing cubic Smoothstep curve or fall off at a constant linear rate (`LinearFalloff`) for a harder, more deliberate edge — useful for cliffs or a crisp boundary between two paint layers. Threaded through both `UpdateLandscapeBrush` and `UpdatePaintMode`.
+- **Landscape panel Mode switch** (`src/editor/LandscapePanel.cpp`): the panel now leads with an explicit **Sculpt / Paint** toggle instead of folding Paint into the height-tool radio group. Sculpt shows the four height brushes (Raise/Lower/Flatten/Smooth); Paint shows the shared material palette as color-swatch + `Selectable` rows. The toggle writes the exact same `bool`/`int` state the toolbar's Paint button and material combo read, so the panel and the toolbar can never disagree about whether painting is active or which material is selected. Brush Size/Strength/Falloff/Edge-shape controls are shared by both modes and shown once, below the mode-specific section.
+
+### Changed
+
+- **Default brush strength** (`LandscapeBrushSettings::strength`): raised from `0.5` to `1.5` (still adjustable down to `0.01`) so a brief, deliberate hold reads as an immediate visible change instead of a slow multi-second fade-in — the previous default made a quick click nearly imperceptible.
+- **Toolbar toggle-button contrast** (`Application.cpp`, `DrawViewportToolbar`, main toolbar): the Render-mode pills (Lit/Wireframe/Unlit), both Snap toggles, the Gizmo mode selector, Place, and Paint all previously highlighted their active state with an ad-hoc, low-contrast literal color (`0.30, 0.30, 0.38`) duplicated at six separate call sites — never the theme's own accent. All six now use the existing `Theme::PushPrimaryButtonColor()`/`PopPrimaryButtonColor()` helper (the theme's real indigo accent, already used elsewhere for primary actions), giving every "this is active" state one consistent, clearly legible, theme-aware treatment.
+
+### Fixed
+
+- **Paint Mode toolbar crash (`abort()` / Debug Error)**: the Place and Paint toggle buttons read the live mode flag both before (to push a highlight color) and after (to pop it) drawing the button, but the button's own click handler flips that flag in between — so clicking a button to turn a mode **on** pushed nothing but then popped 2 colors that were never pushed, hitting ImGui's `EndFrame()` color-stack-balance assertion. Fixed by capturing each flag into a local `const bool` before the button, matching the (already-correct) pattern the adjacent Snap toggle used.
+- **Paint Mode silently doing nothing (routing conflict)**: the per-frame viewport dispatch checked `IsLandscapeSculptMode()` before the toolbar's `m_paint_mode` flag. `IsLandscapeSculptMode()` goes true ambiently the moment a landscape exists and is targeted (`CreateLandscape` auto-targets the new terrain) and stays true for the whole time the Landscape workspace is active — it does not reflect an explicit user choice the way the Paint toolbar toggle does. Every click while Paint Mode was on was silently routed to the old sculpt brush instead (default tool Raise, which moves height, not color). Fixed by checking `m_paint_mode` first in the dispatch chain.
+
+### Verified
+
+- Clean MSVC rebuild (only the pre-existing benign `LNK4044 /static` + `M_PI` warnings). Launched via PowerShell, ran without crashing, `se_diagnostics.txt` shows a stable frame rate. Landscape painting confirmed visually working end-to-end after the routing fix (user-verified: status-bar diagnostic showed the per-vertex color converging on the selected preset while holding the brush over terrain).
+
 ## [0.40.0-alpha] — 2026-08-21
 
 ### Added
