@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.44.0-alpha] — 2026-08-28
+
+### Added
+
+- **`entity.player` Lua binding** (`src/script/ScriptEngine.cpp`: `LuaPlayer`, `PushPlayer`, `LuaPlayerIndex`/`NewIndex`, `RegisterPlayer`): exposes `PlayerControllerComponent` to gameplay scripts, closing the one real gap identified in an audit of the existing (and already extensive) Lua scripting system before this work started — a request to rebuild `ScriptComponent`/lifecycle hooks/`entity.transform`/`OnTriggerEnter`/Inspector script field/scene serialization from scratch was set aside once it became clear all of that already exists (Lua 5.4 VM, `OnStart`/`OnUpdate`/`OnCollisionEnter`/`Exit`/`OnTriggerEnter`/`Exit` hooks, a live `entity.transform.position/.rotation/.scale`, an Inspector "Script" section, JSON round-trip, and a full in-editor Lua IDE with hot-reload) — none of it reached the player controller added in the previous session, since that component didn't exist yet when the scripting bridge was built. `entity.player.velocity` follows the exact same live-view convention as `transform.position` (a `Vector3` userdata backed directly by the component's memory, so `entity.player.velocity.y = 10` mutates the real value, not a copy); `enabled`/`radius`/`height`/`move_speed` are plain read-write; `grounded` is read-only (it's `PlayerControllerUpdate`'s own per-frame output — a script attempting to write it gets a clear `luaL_error`, not a silent no-op).
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). Functionally verified through the real compiled `ScriptEngine`, not just a compile check: a temporary self-test in `Application::Init()` ran an actual scripted entity through `StartSession()` — a script writing `entity.player.velocity`/`.move_speed`/`.enabled` in `OnStart`, and a second script attempting to write `entity.player.grounded` — then read the resulting C++-side component state back directly. All 4 checks passed with exact expected values (`velocity=(1,2,3)`, `move_speed=4` from `radius(0.4) * 10`, `enabled=true`, and the read-only write correctly rejected with `"player: 'grounded' is read-only or unknown"`), then the self-test was removed.
+- Also includes a repeat of the CMake generator clean-reconfigure from the previous fix — `build/debug`'s cache drifted back to Ninja again mid-session (via `CMakePresets.json`), consistent with something external (most likely VS Code's CMake Tools extension) periodically reconfiguring the same directory in the background. Worth checking if this keeps recurring.
+
 ## [0.43.1-alpha] — 2026-08-28
 
 ### Fixed

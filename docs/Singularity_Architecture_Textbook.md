@@ -1894,10 +1894,100 @@ data never moved) — flagged to the user to retest specifically now that the
 gizmo no longer appears during Paint Mode, rather than assumed fixed without
 evidence.
 
+## Phase 46 — Player Controller Reaches Lua
+
+A feature request arrived (relayed from another AI assistant, without this
+codebase's context) asking for component scripting via Lua: a
+`ScriptComponent` with a path, `OnCreate`/`OnUpdate(dt)` lifecycle hooks,
+`entity.position`/`entity:translate(...)` bindings, `OnTriggerEnter()`
+callbacks, an Inspector script field, and scene JSON serialization of script
+paths. Before writing anything, an audit of the actual codebase found that
+essentially all of it already existed — built earlier (the commit history
+and this textbook's own Phase 14 "Physics-Scripting Bridge" entry predate
+this session) — and in a more capable form than what was asked for:
+
+- A full **Lua 5.4 VM** (`src/script/ScriptEngine.{h,cpp}`, raw C API, not
+  sol2), one environment per scripted entity, with `OnStart` (not
+  `OnCreate` — the request's naming didn't match the real hook),
+  `OnUpdate(dt)`, `OnCollisionEnter`/`Exit`, and `OnTriggerEnter`/`Exit` all
+  already dispatched — the last four wired straight from
+  `PhysicsManager`'s overlap edge-detection.
+- **`entity.transform.position`/`.rotation`/`.scale`** already exist as
+  *live* `Vector3` views (a userdata whose storage pointer aliases the
+  component's own `float[3]`, so `t.position.x = 5` mutates the real
+  transform) — a more capable API than the requested
+  `entity.position`/`entity:translate(...)`, which don't exist and weren't
+  added, since the existing shape is strictly better.
+- An **Inspector "Script" section** (path field + Apply/Clear), **scene JSON
+  round-trip** of `script.path`, and an entire **in-editor Lua IDE**
+  (`ScriptEditorPanel`: tabs, Lua syntax highlighting, dirty markers, a disk
+  watcher, hot-reload into the live Play session) that the request didn't
+  even know to ask for.
+
+Reimplementing any of this would have been redundant at best and, at worst,
+risked a second conflicting `ScriptComponent`/script-runtime living
+alongside the real one. The one genuine, verified gap: **none of it reached
+`PlayerControllerComponent`** (Phase 44), because that component didn't
+exist yet when the scripting bridge was built. That gap is what this phase
+actually closes.
+
+### 46.1 The `entity.player` Binding
+
+`ScriptEngine.cpp` gains a fourth userdata type alongside `Vector3`,
+`Transform`, and `Entity` — `LuaPlayer` (metatable `Singe.PlayerController`)
+— built by copying the exact pattern `Transform` already established
+(`__index`/`__newindex` closures over a per-key `strcmp` chain, registered
+once via `luaL_newmetatable` + a reserved empty methods table for future
+use). `entity.player` is wired into `LuaEntityIndex` as a fourth case,
+alongside `name`/`id`/`transform`.
+
+Field semantics, chosen to match what's already established rather than
+invent new conventions:
+
+- **`velocity`** follows `transform.position`'s live-view convention
+  exactly: `PushVec3View(L, &pc.velocity.x)` (valid because `Vec3` is a
+  plain `{float x, y, z;}` struct, so `&velocity.x` is the same kind of
+  three-contiguous-floats pointer a `float[3]` transform field already is).
+  A script can read it, do vector math on it, or assign
+  `entity.player.velocity = Vector3(0, 10, 0)` to directly drive movement —
+  e.g. a bounce pad's `OnTriggerEnter` boosting the player upward.
+- **`enabled`**, **`radius`**, **`height`**, **`move_speed`** are plain
+  read-write scalars (boolean / numbers).
+- **`grounded`** is read-only by omission: `LuaPlayerNewIndex` has no case
+  for it, so an assignment falls through to the same
+  `luaL_error(L, "player: '%s' is read-only or unknown", key)` that
+  `LuaEntityNewIndex` already uses for `entity.id` — it is
+  `PlayerControllerUpdate`'s own per-frame output, not something a script
+  should be able to fake into being true.
+
+Registration happens in both places `RegisterTransform` already runs:
+`StartSession` (the real Play-mode VM) and `EnsureReplState` (the persistent
+developer REPL), so `entity.player` works identically from a script file or
+typed live into the console.
+
+### 46.2 Verification
+
+The standalone g++ harness used for isolated logic checks elsewhere this
+session still cannot link in this environment (unchanged from Phase 44/45).
+Verification instead drove the *actual compiled* `ScriptEngine` directly: a
+temporary self-test in `Application::Init()` wrote a throwaway `.lua` file,
+ran a real `StartSession()` against a synthetic `Scene`/`Entity`, and read
+the resulting C++-side `PlayerControllerComponent` state back — proving the
+Lua-to-C++ write path actually mutates the real component, not a detached
+copy. A second script confirmed the `grounded` read-only rejection produces
+the expected `luaL_error` text rather than silently no-opping. All four
+checks passed with exact expected values before the self-test was removed.
+
+The `build/debug` CMake cache drifted back to the Ninja generator again
+during this phase (see Phase 45's note on `CMakePresets.json` and the
+Visual Studio generator this session's builds actually use) — resolved the
+same way, by removing and reconfiguring the directory.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
 UI polish sprint, the v0.41.0-alpha surface & material painting system, the
 v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
-character controller, and the v0.43.1-alpha paint brush cursor hotfix.*
+character controller, the v0.43.1-alpha paint brush cursor hotfix, and the
+v0.44.0-alpha Lua player-controller binding.*
 

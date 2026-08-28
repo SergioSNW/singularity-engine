@@ -369,6 +369,86 @@ void RegisterTransform(lua_State *L)
     lua_pop(L, 2);                          // []
 }
 
+// --- Player Controller (Stage 2 gap: PlayerControllerComponent was added
+// after this file's original Vector3/Transform/Entity bindings and was never
+// wired in) ---
+//
+// `velocity` follows Transform's live-view convention: reading it returns a
+// Vector3 whose storage IS `entity->player.velocity` (three contiguous
+// floats, same layout as the float[3] transform fields), so
+// `entity.player.velocity.y = 10` mutates the real component in place, not a
+// copy. `enabled`/`radius`/`height`/`move_speed` are plain read-write
+// numbers/booleans; `grounded` is read-only (it's PlayerControllerUpdate's
+// own per-frame output, not something a script should be able to fake).
+
+struct LuaPlayer
+{
+    Entity *entity;
+};
+
+const char *kPlayerMT = "Singe.PlayerController";
+
+void PushPlayer(lua_State *L, Entity *entity)
+{
+    LuaPlayer *p = (LuaPlayer *)lua_newuserdata(L, sizeof(LuaPlayer));
+    p->entity = entity;
+    luaL_setmetatable(L, kPlayerMT);
+}
+
+int LuaPlayerIndex(lua_State *L)
+{
+    LuaPlayer *p = (LuaPlayer *)luaL_checkudata(L, 1, kPlayerMT);
+    const char *key = luaL_checkstring(L, 2);
+    PlayerControllerComponent &pc = p->entity->player;
+    if (std::strcmp(key, "enabled") == 0)    { lua_pushboolean(L, pc.enabled); return 1; }
+    if (std::strcmp(key, "velocity") == 0)   { PushVec3View(L, &pc.velocity.x); return 1; }
+    if (std::strcmp(key, "grounded") == 0)   { lua_pushboolean(L, pc.grounded); return 1; }
+    if (std::strcmp(key, "radius") == 0)     { lua_pushnumber(L, pc.radius); return 1; }
+    if (std::strcmp(key, "height") == 0)     { lua_pushnumber(L, pc.height); return 1; }
+    if (std::strcmp(key, "move_speed") == 0) { lua_pushnumber(L, pc.move_speed); return 1; }
+    lua_getfield(L, lua_upvalueindex(1), key); // methods (reserved)
+    return 1;
+}
+
+int LuaPlayerNewIndex(lua_State *L)
+{
+    LuaPlayer *p = (LuaPlayer *)luaL_checkudata(L, 1, kPlayerMT);
+    const char *key = luaL_checkstring(L, 2);
+    PlayerControllerComponent &pc = p->entity->player;
+    if (std::strcmp(key, "enabled") == 0)
+    {
+        if (!lua_isboolean(L, 3))
+            return luaL_error(L, "player.enabled expects a boolean");
+        pc.enabled = lua_toboolean(L, 3) != 0;
+        return 0;
+    }
+    if (std::strcmp(key, "velocity") == 0)
+    {
+        float v[3];
+        ParseVec3(L, 3, v);
+        pc.velocity.x = v[0];
+        pc.velocity.y = v[1];
+        pc.velocity.z = v[2];
+        return 0;
+    }
+    if (std::strcmp(key, "radius") == 0)     { pc.radius = (float)luaL_checknumber(L, 3); return 0; }
+    if (std::strcmp(key, "height") == 0)     { pc.height = (float)luaL_checknumber(L, 3); return 0; }
+    if (std::strcmp(key, "move_speed") == 0) { pc.move_speed = (float)luaL_checknumber(L, 3); return 0; }
+    return luaL_error(L, "player: '%s' is read-only or unknown", key);
+}
+
+void RegisterPlayer(lua_State *L)
+{
+    luaL_newmetatable(L, kPlayerMT);        // [mt]
+    lua_newtable(L);                        // [mt, methods]
+    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushcclosure(L, LuaPlayerIndex, 1); // [mt, methods, closure]
+    lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
+    lua_pushcfunction(L, LuaPlayerNewIndex);
+    lua_setfield(L, -3, "__newindex");      // mt.__newindex = fn -> [mt, methods]
+    lua_pop(L, 2);                          // []
+}
+
 // --- Entity ---
 
 void PushEntity(lua_State *L, Entity *entity)
@@ -385,6 +465,7 @@ int LuaEntityIndex(lua_State *L)
     if (std::strcmp(key, "name") == 0) { lua_pushstring(L, e->entity->tag.tag.c_str()); return 1; }
     if (std::strcmp(key, "id") == 0)   { lua_pushinteger(L, e->entity->id); return 1; }
     if (std::strcmp(key, "transform") == 0) { PushTransform(L, e->entity); return 1; }
+    if (std::strcmp(key, "player") == 0)    { PushPlayer(L, e->entity); return 1; }
     lua_getfield(L, lua_upvalueindex(1), key); // methods (reserved)
     return 1;
 }
@@ -806,6 +887,7 @@ bool ScriptEngine::StartSession(Scene &scene, std::string &errors)
     luaL_openlibs(m_lua);
     RegisterVec3(m_lua);
     RegisterTransform(m_lua);
+    RegisterPlayer(m_lua);
     RegisterEntity(m_lua);
     RegisterEngineApi(m_lua);
 
@@ -956,6 +1038,7 @@ void ScriptEngine::EnsureReplState()
     luaL_openlibs(m_repl);
     RegisterVec3(m_repl);
     RegisterTransform(m_repl);
+    RegisterPlayer(m_repl);
     RegisterEntity(m_repl);
     RegisterEngineApi(m_repl);
 
