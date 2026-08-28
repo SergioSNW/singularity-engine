@@ -72,6 +72,9 @@ std::string EnvironmentSettingsToJson(const EnvironmentSettings &env)
     EmitField(root, "post_temperature", env.post_temperature);
     EmitField(root, "post_scale", env.post_scale);
 
+    EmitField(root, "editor_fill_light_enabled", env.editor_fill_light_enabled);
+    EmitField(root, "editor_fill_light_intensity", env.editor_fill_light_intensity);
+
     return json::WritePretty(root);
 }
 
@@ -116,6 +119,9 @@ bool EnvironmentSettingsFromJson(const std::string &text, EnvironmentSettings &o
     out.post_contrast = (float)root.Number("post_contrast", out.post_contrast);
     out.post_temperature = (float)root.Number("post_temperature", out.post_temperature);
     out.post_scale = (float)root.Number("post_scale", out.post_scale);
+
+    out.editor_fill_light_enabled = root.Bool("editor_fill_light_enabled", out.editor_fill_light_enabled);
+    out.editor_fill_light_intensity = (float)root.Number("editor_fill_light_intensity", out.editor_fill_light_intensity);
 
     return true;
 }

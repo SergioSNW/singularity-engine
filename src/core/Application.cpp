@@ -590,12 +590,18 @@ static Mesh BuildPreviewCylinder()
 // Compute per-vertex shade (diffuse + ambient + specular) for a given normal.
 // Used by EmitEntityTris for Gouraud shading: called once per vertex with that
 // vertex's averaged normal, producing smooth lighting interpolation across the
-// triangle face.
+// triangle face. `fill_intensity` is the Editor Working Light (Environment &
+// Shading panel): a flat ambient floor applied here, outside the per-light
+// loop, so it is never attenuated by DirectionalShadowFactor the way a real
+// light's own `ambient` is -- a face fully in shadow still gets this floor.
+// The caller passes 0 outside Editor state (see RenderScenePass), so it never
+// affects Play mode's actual gameplay lighting.
 static void ShadeVertex(const Vec3 &n, const Vec3 &centroid, const Vec3 &cam_pos,
                          const std::vector<RenderLight> &lights,
                          const std::vector<WorldAABB> &occluders,
                          const Entity *self, float ao, float spec_power,
                          float spec_weight, float f0_r, float f0_g, float f0_b,
+                         float fill_intensity,
                          float &out_r, float &out_g, float &out_b)
 {
     Vec3 to_cam = Vec3Sub(cam_pos, centroid);
@@ -603,7 +609,7 @@ static void ShadeVertex(const Vec3 &n, const Vec3 &centroid, const Vec3 &cam_pos
     Vec3 v = (to_cam_len > 1e-5f) ? Vec3Scale(to_cam, 1.0f / to_cam_len)
                                   : Vec3{ 0.0f, 0.0f, 1.0f };
 
-    out_r = out_g = out_b = 0.0f;
+    out_r = out_g = out_b = pbr::AmbientFloor(fill_intensity, ao);
     for (const RenderLight &l : lights)
     {
         float diffuse = std::max(0.0f, Vec3Dot(n, Vec3Scale(l.dir, -1.0f))) * l.intensity;
@@ -655,7 +661,7 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
                            const std::vector<WorldAABB> &occluders,
                            const Entity *self, const Vec3 &cam_pos,
                            const EnvironmentSettings &env,
-                           const MaterialShading &shading)
+                           const MaterialShading &shading, float fill_intensity)
 {
     const float alb_r = std::min(255.0f, color[0] * 255.0f * shading.albedo_multiplier);
     const float alb_g = std::min(255.0f, color[1] * 255.0f * shading.albedo_multiplier);
@@ -708,11 +714,14 @@ static void EmitEntityTris(std::vector<FillTri> &tris, const Mesh &mesh,
             const float f0_b = pbr::DielectricF0(shading.metallic, alb_b / 255.0f);
 
             ShadeVertex(n0, centroid, cam_pos, lights, occluders, self,
-                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr0, sg0, sb0);
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b,
+                        fill_intensity, sr0, sg0, sb0);
             ShadeVertex(n1, centroid, cam_pos, lights, occluders, self,
-                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr1, sg1, sb1);
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b,
+                        fill_intensity, sr1, sg1, sb1);
             ShadeVertex(n2, centroid, cam_pos, lights, occluders, self,
-                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b, sr2, sg2, sb2);
+                        ao, spec_power, spec_weight, f0_r, f0_g, f0_b,
+                        fill_intensity, sr2, sg2, sb2);
         }
 
         FillTri t;
@@ -1069,6 +1078,14 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
     const bool use_lighting = (m_overlay.render_mode != ViewportRenderMode::Unlit);
     const bool draw_wire = (m_overlay.render_mode == ViewportRenderMode::Wireframe);
 
+    // Editor Working Light: a flat ambient fill so shadowed/grazing-angle
+    // faces stay readable while editing. Editor-state only -- Play mode
+    // shows the scene's actual lighting, not an editing aid.
+    const float fill_intensity = (m_state == EngineState::Editor &&
+                                  m_environment.editor_fill_light_enabled)
+        ? std::clamp(m_environment.editor_fill_light_intensity, 0.0f, 1.0f)
+        : 0.0f;
+
     // Gather the scene's active directional lights. With none active
     // the surfaces render at flat albedo (the shading loop falls back).
     std::vector<RenderLight> lights =
@@ -1132,7 +1149,7 @@ void Application::RenderScenePass(SDL_Renderer *renderer, const Mat4 &view_proj,
             MaterialShading shading = ResolveEntityShading(entity);
             EmitEntityTris(tris, *mesh, world, view_proj, near_p, w, h,
                            tint, texture, uvs, lights, occluders, &entity,
-                           cam_pos, m_environment, shading);
+                           cam_pos, m_environment, shading, fill_intensity);
         }
         DrawTriangles(renderer, tris, w, h, &draw_calls);
     }
@@ -1711,9 +1728,13 @@ void Application::RenderMaterialPreview()
 
     static const Mat4 kIdentity = Mat4Identity();
     std::vector<FillTri> tris;
+    const float preview_fill = (m_state == EngineState::Editor &&
+                                m_environment.editor_fill_light_enabled)
+        ? std::clamp(m_environment.editor_fill_light_intensity, 0.0f, 1.0f)
+        : 0.0f;
     EmitEntityTris(tris, mesh, kIdentity, view_proj, near_p, w, h,
                    tint, texture, uvs, lights, {}, nullptr, cam_pos,
-                   m_environment, shading);
+                   m_environment, shading, preview_fill);
     DrawTriangles(renderer, tris, w, h, &m_draw_calls);
 
     // Post-processing (bloom + grade + ACES + gamma LUT) like the viewport.

@@ -72,6 +72,20 @@ struct EnvironmentSettings
     float post_contrast = 1.10f;         // pivot 0.5
     float post_temperature = 0.0f;       // -1 cool (blue) .. +1 warm (orange)
     float post_scale = 1.0f;             // bloom buffer resolution fraction (output stays full-res)
+
+    // --- Editor Working Light ---
+    // A flat, unshadowed ambient fill applied only while editing (Editor
+    // state, Lit mode -- never in Play mode, so gameplay lighting is judged
+    // on its own). Existing per-light `ambient` (Components.h) already sets a
+    // floor for *that* light's own contribution, but a shadowed or
+    // grazing-angle face still reads as ambient*intensity, which can go
+    // near-black. This adds a second, independent floor on top: not part of
+    // any light, so it is never attenuated by DirectionalShadowFactor and
+    // never disappears just because a level has no lights configured yet --
+    // it exists purely so terrain valleys, primitive undersides, and
+    // unlit-looking faces stay readable from any camera angle while you work.
+    bool editor_fill_light_enabled = true;
+    float editor_fill_light_intensity = 0.35f; // 0 = off, 1 = fully flat/shadowless
 };
 
 // Serialize to / from the .env JSON layout described above.

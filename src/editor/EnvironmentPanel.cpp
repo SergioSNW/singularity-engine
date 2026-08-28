@@ -121,6 +121,22 @@ void EnvironmentPanel::OnImGuiRender(float dt)
         }
     }
 
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // --- Editor Working Light ---
+    if (ImGui::CollapsingHeader("Editor Working Light", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawSectionHeader("Enable Fill Light", &m_settings->editor_fill_light_enabled);
+        if (m_settings->editor_fill_light_enabled)
+            DrawSlider("Fill Intensity", &m_settings->editor_fill_light_intensity, 0.0f, 1.0f);
+        TextDisabledWrapped("A flat, unshadowed ambient fill so shadowed faces and "
+                            "terrain valleys stay readable while sculpting, placing, "
+                            "and painting -- from any camera angle. Editor-only: "
+                            "never applied in Play mode, so gameplay lighting is "
+                            "judged on its own.");
+    }
+
     ImGui::End();
 
     if (m_open_material_editor)

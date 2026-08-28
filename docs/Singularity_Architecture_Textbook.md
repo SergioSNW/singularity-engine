@@ -1655,8 +1655,85 @@ pre-existing and unrelated). Process launches and runs without crashing
 across every change in this phase. Painting confirmed visually working
 end-to-end by direct user testing after the dispatch-order fix.
 
+## Phase 43 — Editor Working Light
+
+Phase 43 adds a second, independent ambient source that exists purely to keep
+the editor readable, addressing a gap the existing lighting model always had:
+with a directional light active, a shadowed or grazing-angle face renders at
+roughly that light's own `ambient` value (`Components.h`, default `0.10`) —
+close to black, and with *no* active light, everything skips shading entirely
+and renders at flat full brightness (see Phase 34/37). The dark case is the
+one that hurts editing: inspecting sculpted terrain, placed primitives, or a
+freshly painted material stroke from an angle that happens to face away from
+the sun.
+
+### 43.1 Where It Sits in the Shading Model
+
+`ShadeVertex` (`Application.cpp`) computes, per light, `factor = ambient +
+(1 - ambient) * diffuse * shadow` and sums `factor * light.color` across every
+active light. The Editor Working Light is not another entry in that loop —
+it is a flat value seeded into `out_r/g/b` *before* the loop runs:
+
+```cpp
+out_r = out_g = out_b = pbr::AmbientFloor(fill_intensity, ao);
+for (const RenderLight &l : lights) { ... }   // adds on top, as before
+out_r = std::min(out_r, 1.0f);                // final clamp, unchanged
+```
+
+This placement is the whole design: because it sits outside the per-light
+loop, `DirectionalShadowFactor` (which only ever attenuates a *light's*
+diffuse contribution) has no opportunity to touch it. A face in full shadow
+still gets `fill_intensity` (dimmed by the material's AO, same as a light's
+own ambient floor, via the same `pbr::AmbientFloor` helper) — the fill isn't
+a light that can be shadowed, it's closer to how a bounce-light or a studio
+fill card works: it just always contributes.
+
+### 43.2 Editor-Only, By Construction
+
+The fill's actual value is resolved once, in `RenderScenePass` (and
+independently in `RenderMaterialPreview`, which has its own light list):
+
+```cpp
+const float fill_intensity =
+    (m_state == EngineState::Editor && m_environment.editor_fill_light_enabled)
+        ? std::clamp(m_environment.editor_fill_light_intensity, 0.0f, 1.0f)
+        : 0.0f;
+```
+
+Both are member functions with direct access to `m_state`, so the gate costs
+nothing extra to wire up. In Play mode this is always `0.0f` — the fill never
+reaches `EmitEntityTris`/`ShadeVertex` at all, so gameplay lighting is exactly
+what the scene's actual lights produce, unaffected by the editing aid. There
+is deliberately no separate "game view" render path to gate here: Editor and
+Play share the same `RenderScenePass`, differing only in camera source and
+overlay visibility, so one `m_state` check at the top of the function is
+sufficient.
+
+### 43.3 Settings and Persistence
+
+Two new fields on `EnvironmentSettings` (`Environment.h`):
+`editor_fill_light_enabled` (bool, default `true`) and
+`editor_fill_light_intensity` (float, default `0.35`, UI range `0..1`).
+Both round-trip through the existing `.env` JSON serializer
+(`EnvironmentSettingsToJson`/`EnvironmentSettingsFromJson`) alongside sky,
+fog, and post-processing, and are missing-key-safe: an older `.env` file
+without them simply keeps the struct defaults on load, so this did not
+require touching `assets/environment/default.env`.
+
+The Environment & Shading panel (`EnvironmentPanel.cpp`) gained a new
+**Editor Working Light** collapsing section, following the same
+`DrawSectionHeader`/`DrawSlider` pattern as Sky/Fog/Post-Processing above it:
+a checkbox to enable/disable, and — only while enabled — an intensity slider.
+
+### 43.4 Verification
+
+Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only, both
+pre-existing). Process launches and runs without crashing with the fill wired
+into both render call sites (main viewport and Material Preview).
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
-UI polish sprint, and the v0.41.0-alpha surface & material painting system.*
+UI polish sprint, the v0.41.0-alpha surface & material painting system, and the
+v0.42.0-alpha editor working light.*
 

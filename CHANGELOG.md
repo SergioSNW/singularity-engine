@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.42.0-alpha] — 2026-08-28
+
+### Added
+
+- **Editor Working Light** (`EnvironmentSettings::editor_fill_light_enabled`/`editor_fill_light_intensity`, `Environment.{h,cpp}`, `ShadeVertex`/`EmitEntityTris`/`RenderScenePass` in `Application.cpp`): a flat, unshadowed ambient fill applied on top of the existing per-light shading so terrain valleys, primitive undersides, and grazing-angle faces stay readable while sculpting, placing, and painting, regardless of camera angle or whether the scene has any lights configured yet. Unlike a light's own `ambient` floor (`Components.h`), the fill is added outside the per-light loop, so `DirectionalShadowFactor` never attenuates it — a face fully in a directional-light's shadow still gets the fill. Applied wherever `RenderScenePass`/`RenderMaterialPreview` run in Editor state only (`m_state == EngineState::Editor`); always 0 in Play mode, so gameplay lighting is judged on its own, unaffected by the editing aid. Exposed as a new **Editor Working Light** section in the Environment & Shading panel (`EnvironmentPanel.cpp`) — an on/off toggle plus a 0–1 intensity slider, persisted to the `.env` asset like every other environment setting. Default: on, intensity `0.35`.
+
 ## [0.41.0-alpha] — 2026-08-28
 
 ### Added
