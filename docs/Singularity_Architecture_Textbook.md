@@ -1849,10 +1849,55 @@ checks passing with values matching hand-computed expectations exactly
 and was then removed. The editor launches and runs without crashing with the
 controller wired into the real per-frame Play-mode update loop.
 
+## Phase 45 — Paint Brush Cursor Feedback (Hotfix)
+
+A small but user-visible gap in Phase 42's Paint Mode: there was no on-screen
+indicator of where a paint stroke would land or how large the brush was.
+Root cause was two related oversights in `Application::UpdatePaintMode`:
+
+1. **The shared cursor state was never written.** The landscape brush-ring
+   cursor (`m_landscape_brush_valid`/`m_landscape_brush_center`, drawn by
+   `DrawLandscapeBrushCursor`) is shared infrastructure — Phase 44's Paint
+   Mode was always meant to reuse it rather than invent a second cursor
+   system, and the render-side dispatch already checks a single flag to
+   decide gizmo vs. brush-ring. But only `UpdateLandscapeBrush` (the sculpt
+   path) ever *wrote* to those two fields. Paint strokes ran against stale
+   or default cursor state, and the dispatch condition itself
+   (`IsLandscapeSculptMode()`) doesn't even consider Paint Mode, so outside
+   the Landscape workspace it fell through to drawing the **transform
+   gizmo** instead — an unrelated, distracting widget appearing over the
+   selected entity while the user was trying to paint.
+2. **The raycast itself was gated behind the mouse button.** `UpdatePaintMode`
+   bundled "where does the ray hit" together with "apply the stroke" behind
+   one `lmb`-gated early return, unlike `UpdateLandscapeBrush`, which
+   raycasts on every hovered frame regardless of the mouse button and only
+   gates the *sculpt application* behind it. Cursor feedback requires the
+   former to run continuously; the fix separates them, matching the sculpt
+   brush's structure.
+
+Both fixed in `UpdatePaintMode`: the landscape raycast branch now sets
+`m_landscape_brush_valid = true` / `m_landscape_brush_center = hit` on every
+hovered frame (moving the `lmb` check to *after* the cursor update, gating
+only the `LandscapeSculpt` call and the entity color-swap), and the
+render-side dispatch condition became `IsLandscapeSculptMode() || m_paint_mode`
+instead of just the former.
+
+A second report — painted colors appearing to revert when switching between
+the Landscape and Level Design workspaces — was investigated but not
+reproduced in code: `SyncWorkspaceSideEffects` only toggles panel
+visibility, nothing touches `LandscapeComponent::colors` or forces a stale
+mesh rebuild. The leading theory is that the gizmo-popping-up bug above was
+the actual cause of that report too (switching to Level Design while Paint
+Mode was active would suddenly show the transform gizmo, which reasonably
+reads as "something about my paint just changed" even though the underlying
+data never moved) — flagged to the user to retest specifically now that the
+gizmo no longer appears during Paint Mode, rather than assumed fixed without
+evidence.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
 UI polish sprint, the v0.41.0-alpha surface & material painting system, the
-v0.42.0-alpha editor working light, and the v0.43.0-alpha player capsule
-character controller.*
+v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
+character controller, and the v0.43.1-alpha paint brush cursor hotfix.*
 

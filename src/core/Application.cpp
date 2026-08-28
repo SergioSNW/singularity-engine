@@ -1356,8 +1356,10 @@ void Application::RenderEditorOverlay(SDL_Renderer *renderer, const Mat4 &view_p
     // Phase 34 viewport override: in Landscape Mode the transform gizmo is
     // replaced by the sculpt brush cursor — a projected brush-sphere ring
     // tracking the mouse on the terrain (hit computed by UpdateLandscapeBrush
-    // earlier in the frame). The gizmo stays suppressed while sculpting.
-    if (IsLandscapeSculptMode())
+    // earlier in the frame). Paint Mode reuses the exact same ring (set by
+    // UpdatePaintMode instead) so both brushes give identical positional
+    // feedback. The gizmo stays suppressed while either is active.
+    if (IsLandscapeSculptMode() || m_paint_mode)
     {
         if (m_landscape_brush_valid)
         {
@@ -2512,6 +2514,14 @@ void Application::UpdateAssetPlacement(const GizmoFrame &gf)
 
 void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
 {
+    // Cursor feedback: recomputed every hovered frame below (mirroring
+    // UpdateLandscapeBrush), regardless of whether the mouse is held --
+    // otherwise there is no way to see the brush radius/position before
+    // committing to a stroke, and RenderEditorOverlay's dispatch (which
+    // reuses this same landscape-brush-ring cursor for Paint mode) would
+    // draw whatever was left over from the last sculpt session instead.
+    m_landscape_brush_valid = false;
+
     if (ImGui::IsKeyPressed(ImGuiKey_Escape))
     {
         m_paint_mode = false;
@@ -2522,13 +2532,10 @@ void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
         return;
     }
 
-    const bool lmb = gf.hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const bool ready = m_scene && gf.hovered && gf.vp_width > 1.0f && gf.vp_height > 1.0f && lmb;
-    if (!ready)
+    if (!m_scene || !gf.hovered || gf.vp_width <= 1.0f || gf.vp_height <= 1.0f)
     {
-        // Mouse released, or drifted off the viewport mid-drag: close any
-        // open transaction rather than leave it dangling until the next
-        // stroke starts (same discipline as UpdateLandscapeBrush).
+        // Mouse drifted off the viewport mid-drag: close any open
+        // transaction rather than leave it dangling until the next stroke.
         if (m_painting_stroke)
         {
             m_painting_stroke = false;
@@ -2559,6 +2566,7 @@ void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
 
     const int preset_index = std::clamp(m_paint_material_index, 0, kLandscapePaintPaletteCount - 1);
     const PaintMaterialPreset &preset = kLandscapePaintPalette[preset_index];
+    const bool lmb = ImGui::IsMouseDown(ImGuiMouseButton_Left);
 
     // Landscape surface first: a continuous per-vertex blend, same as the
     // Landscape panel's own Paint tool, reusing its radius/strength/falloff
@@ -2566,6 +2574,22 @@ void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
     Vec3 hit;
     if (Entity *land = RaycastAnyLandscape(gf.cam_pos, dir, hit))
     {
+        // Cursor tracks the hover point every frame, independent of lmb --
+        // this is what makes the brush ring show up (and move correctly)
+        // before you commit to a stroke, matching UpdateLandscapeBrush.
+        m_landscape_brush_valid = true;
+        m_landscape_brush_center = hit;
+        if (!lmb)
+        {
+            if (m_painting_stroke)
+            {
+                m_painting_stroke = false;
+                m_paint_stroke_target = -1;
+                if (m_history)
+                    m_history->EndEntityEdit();
+            }
+            return;
+        }
         if (m_paint_stroke_target != land->id)
         {
             if (m_painting_stroke && m_history)
@@ -2590,6 +2614,10 @@ void Application::UpdatePaintMode(const GizmoFrame &gf, float dt)
     // Otherwise a regular entity (Wall/Floor/Ramp/...): a discrete material
     // swap, not a blend, so it only needs to happen once per entity per
     // stroke -- re-touching the same entity while still held is a no-op.
+    // No landscape-ring cursor for this case (that ring is a terrain-surface
+    // concept); the entity itself is the only feedback, same as before.
+    if (!lmb)
+        return;
     if (Entity *ent = RaycastAnyEntity(gf.cam_pos, dir, GetPrimarySkipEntity()))
     {
         if (m_paint_stroke_target != ent->id)

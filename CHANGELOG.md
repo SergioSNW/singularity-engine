@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.43.1-alpha] — 2026-08-28
+
+### Fixed
+
+- **Paint Mode had no brush cursor feedback** (`Application::UpdatePaintMode`, `Application.cpp`): the landscape brush-ring cursor (`m_landscape_brush_valid`/`m_landscape_brush_center`, drawn by `DrawLandscapeBrushCursor`) was only ever set by `UpdateLandscapeBrush` — the sculpt path — never by `UpdatePaintMode`. Painting had no on-screen indicator of the brush's position or radius at all, and the cursor-draw dispatch checked `IsLandscapeSculptMode()` specifically, so outside the Landscape workspace it fell through to drawing the **transform gizmo** instead, over whatever entity happened to be selected — a jarring, unrelated widget appearing while trying to paint. Reported by the user as the brush placement feeling "uncalibrated."
+- **Paint Mode's raycast only ran while the mouse was held** (same function): `UpdatePaintMode` gated its entire body — including the raycast that would have positioned a cursor — behind `lmb` (left mouse button down), unlike `UpdateLandscapeBrush`, which raycasts on every hovered frame and only gates the *actual sculpt/paint application* behind the mouse button. Restructured to match: the landscape raycast and cursor position now update every frame the viewport is hovered, and only the color blend / material swap requires the button held.
+- Combined fix: the cursor-draw dispatch now also fires for `m_paint_mode` (reusing the exact same ring as sculpt, set by whichever of the two functions is actually running that frame — dispatch priority already guarantees only one ever runs), and the gizmo is correctly suppressed while painting, matching sculpt's existing behavior.
+
+### Investigated, not reproduced
+
+- User-reported: painted terrain colors appearing to "go away" when switching between the Landscape and Level Design workspaces. Read through `SyncWorkspaceSideEffects`/`ApplyWorkspace` and found nothing that touches `LandscapeComponent::colors` or forces a mesh rebuild from stale data — workspace switching only changes panel visibility. The leading suspect is the transform-gizmo-popping-up bug above: in Level Design workspace `IsLandscapeSculptMode()` is unconditionally false, so pre-fix, switching there while Paint Mode was active would suddenly draw the full transform gizmo over the selected entity, which plausibly reads as "something about my paint just changed." Flagged to the user to retest specifically after this fix rather than assumed fixed.
+
 ## [0.43.0-alpha] — 2026-08-28
 
 ### Added
