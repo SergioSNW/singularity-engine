@@ -21,6 +21,7 @@ struct Entity
     DirectionalLightComponent light;  // directional light feeding the shading pipeline
     LandscapeComponent landscape;  // procedural heightfield terrain (Phase 34)
     AnimationComponent animation;  // transform keyframe tracks (Phase 35)
+    PlayerControllerComponent player;  // WASD + gravity character controller (Stage 2)
 
     // Scene graph links. Entities are stored in the Scene by stable address
     // (std::unique_ptr), so these raw pointers stay valid until the entity is

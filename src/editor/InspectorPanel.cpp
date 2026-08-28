@@ -698,6 +698,44 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::PopID();
     }
 
+    // --- Player Controller (Stage 2) ---
+    if (ComponentHeader("Player Controller", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Player Controller");
+        entity->player.enabled = false;
+        entity->player.velocity = { 0.0f, 0.0f, 0.0f };
+        entity->player.radius = 0.4f;
+        entity->player.height = 1.8f;
+        entity->player.move_speed = 5.0f;
+        entity->player.grounded = false;
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
+    }))
+    {
+        ImGui::PushID("PlayerController");
+        BeginEditSession("Edit Player Controller");
+        ImGui::Checkbox("Enabled##Player", &entity->player.enabled);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Radius##Player", &entity->player.radius, 0.02f, 0.05f, 5.0f, "%.2f");
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Height##Player", &entity->player.height, 0.05f, 0.1f, 10.0f, "%.2f");
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Move Speed##Player", &entity->player.move_speed, 0.1f, 0.1f, 30.0f, "%.2f");
+        EndEditSessionIfReleased();
+        TextDisabledWrapped("WASD moves relative to the active camera's yaw; gravity, "
+                            "landscape ground-snapping, and AABB collision against every "
+                            "other Solid collider run only in Play mode.");
+        if (entity->player.enabled)
+            ImGui::TextDisabled("Grounded: %s   Velocity: %.2f, %.2f, %.2f",
+                                entity->player.grounded ? "yes" : "no",
+                                entity->player.velocity.x, entity->player.velocity.y,
+                                entity->player.velocity.z);
+        ImGui::PopID();
+    }
+
     // --- Script ---
     if (ComponentHeader("Script", "Clear", [this, entity]() {
         if (m_history)

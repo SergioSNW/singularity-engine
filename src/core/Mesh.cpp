@@ -207,17 +207,169 @@ static Mesh BuildRampMesh(float half_x, float height, float half_z)
     return mesh;
 }
 
-const char *const kBuiltinCubePath  = "__builtin_cube__";
-const char *const kBuiltinWallPath  = "__builtin_wall__";
-const char *const kBuiltinFloorPath = "__builtin_floor__";
-const char *const kBuiltinRampPath  = "__builtin_ramp__";
+// A vertical capsule -- a cylindrical body capped by two hemispheres --
+// base-pivoted at y=0 like Wall/Floor/Ramp (sits on the placement point
+// rather than being buried in it). `radius` is the cap/cylinder radius,
+// `height` the total capsule height including both caps; the cylindrical
+// section spans max(0, height - 2*radius).
+//
+// Built from three ring-quad bands (top hemisphere, cylinder side, bottom
+// hemisphere), all sharing one winding rule verified once and reused
+// everywhere: within a band, the two rings passed to `quad(a,b,c,d)` are
+// always the higher-y ring first (a,b) then the lower-y ring (c,d), at the
+// same pair of azimuth angles (phi0, phi1) in increasing order -- e.g. for
+// the cylinder wall, `cross(b-a, c-a)` at a=(cx0,y_hi,sx0), b=(cx1,y_hi,sx1),
+// c=(cx1,y_lo,sx1) works out to (2*half*cx0*dphi, 0, 2*half*sx0*dphi) for
+// small dphi, i.e. proportional to the outward radial direction (cx0, 0,
+// sx0) at that point -- confirmed outward, not inward. The hemisphere bands
+// reduce to the same higher-y-ring-first relationship (shown by expanding
+// each ring's y = center +/- radius*cos(theta) with theta increasing away
+// from the equator), so the same ordering keeps them outward too.
+static Mesh BuildCapsuleMesh(float radius, float height)
+{
+    radius = std::max(radius, 0.05f);
+    height = std::max(height, radius * 2.0f);
+
+    Mesh mesh;
+    mesh.name = "Capsule Primitive";
+
+    const int slices = 12;
+    const int cap_rings = 4;
+    const float PI = 3.14159265358979f;
+    const float half_pi = PI * 0.5f;
+    const float bottom_c = radius;           // bottom hemisphere center height
+    const float top_c = height - radius;     // top hemisphere center height
+    const float cyl_half = top_c - bottom_c; // cylinder body length (>= 0)
+
+    mesh.positions.reserve((size_t)(2 * cap_rings + 1) * slices * 6);
+    mesh.uvs.reserve(mesh.positions.capacity());
+
+    auto quad = [&](const Vec3 &a, const Vec3 &b, const Vec3 &c, const Vec3 &d) {
+        mesh.positions.push_back(a); mesh.positions.push_back(b); mesh.positions.push_back(c);
+        mesh.positions.push_back(a); mesh.positions.push_back(c); mesh.positions.push_back(d);
+        mesh.uvs.push_back({0.0f, 0.0f}); mesh.uvs.push_back({1.0f, 0.0f}); mesh.uvs.push_back({1.0f, 1.0f});
+        mesh.uvs.push_back({0.0f, 0.0f}); mesh.uvs.push_back({1.0f, 1.0f}); mesh.uvs.push_back({0.0f, 1.0f});
+    };
+    // theta: polar angle from this hemisphere's own pole (0 = pole/apex,
+    // half_pi = equator, matching the cylinder's radius). sign = +1 for the
+    // top cap (pole above the equator) or -1 for the bottom cap (pole below).
+    auto hemi_point = [&](float theta, float phi, float center_y, float sign) -> Vec3 {
+        const float r = radius * std::sin(theta);
+        const float y = center_y + sign * radius * std::cos(theta);
+        return Vec3{ r * std::cos(phi), y, r * std::sin(phi) };
+    };
+
+    // --- Top hemisphere: ring 0 at the apex (theta=0) down to the equator (theta=half_pi) ---
+    for (int r = 0; r < cap_rings; ++r)
+    {
+        const float theta0 = (float)r / cap_rings * half_pi;       // nearer apex -> higher y
+        const float theta1 = (float)(r + 1) / cap_rings * half_pi; // nearer equator -> lower y
+        for (int s = 0; s < slices; ++s)
+        {
+            const float phi0 = (float)s / slices * 2.0f * PI;
+            const float phi1 = (float)(s + 1) / slices * 2.0f * PI;
+            quad(hemi_point(theta0, phi0, top_c, 1.0f),
+                hemi_point(theta0, phi1, top_c, 1.0f),
+                hemi_point(theta1, phi1, top_c, 1.0f),
+                hemi_point(theta1, phi0, top_c, 1.0f));
+        }
+    }
+
+    // --- Cylinder body ---
+    if (cyl_half > 1e-5f)
+    {
+        for (int s = 0; s < slices; ++s)
+        {
+            const float phi0 = (float)s / slices * 2.0f * PI;
+            const float phi1 = (float)(s + 1) / slices * 2.0f * PI;
+            const float cx0 = std::cos(phi0), sx0 = std::sin(phi0);
+            const float cx1 = std::cos(phi1), sx1 = std::sin(phi1);
+            quad({ radius * cx0, top_c, radius * sx0 },
+                { radius * cx1, top_c, radius * sx1 },
+                { radius * cx1, bottom_c, radius * sx1 },
+                { radius * cx0, bottom_c, radius * sx0 });
+        }
+    }
+
+    // --- Bottom hemisphere: ring 0 at the equator (theta=half_pi, mirrored to
+    // theta=0 in hemi_point's own frame) down to the apex (theta=0 -> y=0) ---
+    for (int r = 0; r < cap_rings; ++r)
+    {
+        const float theta0 = half_pi - (float)r / cap_rings * half_pi;       // nearer equator -> higher y
+        const float theta1 = half_pi - (float)(r + 1) / cap_rings * half_pi; // nearer apex -> lower y
+        for (int s = 0; s < slices; ++s)
+        {
+            const float phi0 = (float)s / slices * 2.0f * PI;
+            const float phi1 = (float)(s + 1) / slices * 2.0f * PI;
+            quad(hemi_point(theta0, phi0, bottom_c, -1.0f),
+                hemi_point(theta0, phi1, bottom_c, -1.0f),
+                hemi_point(theta1, phi1, bottom_c, -1.0f),
+                hemi_point(theta1, phi0, bottom_c, -1.0f));
+        }
+    }
+
+    // Sparse wireframe: the two ring seams (hemisphere/cylinder junctions,
+    // or just the equator when there's no cylinder section) plus four
+    // pole-to-pole longitude lines -- enough to read as a capsule silhouette
+    // in Wireframe mode without hand-building a full lat/long grid.
+    mesh.edge_lines.reserve(2 * slices * 2 + 4 * (2 * cap_rings + (cyl_half > 1e-5f ? 1 : 0)) * 2);
+    auto ring_at = [&](float y, float r) {
+        for (int s = 0; s < slices; ++s)
+        {
+            const float phi0 = (float)s / slices * 2.0f * PI;
+            const float phi1 = (float)(s + 1) / slices * 2.0f * PI;
+            mesh.edge_lines.push_back({ r * std::cos(phi0), y, r * std::sin(phi0) });
+            mesh.edge_lines.push_back({ r * std::cos(phi1), y, r * std::sin(phi1) });
+        }
+    };
+    ring_at(top_c, radius);
+    ring_at(bottom_c, radius);
+    for (int q = 0; q < 4; ++q)
+    {
+        const float phi = (float)q / 4.0f * 2.0f * PI;
+        const float cphi = std::cos(phi), sphi = std::sin(phi);
+        Vec3 prev = hemi_point(0.0f, phi, top_c, 1.0f); // apex
+        for (int r = 1; r <= cap_rings; ++r)
+        {
+            const Vec3 cur = hemi_point((float)r / cap_rings * half_pi, phi, top_c, 1.0f);
+            mesh.edge_lines.push_back(prev);
+            mesh.edge_lines.push_back(cur);
+            prev = cur;
+        }
+        if (cyl_half > 1e-5f)
+        {
+            const Vec3 cur{ radius * cphi, bottom_c, radius * sphi };
+            mesh.edge_lines.push_back(prev);
+            mesh.edge_lines.push_back(cur);
+            prev = cur;
+        }
+        for (int r = 1; r <= cap_rings; ++r)
+        {
+            const Vec3 cur = hemi_point(half_pi - (float)r / cap_rings * half_pi, phi, bottom_c, -1.0f);
+            mesh.edge_lines.push_back(prev);
+            mesh.edge_lines.push_back(cur);
+            prev = cur;
+        }
+    }
+
+    mesh.bounds_min = { -radius, 0.0f,   -radius };
+    mesh.bounds_max = {  radius, height,  radius };
+    return mesh;
+}
+
+const char *const kBuiltinCubePath    = "__builtin_cube__";
+const char *const kBuiltinWallPath    = "__builtin_wall__";
+const char *const kBuiltinFloorPath   = "__builtin_floor__";
+const char *const kBuiltinRampPath    = "__builtin_ramp__";
+const char *const kBuiltinCapsulePath = "__builtin_capsule__";
 
 const char *BuiltinPrimitiveDisplayName(const std::string &path)
 {
-    if (path == kBuiltinCubePath)  return "Cube";
-    if (path == kBuiltinWallPath)  return "Wall";
-    if (path == kBuiltinFloorPath) return "Floor";
-    if (path == kBuiltinRampPath)  return "Ramp";
+    if (path == kBuiltinCubePath)    return "Cube";
+    if (path == kBuiltinWallPath)    return "Wall";
+    if (path == kBuiltinFloorPath)   return "Floor";
+    if (path == kBuiltinRampPath)    return "Ramp";
+    if (path == kBuiltinCapsulePath) return "Capsule";
     return nullptr;
 }
 
@@ -489,6 +641,13 @@ MeshLibrary::MeshLibrary()
     Mesh ramp = BuildRampMesh(2.0f, 2.0f, 1.5f);
     ComputeVertexNormals(ramp);
     m_meshes.emplace(kBuiltinRampPath, std::move(ramp));
+
+    // Matches PlayerControllerComponent's own default radius/height, so a
+    // freshly-created player's visual capsule and its actual collision
+    // capsule agree at spawn time.
+    Mesh capsule = BuildCapsuleMesh(0.4f, 1.8f);
+    ComputeVertexNormals(capsule);
+    m_meshes.emplace(kBuiltinCapsulePath, std::move(capsule));
 }
 
 const Mesh* MeshLibrary::Load(const std::string &path, std::string *error)

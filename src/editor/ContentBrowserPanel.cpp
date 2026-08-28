@@ -244,10 +244,11 @@ ContentBrowserPanel::VisibleEntries() const
 
     if (m_current == kPrimitivesVirtualPath)
     {
-        out.emplace_back(kBuiltinCubePath,  FileKind::Mesh);
-        out.emplace_back(kBuiltinWallPath,  FileKind::Mesh);
-        out.emplace_back(kBuiltinFloorPath, FileKind::Mesh);
-        out.emplace_back(kBuiltinRampPath,  FileKind::Mesh);
+        out.emplace_back(kBuiltinCubePath,    FileKind::Mesh);
+        out.emplace_back(kBuiltinWallPath,    FileKind::Mesh);
+        out.emplace_back(kBuiltinFloorPath,   FileKind::Mesh);
+        out.emplace_back(kBuiltinRampPath,    FileKind::Mesh);
+        out.emplace_back(kBuiltinCapsulePath, FileKind::Mesh);
         return out;
     }
 

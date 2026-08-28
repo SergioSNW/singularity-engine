@@ -132,6 +132,15 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
         "physics_material", json::Value::MakeString(e.collider.physics_material));
     ent.object.emplace_back("collider", std::move(collider));
 
+    // Only the authoring fields persist -- velocity/grounded are runtime
+    // state, reset naturally each time the scene re-enters Play mode.
+    json::Value player = json::Value::MakeObject();
+    player.object.emplace_back("enabled", json::Value::MakeBool(e.player.enabled));
+    player.object.emplace_back("radius", json::Value::MakeNumber(e.player.radius));
+    player.object.emplace_back("height", json::Value::MakeNumber(e.player.height));
+    player.object.emplace_back("move_speed", json::Value::MakeNumber(e.player.move_speed));
+    ent.object.emplace_back("player", std::move(player));
+
     json::Value script = json::Value::MakeObject();
     script.object.emplace_back("path", json::Value::MakeString(e.script.path));
     ent.object.emplace_back("script", std::move(script));
@@ -232,6 +241,14 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
             (unsigned int)col->Number("layers", (double)e.collider.layers);
         e.collider.physics_material =
             col->String("physics_material", e.collider.physics_material);
+    }
+
+    if (const json::Value *ply = ent.Find("player"); ply && ply->IsObject())
+    {
+        e.player.enabled = ply->Bool("enabled", e.player.enabled);
+        e.player.radius = (float)ply->Number("radius", e.player.radius);
+        e.player.height = (float)ply->Number("height", e.player.height);
+        e.player.move_speed = (float)ply->Number("move_speed", e.player.move_speed);
     }
 
     if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())

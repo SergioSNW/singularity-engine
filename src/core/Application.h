@@ -224,6 +224,30 @@ private:
     // RenderScenePass's skip_entity.
     Entity *RaycastAnyEntity(const Vec3 &cam_pos, const Vec3 &dir, Entity *skip);
 
+    // Stage 2 character controller:
+    //   CreatePlayer         - spawn a Player entity (Capsule mesh,
+    //                          player.enabled = true, sensible defaults) a
+    //                          few meters in front of the editor camera,
+    //                          mirroring CreateLandscape's convention.
+    //   FindPlayerEntity     - the first entity in the scene with
+    //                          player.enabled, or nullptr. There is no
+    //                          "the" player concept beyond that first match
+    //                          (mirrors FindActiveCamera's own single-match
+    //                          convention for cameras).
+    //   UpdatePlayerController - Play-mode-only Update step: reads WASD via
+    //                          Input, builds a world-space move direction
+    //                          from the active gameplay camera's yaw, and
+    //                          calls the headless PlayerControllerUpdate.
+    //   UpdatePlayerCameraFollow - Play-mode-only: re-points the active
+    //                          camera entity's position at the player's
+    //                          position plus a fixed, yaw-relative offset,
+    //                          replacing whatever static position it was
+    //                          authored at while Play is active.
+    Entity *CreatePlayer();
+    Entity *FindPlayerEntity() const;
+    void UpdatePlayerController(float dt);
+    void UpdatePlayerCameraFollow();
+
     // Phase 35 animation & timeline foundation:
     //   ApplyTimeline        - editor Update stage: advance the global clock
     //                          (wrap/clamp per Loop) and write the sampled pose

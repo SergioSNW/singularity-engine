@@ -79,6 +79,28 @@ struct ColliderComponent
     std::string physics_material;    // .pmat asset key, or empty = Default
 };
 
+// Stage 2: a WASD-and-gravity character controller, independent of
+// PhysicsManager's generic AABB solid/solid resolver (which pushes whichever
+// body has the higher entity id -- not appropriate for player movement, and
+// not id-ordering-safe). The controller owns its own per-axis collision
+// resolution against every OTHER entity's ColliderComponent (see
+// PlayerController.h), so a player entity does not need `collider.enabled`
+// set on itself for this to work; `radius`/`height` describe an upright
+// capsule (cylinder radius `radius`, total height `height` including both
+// hemispherical caps) used purely for the controller's own collision/ground
+// checks, decoupled from whatever mesh the entity happens to render (the
+// same way ColliderComponent's own extents are already decoupled from mesh
+// bounds elsewhere in this engine).
+struct PlayerControllerComponent
+{
+    bool enabled = false;
+    Vec3 velocity{ 0.0f, 0.0f, 0.0f };  // world-space, world units/sec
+    float radius = 0.4f;
+    float height = 1.8f;
+    float move_speed = 5.0f;            // world units/sec, horizontal
+    bool grounded = false;
+};
+
 // Gameplay script reference. An empty `path` means no script; any other value
 // names a Lua file (e.g. "assets/scripts/player.lua") loaded by the
 // ScriptEngine when the scene enters play mode. The ScriptEngine binds the

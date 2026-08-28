@@ -45,6 +45,14 @@ struct EntitySnapshot
     unsigned int collider_layers = 1u;
     std::string collider_physics_material;
 
+    // Player Controller (Stage 2): only the authoring fields ride the undo
+    // snapshot, same reasoning as SceneSerializer -- velocity/grounded are
+    // runtime state, not something a user edit should undo.
+    bool  player_enabled = false;
+    float player_radius = 0.4f;
+    float player_height = 1.8f;
+    float player_move_speed = 5.0f;
+
     std::string script_path;
 
     std::string audio_path;
@@ -103,6 +111,10 @@ static void CaptureSnapshot(const Entity &e, EntitySnapshot &out)
     std::memcpy(out.collider_extents, &e.collider.extents.x, sizeof(out.collider_extents));
     out.collider_layers = e.collider.layers;
     out.collider_physics_material = e.collider.physics_material;
+    out.player_enabled = e.player.enabled;
+    out.player_radius = e.player.radius;
+    out.player_height = e.player.height;
+    out.player_move_speed = e.player.move_speed;
     out.script_path = e.script.path;
     out.audio_path = e.audio.path;
     out.audio_loop = e.audio.loop;
@@ -155,6 +167,10 @@ static void ApplySnapshot(Scene *scene, const EntitySnapshot &snap)
     std::memcpy(&e->collider.extents.x, snap.collider_extents, sizeof(snap.collider_extents));
     e->collider.layers = snap.collider_layers;
     e->collider.physics_material = snap.collider_physics_material;
+    e->player.enabled = snap.player_enabled;
+    e->player.radius = snap.player_radius;
+    e->player.height = snap.player_height;
+    e->player.move_speed = snap.player_move_speed;
     e->script.path = snap.script_path;
     e->audio.path = snap.audio_path;
     e->audio.loop = snap.audio_loop;
@@ -416,6 +432,10 @@ void CommandHistory::EndEntityEdit()
                         m_edit_before->collider_layers == after.collider_layers &&
                         m_edit_before->collider_physics_material ==
                             after.collider_physics_material &&
+                        m_edit_before->player_enabled == after.player_enabled &&
+                        m_edit_before->player_radius == after.player_radius &&
+                        m_edit_before->player_height == after.player_height &&
+                        m_edit_before->player_move_speed == after.player_move_speed &&
                         m_edit_before->script_path == after.script_path &&
                         m_edit_before->audio_path == after.audio_path &&
                         m_edit_before->audio_loop == after.audio_loop &&

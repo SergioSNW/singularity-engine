@@ -43,6 +43,7 @@
 #include "core/Console.h"
 #include "core/AssetImporter.h"
 #include "core/Landscape.h"
+#include "core/PlayerController.h"
 #include "core/Input.h"
 
 #include <SDL.h>
@@ -2324,6 +2325,52 @@ Entity *Application::CreateLandscape()
     return &created;
 }
 
+// Stage 2: spawn a player entity (Capsule mesh, PlayerControllerComponent
+// enabled with defaults matching the capsule's own built size) a few meters
+// in front of the editor camera, mirroring CreateLandscape's convention.
+// Undoable like any spawn. Does not touch m_scene's collider/camera setup --
+// movement/collision is entirely the new controller's own responsibility
+// (see PlayerController.cpp), and the camera binds to whichever entity
+// FindActiveCamera() already resolves to, unchanged by this call.
+Entity *Application::CreatePlayer()
+{
+    if (!m_scene)
+        return nullptr;
+
+    Entity &created = m_scene->CreateEntity("Player");
+    created.mesh.path = kBuiltinCapsulePath;
+    created.player.enabled = true;
+    created.material.color[0] = 0.85f;
+    created.material.color[1] = 0.55f;
+    created.material.color[2] = 0.20f;
+    created.material.color[3] = 1.0f;
+
+    const float yaw = m_editor_camera.yaw * 3.1415926535f / 180.0f;
+    created.transform.position[0] = m_editor_camera.position.x - std::sin(yaw) * 4.0f;
+    created.transform.position[1] = m_editor_camera.position.y;
+    created.transform.position[2] = m_editor_camera.position.z - std::cos(yaw) * 4.0f;
+
+    if (m_history)
+        m_history->PushSpawn(created, "Create 'Player'");
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_scene_status = "Created 'Player'";
+    PushToast("Created 'Player'");
+    return &created;
+}
+
+// The first entity with player.enabled, or nullptr. Mirrors FindActiveCamera's
+// single-match convention -- there is no multi-player concept here.
+Entity *Application::FindPlayerEntity() const
+{
+    if (!m_scene)
+        return nullptr;
+    for (auto &e : m_scene->GetEntities())
+        if (e->player.enabled)
+            return e.get();
+    return nullptr;
+}
+
 bool Application::IsLandscapeSculptMode() const
 {
     if (m_workspace_manager.GetWorkspace() != WorkspaceManager::Workspace::Landscape)
@@ -2991,6 +3038,72 @@ Entity *Application::RaycastAnyEntity(const Vec3 &cam_pos, const Vec3 &dir, Enti
         }
     }
     return best;
+}
+
+// Reads WASD, builds a world-space move direction from the active gameplay
+// camera's yaw (falling back to the editor camera's yaw if the scene has no
+// camera entity, matching CaptureGameplayCamera's own fallback), and hands
+// off to the headless PlayerControllerUpdate. Play-mode only.
+void Application::UpdatePlayerController(float dt)
+{
+    if (m_state != EngineState::Play || !m_scene)
+        return;
+    Entity *player = FindPlayerEntity();
+    if (!player)
+        return;
+
+    Entity *cam_entity = FindActiveCamera();
+    const float yaw_deg = cam_entity ? cam_entity->camera.yaw : m_editor_camera.yaw;
+    const float yaw = yaw_deg * 3.1415926535f / 180.0f;
+
+    // Same yaw-only forward/right basis as UpdateCameraControls's fly-cam
+    // movement -- no pitch, so looking up/down while walking on level ground
+    // doesn't creep the player up/down.
+    const float fx = -std::sin(yaw), fz = -std::cos(yaw);
+    const float rx = -fz, rz = fx;
+
+    Input &input = Input::Instance();
+    float mv_f = 0.0f, mv_r = 0.0f;
+    if (input.GetKey(SDL_SCANCODE_W) || input.GetKey(SDL_SCANCODE_UP))    mv_f += 1.0f;
+    if (input.GetKey(SDL_SCANCODE_S) || input.GetKey(SDL_SCANCODE_DOWN))  mv_f -= 1.0f;
+    if (input.GetKey(SDL_SCANCODE_A) || input.GetKey(SDL_SCANCODE_LEFT))  mv_r -= 1.0f;
+    if (input.GetKey(SDL_SCANCODE_D) || input.GetKey(SDL_SCANCODE_RIGHT)) mv_r += 1.0f;
+
+    Vec3 dir{ fx * mv_f + rx * mv_r, 0.0f, fz * mv_f + rz * mv_r };
+    const float len = Vec3Length(dir);
+    if (len > 1e-5f)
+        dir = Vec3Scale(dir, 1.0f / len);
+
+    PlayerControllerUpdate(*player, *m_scene, Vec3Scale(dir, player->player.move_speed), dt);
+}
+
+// Re-points the active gameplay camera entity's position at the player's
+// position plus a fixed offset, rotated by the camera's own yaw so it stays
+// behind the player as the camera looks around -- the "bind the viewport
+// camera to the player" half of Stage 2. Only ever touches position, never
+// the camera entity's yaw/pitch/fov, and only while Play is active;
+// ExitPlayMode's scene-snapshot restore puts the camera entity back at its
+// authored position afterward.
+void Application::UpdatePlayerCameraFollow()
+{
+    if (m_state != EngineState::Play || !m_scene)
+        return;
+    Entity *player = FindPlayerEntity();
+    if (!player)
+        return;
+    Entity *cam_entity = FindActiveCamera();
+    if (!cam_entity)
+        return;
+
+    const float yaw = cam_entity->camera.yaw * 3.1415926535f / 180.0f;
+    constexpr float kBehind = 5.0f;
+    constexpr float kAbove = 2.2f;
+    cam_entity->transform.position[0] =
+        player->transform.position[0] + std::sin(yaw) * kBehind;
+    cam_entity->transform.position[1] =
+        player->transform.position[1] + kAbove;
+    cam_entity->transform.position[2] =
+        player->transform.position[2] + std::cos(yaw) * kBehind;
 }
 
 bool Application::ComputeDropWorldPosFromMouse(Vec3 &out)
@@ -4138,6 +4251,7 @@ bool Application::Init(int width, int height, const char *title)
             m_material_panel->OpenCreateWizard();
         }
     } });
+    cp.Register({ "Create Player", "Create", "", [this]() { CreatePlayer(); } });
 
     // Material Preview (Phase 38): the dedicated interactive viewport over the
     // active material (test mesh lit by the environment settings). It needs the
@@ -4928,6 +5042,15 @@ void Application::Run()
                 m_physics->Step(*m_scene, *m_script_engine);
                 m_profiler.EndStage(Profiler::Physics);
             }
+
+            // Stage 2 character controller: WASD + gravity + landscape/AABB
+            // collision, then the gameplay camera follows the resolved
+            // position. Independent of PhysicsManager above -- the player
+            // does not set collider.enabled on itself (see
+            // PlayerControllerComponent's doc comment), so this never
+            // double-resolves against that generic solid/solid pass.
+            UpdatePlayerController((float)dt);
+            UpdatePlayerCameraFollow();
         }
 
         // Phase 35 timeline playback: advances the global clock and writes the

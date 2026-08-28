@@ -1731,9 +1731,128 @@ Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only, both
 pre-existing). Process launches and runs without crashing with the fill wired
 into both render call sites (main viewport and Material Preview).
 
+## Phase 44 — Player Capsule Character Controller (Stage 2)
+
+Phase 44 is the engine's first player-controlled character: a capsule that
+walks, falls, and collides, driven by WASD and gravity rather than the
+editor's fly-camera or a Lua script. It deliberately does not extend
+`PhysicsManager` (Phase 14's generic AABB solid/solid resolver) -- that
+system pushes whichever body has the *higher entity id* out of a collision,
+a rule that makes sense for two inanimate props but not for "the player
+should never be the one that gets shoved." The controller is its own
+self-contained module instead.
+
+### 44.1 `PlayerControllerComponent` and the Headless Module
+
+`PlayerControllerComponent` (`Components.h`) is a plain data component like
+every other one in this engine (`enabled` gate, in-class defaults):
+`velocity` (world-space, persists across frames so falling behaves like
+falling and not "instant terminal velocity every frame"), `radius`/`height`
+(an upright capsule shape used purely for collision math, independent of
+whatever mesh the entity renders -- the same decoupling `ColliderComponent`'s
+own `extents` already has from mesh bounds), `move_speed`, and `grounded`.
+
+The actual physics lives in `src/core/PlayerController.{h,cpp}`, a new module
+following `Landscape.cpp`'s established shape: pure logic, no ImGui, no
+`Application` state, no rendering -- just `Entity&`/`Scene&`/math in, mutated
+transform/component out. `Application::UpdatePlayerController` is the only
+caller, and its whole job is translating *editor/input* concerns (which keys
+are down, which camera's yaw defines "forward") into the one value the
+headless function actually needs: a world-space desired horizontal velocity.
+
+### 44.2 One Resolver, Three Collider Types
+
+The brief asked for collision against "Walls, Floors, Ramps" -- three shapes
+that behave differently (block, support, and approximately-support). Rather
+than write per-type logic, `ResolveEntityCollisions` (in the module's
+anonymous namespace) resolves the player's AABB against every enabled Solid
+collider **one axis at a time**: X, then Z, then Y, each tested against a
+trial position that only changes along that one axis. This single generic
+rule produces all three behaviors for free:
+
+- A **Wall** in the player's path is caught on the X or Z pass. Only that
+  axis clamps; the player's Y (falling, standing, whatever it was doing)
+  is untouched, so a wall blocks walking without also arresting a fall.
+- A **Floor** the player is falling onto is caught on the Y pass: the trial
+  Y position overlaps the floor's box, `next.y < pos.y` (moving downward)
+  identifies this as "landing on top" rather than "hitting a ceiling," and
+  the player is clamped to the floor's top face with `grounded` set. This is
+  not a special "floor" code path -- it is the exact same per-axis overlap
+  test as the wall case, just on a different axis with a different sign of
+  motion.
+- A **Ramp** gets the same box treatment as a Wall, since `ColliderComponent`
+  has no slope shape anywhere in this engine. This is an explicit,
+  acknowledged approximation ("basic AABB collision," per the brief) --
+  walking up a ramp will feel like a staircase of box collisions, not a true
+  slope walk, until `ColliderComponent` grows a shape beyond box extents.
+
+### 44.3 Landscape Ground Snap as the Floor of Last Resort
+
+After entity collision resolves, the controller checks every landscape in
+the scene via the same `LandscapeWorldToLocal`/`LandscapeSampleHeightLocal`
+pair the sculpt/paint brushes already use (Phase 34/42), takes the highest
+applicable ground height across all of them, and clamps the player up to it
+if they're at or below it. This runs *after* entity collision specifically
+so a Floor entity placed above the terrain (a platform) is respected --
+landscape snap only ever raises the player, never overrides a surface
+they're already legitimately standing on.
+
+### 44.4 Play-Mode Camera Binding
+
+`CaptureGameplayCamera` (Phase 27) already resolves the Play-mode view from
+a dedicated scene Camera entity's own `transform`/`camera.yaw`/`camera.pitch`
+-- not from the free-fly editor camera, which the brief's phrasing suggested
+was the pre-existing behavior but, per direct inspection, was not: Play mode
+was already static at wherever the Camera entity had been authored. Stage 2
+makes that position dynamic: `Application::UpdatePlayerCameraFollow`
+re-points the active camera entity's `transform.position` at the player's
+position plus a fixed offset (5 units behind, 2.2 above), rotated by the
+camera's own yaw so it trails consistently as the camera looks around. It
+never touches yaw/pitch/fov, and only runs in Play state; `ExitPlayMode`'s
+existing full-scene-snapshot restore (Phase 16.1) puts the camera back at
+its authored position with no extra bookkeeping needed here.
+
+WASD movement direction is built from that same active camera's yaw
+(falling back to the editor camera's yaw if the scene has no camera entity
+at all), reusing the exact yaw-only forward/right basis
+`UpdateCameraControls`'s fly-cam movement already established -- one basis
+formula, two consumers.
+
+A known rough edge, disclosed rather than silently shipped: `EnterPlayMode`
+captures a single fixed camera-transition blend target via
+`BeginCameraTransition` at the moment Play starts, before the follow camera
+has moved anything. Since the follow logic keeps repositioning the camera
+entity throughout that ~0.6s blend, the transition can end with a small pop
+once `GetActiveCameraPose` switches from the blend to calling
+`CaptureGameplayCamera` directly. Fixing it properly would mean making the
+transition's blend target itself follow the player during the blend, a
+change to the transition system this phase didn't make.
+
+### 44.5 Verification
+
+The standalone g++ smoke-test harness used earlier this session for
+isolated logic checks (the landscape heightmap loader, `BuildRampMesh`'s
+winding) could not link in this environment on any of several attempts --
+`ld` exits with code 116 and no diagnostic text at all, on freshly-produced
+unsigned executables regardless of output location, consistent with the AV
+interference already seen once this session. Rather than fight the
+toolchain, verification ran the *actual shipped object code* instead: a
+temporary self-test call in `Application::Init()` exercised
+`PlayerControllerUpdate` against three synthetic, in-memory `Scene`/`Entity`
+objects (gravity + landscape ground-snap; horizontal Wall collision, with a
+ground-plane bug in the *test* itself caught and fixed along the way when
+the first run showed the player falling through open space and phasing past
+the wall entirely; landing atop a Floor suspended in open air), wrote
+PASS/FAIL plus the exact numeric results to a file, confirmed all seven
+checks passing with values matching hand-computed expectations exactly
+(e.g. the wall test's player stopping at x=4.1, precisely `wall_face - radius`),
+and was then removed. The editor launches and runs without crashing with the
+controller wired into the real per-frame Play-mode update loop.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
-UI polish sprint, the v0.41.0-alpha surface & material painting system, and the
-v0.42.0-alpha editor working light.*
+UI polish sprint, the v0.41.0-alpha surface & material painting system, the
+v0.42.0-alpha editor working light, and the v0.43.0-alpha player capsule
+character controller.*
 
