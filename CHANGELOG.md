@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.46.0-alpha] — 2026-08-28
+
+### Fixed
+
+- **PhysicsManager double-resolved the player against solid geometry once a Trigger script needed it enabled** (`src/core/PhysicsManager.cpp`, `ResolveSolid`): `PlayerControllerComponent` was designed to own all of the player's own AABB collision (so it can slide/land correctly) by never setting `player.collider.enabled` — but that meant the player was invisible to `PhysicsManager`'s broad-phase entirely, so it could never dispatch `OnTriggerEnter`/`Exit` for it either. The user hit this directly: getting a goal-zone trigger script to fire required manually enabling the player's collider, which then let `PhysicsManager`'s generic solid/solid resolver *also* push the player out of every Wall it already handles itself. Fixed with a guard in `ResolveSolid`: skip position correction whenever either body has `player.enabled` set, while leaving overlap detection and Enter/Exit dispatch untouched — the player can now safely have `collider.enabled = true` (needed for trigger visibility) without ever being double-moved.
+
+### Added
+
+- **The player now ships with a collider by default**: both `Application::CreatePlayer()` and the one-time startup demo scene set `collider.enabled = true` / `type = Solid` with box extents matching the capsule's own `radius`/`height`, so a freshly-created (or default-scene) player works with Trigger Zones immediately — the manual toggle the user needed is no longer necessary.
+- **A player entity in the default scene**: the startup demo scene (Camera/Directional Light/Wall/Bouncer/Trigger Zone/Landscape) now also spawns a ready-to-play Player capsule, positioned in the open area in front of the other demo content.
+- **Jump** (Spacebar): `PlayerControllerComponent::jump_speed` (default 7.0, Inspector-editable, Lua-writable as `entity.player.jump_speed`), applied in `PlayerControllerUpdate` as a vertical velocity impulse when `jump_pressed` is true *and* the player was grounded as of the previous frame (edge-triggered on the caller's side via `Input::GetKeyDown`, not `GetKey`, so holding Space doesn't re-launch every grounded frame). Persisted through `SceneSerializer` and tracked by `CommandHistory`'s undo snapshot, matching every other authoring field on the component.
+- **Two more ready-to-use example scripts**: `assets/scripts/collectible.lua` (`Game.AddScore(10)` once per pickup, via a local per-script flag since there's no Lua-facing way to destroy/hide an entity yet) and `damage_zone.lua` (`Game.SetHealth` -25, `Game.Lose()` at zero). All four example scripts (`goal_zone`, `hazard_zone`, `collectible`, `damage_zone`) now guard on `other.player.enabled` so a scene's other moving bodies (e.g. the demo scene's script-driven Bouncer) can't accidentally trip them.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test in `Application::Init()` confirmed, against the real compiled code: a grounded player's `jump_pressed=true` call produces `velocity.y ≈ 6.67` (jump_speed minus one frame of gravity) with `grounded` cleared; and a player-enabled entity placed deep inside a Solid Wall's AABB is left at its exact starting position after a real `PhysicsManager::Step()` (previously it would have been pushed out). Both checks passed with exact expected values, then removed. Editor launches and runs without crashing; the default scene now reports 11 entities (up from 10) with the new Player present.
+
+### Not implemented (scoped out, flagged for the user)
+
+- A visual input-remapping panel ("select/create/edit" key bindings through the UI) does not exist — confirmed via a full search of `src/editor/`. WASD and the new Jump key are hardcoded scancode reads in `UpdatePlayerController`, matching the *existing* convention (WASD was already hardcoded, not routed through the `Input::RegisterAction`/`RegisterAxis` system, which itself has no persistence and is Lua-only today). Building a real rebinding editor is a legitimate, separable feature — recommended as a follow-up decision for the user rather than folded into this pass.
+
 ## [0.45.0-alpha] — 2026-08-28
 
 ### Added

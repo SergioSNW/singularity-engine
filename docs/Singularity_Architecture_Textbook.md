@@ -2090,12 +2090,143 @@ checks passed with exact expected values (`health=50`, `score=15`,
 editor also launches and runs without crashing with the HUD wired into the
 real Play-mode viewport.
 
+## Phase 48 — Closing the Player/Trigger/Physics Loop, and Jump
+
+Direct user testing of Phase 47's win screen surfaced a real architecture
+gap: getting a goal-zone trigger to fire required manually enabling
+`player.collider.enabled`, which then caused a *second* problem invisible
+until you went looking for it.
+
+### 48.1 Why the Player Was Invisible to Triggers
+
+`PlayerControllerComponent` (Phase 44) was built to own all of its own AABB
+collision against Walls/Floors/Ramps (`PlayerController.cpp`'s per-axis
+resolver), and deliberately never set `player.collider.enabled` — the doc
+comment on the component says so directly: avoiding double-resolution
+against `PhysicsManager`'s generic solid/solid pass. That reasoning was
+correct for *solid* geometry, but had a side effect nobody had traced
+through yet: `PhysicsManager::Step()`'s broad-phase only builds a `Body` for
+entities with `collider.enabled` (`PhysicsManager.cpp:70-89`), and *all*
+Enter/Exit event dispatch — solid **and** trigger — flows through that same
+body list. A player with no collider is invisible to `PhysicsManager`
+entirely, so `OnTriggerEnter` could never fire for it, full stop. There was
+no partial-participation mode.
+
+### 48.2 The Guard, Not a Redesign
+
+The fix keeps the player enrolled in `PhysicsManager`'s broad-phase (so
+trigger dispatch works) while making sure it can never be the one thing
+`PhysicsManager` actually *moves*. `ResolveSolid` (`PhysicsManager.cpp:30-62`)
+already had one such guard — `if (b.entity->parent) return;`, skipping
+resolution for parented bodies — so the pattern already existed; this adds
+a second: `if (a.entity->player.enabled || b.entity->player.enabled)
+return;`. Since `ResolveSolid` is only ever reached for pairs where *both*
+sides are `Type::Solid` (a trigger-involved pair short-circuits to dispatch
+only, at `PhysicsManager.cpp:110-124`, well before `ResolveSolid` is ever
+called), this guard has no effect on trigger detection at all — it only
+stops the generic push, exactly the piece that was fighting
+`PlayerController.cpp`'s own resolution.
+
+With the guard in place, `player.collider.enabled = true` becomes the
+*correct*, intended way to make a player visible to triggers — not a
+workaround — so both `Application::CreatePlayer()` and the one-time startup
+demo scene now set it by default (`type = Solid`, extents matching the
+capsule's own `radius`/`height`, center raised by `height/2` since the
+entity's own origin is the feet per the base-pivot convention every
+placeable primitive in this engine already uses). The demo scene also gained
+a Player entity outright — previously the only way to get one into a scene
+was the Command Palette's "Create Player", which meant the very first Play
+press after a fresh checkout had no capsule to control at all.
+
+### 48.3 Jump
+
+`PlayerControllerComponent::jump_speed` (default 7.0) and a `jump_pressed`
+parameter added to `PlayerControllerUpdate`'s signature. The check —
+`if (jump_pressed && p.grounded)` — reads `grounded` as it stood at the
+*end of the previous frame*, since this frame hasn't re-evaluated it yet;
+a jump can only launch from a surface, never chain in mid-air. Edge-
+triggering is the caller's job: `Application::UpdatePlayerController` reads
+`Input::GetKeyDown(SDL_SCANCODE_SPACE)` (fires once per press), not
+`GetKey` (which would relaunch every single grounded frame the key stays
+held) — the same "who owns what" split as the rest of the controller: the
+headless module does physics, `Application.cpp` translates raw input into
+the values that physics needs.
+
+`jump_speed` was threaded through every place `move_speed` already reaches
+— Inspector slider, `entity.player.jump_speed` in Lua (read-write, same
+pattern as the other scalar fields), `SceneSerializer`, and
+`CommandHistory`'s undo snapshot — on the same rationale as those fields:
+it's an authoring property, not runtime state, so it belongs wherever the
+rest of the component's authoring surface already lives.
+
+### 48.4 A Small Script Library
+
+Two more examples joined `goal_zone.lua`/`hazard_zone.lua`:
+`collectible.lua` (`Game.AddScore(10)` once, via a script-local flag —
+there's still no Lua-facing way to destroy or hide an entity, noted as a
+real gap rather than worked around riskily; see 48.5) and `damage_zone.lua`
+(`Game.SetHealth(Game.GetHealth() - 25)`, `Game.Lose()` at zero). All four
+scripts gained an `if not other.player.enabled then return end` guard —
+without it, the demo scene's own script-driven Bouncer (a Phase 14 fixture
+that physically moves and overlaps things) could trip a goal or hazard zone
+by accident. `entity.player.enabled` reading `false` for a non-player
+entity (rather than needing a nil-check) is exactly why Phase 46 made
+`entity.player` always return a valid userdata instead of `nil`.
+
+### 48.5 Considered and Rejected: Entity Destruction from Lua
+
+A "collectible that disappears" would need some way for a script to
+destroy or hide its own entity. Investigated and deliberately not added
+this phase: `PhysicsManager::Step()` calls into Lua (`OnTriggerEnter` etc.)
+*while iterating its own `bodies` list* for the current frame, and
+`ScriptEngine::UpdateSession` likewise iterates its own `m_scripted` list
+while calling `OnUpdate`. A synchronous `entity:destroy()` invoked from
+inside one of those Lua callbacks would mutate the scene's entity list out
+from under whichever C++ loop is currently mid-iteration over it —
+undefined behavior at best, in a system this rasterizer's whole
+architecture otherwise takes real care to avoid (see, e.g.,
+`ResolveEntityCollisions`'s explicit per-axis ordering, or `ApplySnapshot`'s
+careful landscape-mesh invalidation). A real fix needs deferred destruction
+(mark now, actually remove at a safe point after the frame's physics/script
+passes complete) — legitimate future work, not a rushed addition to a
+"give me some example scripts" request.
+
+### 48.6 Also Considered: A Visual Input-Remapping Panel
+
+The user asked whether players should be able to "select, create and edit"
+movement bindings (Jump included) through the editor UI. Checked first
+rather than assumed: no such panel exists anywhere in `src/editor/` — the
+`Input` class's `RegisterAction`/`RegisterAxis` (Phase 41) are Lua-only
+entry points with no persistence (in-memory `std::unordered_map`s, gone the
+moment the process exits) and no visual editor at all. WASD and the new
+Jump key are hardcoded `SDL_SCANCODE_*` reads directly in
+`UpdatePlayerController`, matching movement's own pre-existing convention
+rather than introducing a second, inconsistent input paradigm for one key.
+A real rebinding editor (a panel, a persisted keymap file, actual
+integration with the existing Action/Axis system) is a legitimate,
+separable feature — flagged to the user as a deliberate scope decision, not
+silently skipped.
+
+### 48.7 Verification
+
+Same self-test-in-`Init()` technique as Phase 44/46/47 (the standalone g++
+harness still can't link in this environment): one check confirmed a
+grounded player's `jump_pressed=true` call produces `velocity.y ≈ 6.67`
+(jump_speed minus one frame of gravity) with `grounded` cleared; a second
+placed a `player.enabled` entity deep inside a Solid Wall's AABB and ran a
+real `PhysicsManager::Step()`, confirming its position was completely
+unchanged (previously it would have been pushed out). Both passed with
+exact expected values, then the self-test was removed. The editor launches
+and runs without crashing, and the default scene's entity count moved from
+10 to 11 with the new Player present.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
 UI polish sprint, the v0.41.0-alpha surface & material painting system, the
 v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
 character controller, the v0.43.1-alpha paint brush cursor hotfix, the
-v0.44.0-alpha Lua player-controller binding, and the v0.45.0-alpha game
-state management & gameplay HUD.*
+v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
+state management & gameplay HUD, and the v0.46.0-alpha player/trigger/
+physics fix and jump.*
 

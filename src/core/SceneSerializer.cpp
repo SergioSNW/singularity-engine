@@ -139,6 +139,7 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     player.object.emplace_back("radius", json::Value::MakeNumber(e.player.radius));
     player.object.emplace_back("height", json::Value::MakeNumber(e.player.height));
     player.object.emplace_back("move_speed", json::Value::MakeNumber(e.player.move_speed));
+    player.object.emplace_back("jump_speed", json::Value::MakeNumber(e.player.jump_speed));
     ent.object.emplace_back("player", std::move(player));
 
     json::Value script = json::Value::MakeObject();
@@ -249,6 +250,7 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
         e.player.radius = (float)ply->Number("radius", e.player.radius);
         e.player.height = (float)ply->Number("height", e.player.height);
         e.player.move_speed = (float)ply->Number("move_speed", e.player.move_speed);
+        e.player.jump_speed = (float)ply->Number("jump_speed", e.player.jump_speed);
     }
 
     if (const json::Value *scr = ent.Find("script"); scr && scr->IsObject())

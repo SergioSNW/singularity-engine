@@ -707,6 +707,7 @@ void InspectorPanel::OnImGuiRender(float dt)
         entity->player.radius = 0.4f;
         entity->player.height = 1.8f;
         entity->player.move_speed = 5.0f;
+        entity->player.jump_speed = 7.0f;
         entity->player.grounded = false;
         if (m_history)
         {
@@ -725,7 +726,9 @@ void InspectorPanel::OnImGuiRender(float dt)
         EndEditSessionIfReleased();
         ImGui::DragFloat("Move Speed##Player", &entity->player.move_speed, 0.1f, 0.1f, 30.0f, "%.2f");
         EndEditSessionIfReleased();
-        TextDisabledWrapped("WASD moves relative to the active camera's yaw; gravity, "
+        ImGui::DragFloat("Jump Speed##Player", &entity->player.jump_speed, 0.1f, 0.0f, 30.0f, "%.2f");
+        EndEditSessionIfReleased();
+        TextDisabledWrapped("Spacebar jumps when grounded. WASD moves relative to the active camera's yaw; gravity, "
                             "landscape ground-snapping, and AABB collision against every "
                             "other Solid collider run only in Play mode.");
         if (entity->player.enabled)

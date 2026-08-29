@@ -411,6 +411,7 @@ int LuaPlayerIndex(lua_State *L)
     if (std::strcmp(key, "radius") == 0)     { lua_pushnumber(L, pc.radius); return 1; }
     if (std::strcmp(key, "height") == 0)     { lua_pushnumber(L, pc.height); return 1; }
     if (std::strcmp(key, "move_speed") == 0) { lua_pushnumber(L, pc.move_speed); return 1; }
+    if (std::strcmp(key, "jump_speed") == 0) { lua_pushnumber(L, pc.jump_speed); return 1; }
     lua_getfield(L, lua_upvalueindex(1), key); // methods (reserved)
     return 1;
 }
@@ -439,6 +440,7 @@ int LuaPlayerNewIndex(lua_State *L)
     if (std::strcmp(key, "radius") == 0)     { pc.radius = (float)luaL_checknumber(L, 3); return 0; }
     if (std::strcmp(key, "height") == 0)     { pc.height = (float)luaL_checknumber(L, 3); return 0; }
     if (std::strcmp(key, "move_speed") == 0) { pc.move_speed = (float)luaL_checknumber(L, 3); return 0; }
+    if (std::strcmp(key, "jump_speed") == 0) { pc.jump_speed = (float)luaL_checknumber(L, 3); return 0; }
     return luaL_error(L, "player: '%s' is read-only or unknown", key);
 }
 

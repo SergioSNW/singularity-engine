@@ -42,6 +42,17 @@ void ResolveSolid(const Body &a, Body &b)
         return;
     if (b.entity->parent)
         return;
+    // A player-controlled entity owns its own AABB collision resolution
+    // (PlayerController.cpp) so it can slide along walls and land on floors
+    // correctly; it only sets collider.enabled so PhysicsManager can still
+    // see it for trigger detection (OnTriggerEnter/Exit). Resolving position
+    // here too would double-correct it every frame the two systems disagree
+    // by even a fraction. Guarding on either side: if the player sorts as
+    // `a` (lower id), `b` (the other, non-player body) must not be pushed
+    // by the player's presence either -- only `a`'s own resolution should
+    // ever move `a`, and there is none here.
+    if (a.entity->player.enabled || b.entity->player.enabled)
+        return;
 
     // Sign from the two centers: push B further away from A on that axis.
     float sign;

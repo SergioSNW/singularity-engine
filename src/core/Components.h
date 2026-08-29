@@ -98,6 +98,7 @@ struct PlayerControllerComponent
     float radius = 0.4f;
     float height = 1.8f;
     float move_speed = 5.0f;            // world units/sec, horizontal
+    float jump_speed = 7.0f;            // world units/sec, vertical launch speed (Spacebar, grounded only)
     bool grounded = false;
 };
 

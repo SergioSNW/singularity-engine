@@ -107,7 +107,8 @@ Vec3 ResolveEntityCollisions(const Entity &self, Scene &scene, Vec3 pos, const V
 } // namespace
 
 void PlayerControllerUpdate(Entity &self, Scene &scene,
-                            const Vec3 &desired_horizontal_velocity, float dt)
+                            const Vec3 &desired_horizontal_velocity,
+                            bool jump_pressed, float dt)
 {
     PlayerControllerComponent &p = self.player;
     if (!p.enabled || dt <= 0.0f)
@@ -119,6 +120,17 @@ void PlayerControllerUpdate(Entity &self, Scene &scene,
     // persist across frames independent of whatever the player is pressing.
     p.velocity.x = desired_horizontal_velocity.x;
     p.velocity.z = desired_horizontal_velocity.z;
+
+    // Jump: checked against `grounded` as it stood at the end of the
+    // *previous* frame (this frame hasn't re-evaluated it yet), so a jump
+    // can only launch from a surface, never chain mid-air. The caller is
+    // responsible for edge-triggering `jump_pressed` (once per keypress,
+    // not held) -- this function doesn't debounce it.
+    if (jump_pressed && p.grounded)
+    {
+        p.velocity.y = p.jump_speed;
+        p.grounded = false;
+    }
 
     constexpr float kGravity = 20.0f;        // world units/sec^2
     constexpr float kTerminalFall = -40.0f;  // clamp so a long drop can't tunnel through a thin floor in one frame

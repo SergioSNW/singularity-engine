@@ -10,14 +10,17 @@ class Scene;
 // Application.cpp owns turning WASD + camera yaw into `desired_horizontal_
 // velocity` and calls this once per Play-mode frame.
 
-// Advance `self`'s PlayerControllerComponent for one frame: applies gravity,
-// snaps horizontal velocity to `desired_horizontal_velocity` (world-space,
-// Y ignored -- no acceleration/friction modeling, this is a "basic" brief),
-// resolves per-axis AABB collision against every OTHER entity's enabled
-// Solid collider (so walls block, floors/ramps support -- see the .cpp for
-// why one axis-separated resolver handles all three), then snaps to the
+// Advance `self`'s PlayerControllerComponent for one frame: applies a jump
+// impulse if `jump_pressed` is true and the player was grounded as of the
+// end of the previous frame, then gravity, then snaps horizontal velocity
+// to `desired_horizontal_velocity` (world-space, Y ignored -- no
+// acceleration/friction modeling, this is a "basic" brief), resolves
+// per-axis AABB collision against every OTHER entity's enabled Solid
+// collider (so walls block, floors/ramps support -- see the .cpp for why
+// one axis-separated resolver handles all three), then snaps to the
 // nearest landscape surface below the resolved position if one exists. Does
 // nothing if `self.player.enabled` is false. Mutates `self.transform.
 // position` and `self.player.velocity`/`.grounded`.
 void PlayerControllerUpdate(Entity &self, Scene &scene,
-                            const Vec3 &desired_horizontal_velocity, float dt);
+                            const Vec3 &desired_horizontal_velocity,
+                            bool jump_pressed, float dt);

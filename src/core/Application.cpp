@@ -2352,6 +2352,18 @@ Entity *Application::CreatePlayer()
     created.material.color[2] = 0.20f;
     created.material.color[3] = 1.0f;
 
+    // A Solid collider matching the capsule's own radius/height, purely so
+    // PhysicsManager's broad-phase can see the player and dispatch trigger
+    // events (OnTriggerEnter/Exit) to its script -- PhysicsManager skips
+    // ever actually moving a player.enabled entity (see ResolveSolid's
+    // guard), so this can't double-resolve against PlayerController's own
+    // wall/floor collision.
+    created.collider.enabled = true;
+    created.collider.type = ColliderComponent::Type::Solid;
+    created.collider.center = { 0.0f, created.player.height * 0.5f, 0.0f };
+    created.collider.extents = { created.player.radius, created.player.height * 0.5f,
+                                 created.player.radius };
+
     const float yaw = m_editor_camera.yaw * 3.1415926535f / 180.0f;
     created.transform.position[0] = m_editor_camera.position.x - std::sin(yaw) * 4.0f;
     created.transform.position[1] = m_editor_camera.position.y;
@@ -3113,7 +3125,12 @@ void Application::UpdatePlayerController(float dt)
     if (len > 1e-5f)
         dir = Vec3Scale(dir, 1.0f / len);
 
-    PlayerControllerUpdate(*player, *m_scene, Vec3Scale(dir, player->player.move_speed), dt);
+    // GetKeyDown, not GetKey: edge-triggered so holding Space doesn't
+    // re-launch every frame the moment the player is grounded again.
+    const bool jump_pressed = input.GetKeyDown(SDL_SCANCODE_SPACE);
+
+    PlayerControllerUpdate(*player, *m_scene, Vec3Scale(dir, player->player.move_speed),
+                          jump_pressed, dt);
 }
 
 // Re-points the active gameplay camera entity's position at the player's
@@ -4035,6 +4052,26 @@ bool Application::Init(int width, int height, const char *title)
     trigger_zone.collider.enabled = true;
     trigger_zone.collider.type = ColliderComponent::Type::Trigger;
     trigger_zone.script.path = "assets/scripts/trigger.lua";
+
+    // Stage 2/3: a player ready to press Play on immediately, with a
+    // Solid collider already enabled (see CreatePlayer's comment on why --
+    // PhysicsManager needs to see it to dispatch trigger events, but never
+    // moves it, since PlayerController.cpp owns its own collision).
+    Entity &player = m_scene->CreateEntity("Player");
+    player.mesh.path = kBuiltinCapsulePath;
+    player.player.enabled = true;
+    player.material.color[0] = 0.85f;
+    player.material.color[1] = 0.55f;
+    player.material.color[2] = 0.20f;
+    player.material.color[3] = 1.0f;
+    player.collider.enabled = true;
+    player.collider.type = ColliderComponent::Type::Solid;
+    player.collider.center = { 0.0f, player.player.height * 0.5f, 0.0f };
+    player.collider.extents = { player.player.radius, player.player.height * 0.5f,
+                                player.player.radius };
+    player.transform.position[0] = 0.0f;
+    player.transform.position[1] = 0.0f;
+    player.transform.position[2] = 3.0f;
 
     m_scene->Meta().name = "Default";
 
