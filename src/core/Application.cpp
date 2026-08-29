@@ -2049,6 +2049,12 @@ void Application::EnterPlayMode()
     // snapshot below discards every other in-play mutation.
     m_game = GameplayState();
 
+    // Stage 4: fresh footstep/landing audio state, so a stale mid-air/
+    // mid-cadence value from a previous session can't fire a spurious
+    // landing thump or an off-beat first footstep this session.
+    m_footstep_timer = 0.0f;
+    m_player_was_grounded = false;
+
     // Snapshot the whole scene graph in-memory (reuses the JSON serializer).
     // Any mutation made during play — flythrough camera moves, transform
     // edits, scene changes — is thrown away on Stop.
@@ -3085,10 +3091,30 @@ Entity *Application::RaycastAnyEntity(const Vec3 &cam_pos, const Vec3 &dir, Enti
     return best;
 }
 
+// Stage 4: maps PlayerControllerComponent::ground_material_index to a
+// footstep sample by the palette entry's *name* rather than its numeric
+// index, so this stays correct even if kLandscapePaintPalette's order ever
+// changes. -1 (airborne, or a surface that matched nothing) and any name
+// without a matching sample both fall back to the generic footstep.
+static const char *FootstepPathForMaterial(int index)
+{
+    if (index >= 0 && index < kLandscapePaintPaletteCount)
+    {
+        const char *name = kLandscapePaintPalette[index].name;
+        if (std::strcmp(name, "Grass") == 0) return "assets/audio/footstep_grass.wav";
+        if (std::strcmp(name, "Stone") == 0) return "assets/audio/footstep_stone.wav";
+        if (std::strcmp(name, "Metal") == 0) return "assets/audio/footstep_metal.wav";
+        if (std::strcmp(name, "Dirt")  == 0) return "assets/audio/footstep_dirt.wav";
+    }
+    return "assets/audio/footstep_default.wav";
+}
+
 // Reads WASD, builds a world-space move direction from the active gameplay
 // camera's yaw (falling back to the editor camera's yaw if the scene has no
 // camera entity, matching CaptureGameplayCamera's own fallback), and hands
-// off to the headless PlayerControllerUpdate. Play-mode only.
+// off to the headless PlayerControllerUpdate. Play-mode only. Also drives
+// the Stage 4 movement audio (jump/land/footsteps) around that same call,
+// since PlayerController.cpp itself stays deliberately audio-free.
 void Application::UpdatePlayerController(float dt)
 {
     if (m_state != EngineState::Play || !m_scene)
@@ -3129,8 +3155,43 @@ void Application::UpdatePlayerController(float dt)
     // re-launch every frame the moment the player is grounded again.
     const bool jump_pressed = input.GetKeyDown(SDL_SCANCODE_SPACE);
 
+    // Same grounded check PlayerControllerUpdate itself uses to decide
+    // whether the jump actually launches -- read here, before the call,
+    // purely so the sound only plays when the jump really happens.
+    if (jump_pressed && player->player.grounded && m_audio)
+        m_audio->Play("assets/audio/jump.wav", 0.7f, false);
+
     PlayerControllerUpdate(*player, *m_scene, Vec3Scale(dir, player->player.move_speed),
                           jump_pressed, dt);
+
+    // Landing thump: a false->true edge on grounded. m_player_was_grounded
+    // carries the *pre-call* state across frames (set at the bottom of this
+    // function), since PlayerControllerUpdate just overwrote grounded above.
+    if (!m_player_was_grounded && player->player.grounded && m_audio)
+        m_audio->Play("assets/audio/land.wav", 0.6f, false);
+
+    // Footsteps: a fixed cadence while actually moving on the ground. `len`
+    // (computed above, before PlayerControllerUpdate snapped it into
+    // velocity) is the WASD input magnitude -- 0 when no movement key is
+    // held, regardless of residual velocity from a wall-slide, so standing
+    // still against a wall doesn't keep stepping.
+    constexpr float kFootstepInterval = 0.35f; // seconds between steps
+    if (player->player.grounded && len > 1e-5f)
+    {
+        m_footstep_timer += dt;
+        if (m_footstep_timer >= kFootstepInterval)
+        {
+            m_footstep_timer = 0.0f;
+            if (m_audio)
+                m_audio->Play(FootstepPathForMaterial(player->player.ground_material_index),
+                              0.5f, false);
+        }
+    }
+    else
+    {
+        m_footstep_timer = 0.0f;
+    }
+    m_player_was_grounded = player->player.grounded;
 }
 
 // Re-points the active gameplay camera entity's position at the player's
@@ -3924,6 +3985,7 @@ bool Application::Init(int width, int height, const char *title)
     // and the script session routes its Audio.* bindings through it.
     m_audio = new AudioManager();
     m_audio->Init();
+    m_audio->SetMasterVolume(m_environment.master_volume);
     m_script_engine->SetAudioManager(m_audio);
     m_script_engine->SetGameplayState(&m_game);
 
@@ -4072,6 +4134,17 @@ bool Application::Init(int width, int height, const char *title)
     player.transform.position[0] = 0.0f;
     player.transform.position[1] = 0.0f;
     player.transform.position[2] = 3.0f;
+
+    // Stage 4: ambient background bed. Nothing new needed on the C++ side --
+    // AudioComponent's existing auto_play/loop fields already do exactly
+    // this (EnterPlayMode starts it, ExitPlayMode's StopAll halts it). No
+    // mesh/material set, so it never rasterizes anything.
+    Entity &ambience = m_scene->CreateEntity("Ambience");
+    ambience.material.active = false;
+    ambience.audio.path = "assets/audio/ambient_wind.wav";
+    ambience.audio.loop = true;
+    ambience.audio.volume = 0.35f;
+    ambience.audio.auto_play = true;
 
     m_scene->Meta().name = "Default";
 
@@ -4235,7 +4308,7 @@ bool Application::Init(int width, int height, const char *title)
     // Phase 37 environment & shading: edits the global EnvironmentSettings in
     // place (live, no undo — like the theme). "Material Editor" jumps to the
     // docked MaterialPanel in the same workspace.
-    m_environment_panel = new EnvironmentPanel(&m_environment);
+    m_environment_panel = new EnvironmentPanel(&m_environment, m_audio);
     m_environment_panel->SetAssetPath(m_environment_asset_path);
     m_environment_panel->SetOpenMaterialEditorCallback([this]() {
         if (m_material_panel)

@@ -2325,6 +2325,126 @@ lua` now calls `entity:Destroy()` for real, keeping its local `collected`
 flag only as a same-frame guard against a second overlap scoring twice
 before the deferred removal takes effect.
 
+## Phase 50 — Movement Audio (Stage 4)
+
+Stage 4 is the last of the three pillars from the original "what's still
+missing" list (HUD/game state, audio, serialization polish) that this
+engine's demoability actually needed. It's also the phase that most
+directly ties earlier work together: the same `kLandscapePaintPalette` that
+drives terrain painting (Phase 42) and the Lua player binding (Phase 46)
+now also decides what a footstep sounds like.
+
+### 50.1 No Stock Sound Effects, So: Procedural Synthesis
+
+There was no existing library of sound effects to draw from -- only
+`assets/audio/beep.wav`, the Phase 14 physics-bridge demo sound. Eight new
+files (`footstep_{grass,stone,metal,dirt,default}.wav`, `jump.wav`,
+`land.wav`, `ambient_wind.wav`) were generated with a small standalone
+Python script (`wave` + `math` + `random`, no external audio libraries)
+rather than left as a placeholder or skipped:
+
+- **Footsteps** are filtered-noise bursts with an attack/decay envelope,
+  differentiated per material by filter cutoff and decay shape -- Grass and
+  Dirt are heavily low-pass filtered (soft, dull), Stone is a shorter,
+  brighter burst with a high-passed "click" transient layered on top, and
+  Metal mixes two closely-spaced decaying sine tones (900 Hz / 953 Hz,
+  producing a natural beating "clang") with a short noise strike.
+- **Jump** is a 220ms rising sine sweep (320 Hz -> 740 Hz); **land** is a
+  95 Hz thump with a touch of filtered noise for texture.
+- **Ambient wind** is 6 seconds of heavily low-pass-filtered noise under a
+  slow sine LFO (an exact integer number of periods across the clip's
+  duration, so the loop point's amplitude and phase match, avoiding an
+  audible seam) plus a short fade at both ends to silence the sample
+  boundary itself.
+
+All are plain 16-bit mono PCM WAV -- confirmed by the project's own
+`CMakeLists.txt` comment that only `SDL2MIXER_WAV`/`WAVE` (no external
+codec deps) and OGG-via-bundled-stb_vorbis are compiled into this build's
+SDL_mixer, so no new dependency was introduced.
+
+### 50.2 Ground Material Detection Stays in the Headless Module
+
+`PlayerControllerComponent` gained one new field, `ground_material_index`
+(-1 = airborne or unmatched), recomputed every frame *inside*
+`PlayerControllerUpdate` -- deliberately not left for `Application.cpp` to
+figure out, since the landscape ground-snap loop and the entity-landing
+detection already have exactly the data needed and re-deriving it
+elsewhere would duplicate that iteration. Two matching strategies, chosen
+per how the ground was determined:
+
+- **Landscape**: the ground-snap loop already tracks `best_ground_y` across
+  every landscape in the scene; it now also retains the winning
+  `LandscapeComponent*` and the exact `local` (x, z) that produced it. A new
+  `NearestPaletteIndex` helper does a squared-distance color match against
+  `kLandscapePaintPalette` at that vertex's stored RGB -- a best-effort
+  guess, since a blended vertex color has no explicit "this is Stone" tag,
+  only whatever `LandscapeSculpt`'s Paint tool blended it toward.
+- **Entity**: `ResolveEntityCollisions` (and the `FindSolidOverlap` it calls)
+  now also returns *which* `Entity*` was landed on, not just a bool. A new
+  `PaletteIndexForMaterialPath` does an exact string match against the
+  entity's `material.material_path` -- more reliable than color-guessing
+  here, since Phase 42's Paint Mode (or manual Inspector assignment) already
+  recorded precisely which `.mat` file was assigned.
+
+`PlayerController.cpp` still never touches `AudioManager` directly --
+`ground_material_index` is the *only* new surface it exposes, and
+`Application::UpdatePlayerController` is where that value actually becomes
+a sound, via a small `FootstepPathForMaterial` helper that matches by the
+palette entry's *name* string (not its numeric index), so a future
+reordering of `kLandscapePaintPalette` can't silently point a footstep at
+the wrong sample.
+
+### 50.3 Three Triggers, Reusing State That Already Existed
+
+- **Jump**: checked with the exact same condition
+  (`jump_pressed && player->player.grounded`) that `PlayerControllerUpdate`
+  itself uses to decide whether the jump actually launches, read *before*
+  the call so the sound only plays when the jump really happens -- not a
+  second, potentially-diverging copy of the launch condition.
+- **Landing**: a `m_player_was_grounded` bool captured every frame
+  (Application-level state, since the pure controller only knows about
+  "now," not "last frame") makes the false->true edge on `grounded` a
+  one-shot event rather than something that would replay every frame the
+  player stands still.
+- **Footsteps**: a fixed 0.35s cadence timer, gated on `grounded` and on
+  the WASD input magnitude computed earlier in the same function (`len`,
+  the pre-`PlayerControllerUpdate` value -- not the resolved velocity,
+  since a wall-slide can leave residual velocity while input is actually
+  zero, which would otherwise keep stepping against a wall).
+
+### 50.4 Ambient Audio and Master Volume Needed Almost No New Code
+
+The ambient background bed uses `AudioComponent`'s existing
+`auto_play`/`loop` fields outright -- the one-time startup demo scene just
+gained an "Ambience" entity with `material.active = false` (so it never
+rasterizes anything) and those two flags set. `EnterPlayMode` already
+starts every auto-play audio component; `ExitPlayMode`'s `StopAll` already
+halts it. Zero new C++.
+
+Master Volume was smaller still: `AudioManager::SetMasterVolume`/
+`MasterVolume()` already existed and had since Phase 26, just with nothing
+in the editor ever calling them. `EnvironmentSettings` gained a persisted
+`master_volume` field (the same "scene-independent, live-applied, saved to
+the `.env` asset" treatment sky/fog/post/the editor fill light already
+have), and `EnvironmentPanel` gained an optional `AudioManager*` --
+mirroring `InspectorPanel`'s own existing `AudioManager*` (used there for
+its per-entity audio Preview buttons) rather than inventing a new way for a
+panel to reach the audio backend.
+
+### 50.5 Verification
+
+A temporary self-test in `Application::Init()` (removed after confirming):
+a synthetic landscape painted entirely Stone-colored produced
+`ground_material_index` matching Stone's palette entry; a synthetic entity
+with `material.material_path = "Metal.mat"` produced Metal's index; and all
+eight generated WAV files were loaded and played through a real
+`AudioManager`/SDL_mixer instance, confirmed by `Play()` returning a valid
+channel (not -1) for every one -- the only way to actually know the
+synthesized files are well-formed WAV rather than just trusting the Python
+script's output. A master-volume set/get round-trip passed alongside. The
+editor also launches and runs without crashing, with the default scene's
+entity count moving from 11 to 12 with the new Ambience entity present.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2333,6 +2453,6 @@ v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
 character controller, the v0.43.1-alpha paint brush cursor hotfix, the
 v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
 state management & gameplay HUD, the v0.46.0-alpha player/trigger/
-physics fix and jump, and the v0.47.0-alpha deferred entity destruction
-and Lua methods-table fix.*
+physics fix and jump, the v0.47.0-alpha deferred entity destruction
+and Lua methods-table fix, and the v0.48.0-alpha movement audio pass.*
 

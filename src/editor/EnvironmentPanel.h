@@ -6,6 +6,8 @@
 #include "EditorPanel.h"
 #include "core/Environment.h"
 
+class AudioManager;
+
 // Global environment & post-processing settings editor (Phase 37).
 //
 // Three collapsible sections (Sky, Fog, Post-Processing) edit the shared
@@ -18,7 +20,12 @@
 class EnvironmentPanel : public EditorPanel
 {
 public:
-    EnvironmentPanel(EnvironmentSettings *settings);
+    // `audio` is optional (nullable) and used only to push a live master-
+    // volume change immediately, the same "apply on Reload/edit, not just on
+    // Save" convention every other setting in this panel already follows --
+    // mirrors InspectorPanel's own AudioManager* (used there for its
+    // Preview Play/Stop buttons).
+    EnvironmentPanel(EnvironmentSettings *settings, AudioManager *audio = nullptr);
 
     void OnImGuiRender(float dt) override;
 
@@ -44,10 +51,15 @@ public:
 private:
     void DrawSectionHeader(const char *label, bool *enabled);
     void DrawColor3(const char *label, float color[3]);
-    void DrawSlider(const char *label, float *value, float min, float max,
+    // Returns true the frame the value actually changes (ImGui::SliderFloat's
+    // own return), so a caller can react immediately -- e.g. Master Volume
+    // pushing the new value into AudioManager the instant it moves, not just
+    // on the next Reload.
+    bool DrawSlider(const char *label, float *value, float min, float max,
                     const char *fmt = "%.3f");
 
     EnvironmentSettings *m_settings;
+    AudioManager *m_audio;
     std::string m_asset_path;
     std::string m_last_error;
     bool m_visible = true;

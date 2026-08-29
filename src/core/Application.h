@@ -506,6 +506,15 @@ private:
     // driven from Lua via the Game.* bindings, read by RenderGameplayHUD().
     GameplayState m_game;
 
+    // Stage 4 footstep/landing audio (UpdatePlayerController): the cadence
+    // timer counts up while the player is moving and grounded, firing a
+    // footstep at a fixed interval and resetting on every stop, so a fresh
+    // step always starts the count rather than continuing a stale partial
+    // one. The grounded flag is captured each frame purely to detect the
+    // false->true edge for the one-shot landing thump.
+    float m_footstep_timer = 0.0f;
+    bool m_player_was_grounded = false;
+
     // Asset placement mode (see UpdateAssetPlacement): the armed asset and
     // whether it's a prefab (LoadPrefab) or a bare mesh (SpawnMeshEntity).
     bool m_placement_mode = false;

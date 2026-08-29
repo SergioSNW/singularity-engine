@@ -84,8 +84,10 @@ struct ColliderComponent
 // body has the higher entity id -- not appropriate for player movement, and
 // not id-ordering-safe). The controller owns its own per-axis collision
 // resolution against every OTHER entity's ColliderComponent (see
-// PlayerController.h), so a player entity does not need `collider.enabled`
-// set on itself for this to work; `radius`/`height` describe an upright
+// PlayerController.h); `collider.enabled` is still set on the player (so
+// PhysicsManager can dispatch trigger events for it), but PhysicsManager's
+// own ResolveSolid skips ever moving a player.enabled entity, so the two
+// systems never double-resolve. `radius`/`height` describe an upright
 // capsule (cylinder radius `radius`, total height `height` including both
 // hemispherical caps) used purely for the controller's own collision/ground
 // checks, decoupled from whatever mesh the entity happens to render (the
@@ -100,6 +102,14 @@ struct PlayerControllerComponent
     float move_speed = 5.0f;            // world units/sec, horizontal
     float jump_speed = 7.0f;            // world units/sec, vertical launch speed (Spacebar, grounded only)
     bool grounded = false;
+
+    // Stage 4 (footstep audio): which entry of kLandscapePaintPalette
+    // (Landscape.h) the ground under the player currently matches -- -1 when
+    // airborne or standing on a surface that doesn't match any preset.
+    // Recomputed every frame in PlayerControllerUpdate; Application.cpp reads
+    // it to pick a footstep sound, but the controller itself stays audio-free
+    // (no AudioManager dependency in this headless module).
+    int ground_material_index = -1;
 };
 
 // Gameplay script reference. An empty `path` means no script; any other value

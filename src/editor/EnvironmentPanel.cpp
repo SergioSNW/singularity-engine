@@ -1,14 +1,16 @@
 #include "EnvironmentPanel.h"
 #include "UiText.h"
 
+#include "core/AudioManager.h"
 #include "core/Environment.h"
 
 #include <imgui.h>
 
 #include <string>
 
-EnvironmentPanel::EnvironmentPanel(EnvironmentSettings *settings)
+EnvironmentPanel::EnvironmentPanel(EnvironmentSettings *settings, AudioManager *audio)
     : m_settings(settings)
+    , m_audio(audio)
 {
 }
 
@@ -24,10 +26,10 @@ void EnvironmentPanel::DrawColor3(const char *label, float color[3])
     ImGui::ColorEdit3(label, color);
 }
 
-void EnvironmentPanel::DrawSlider(const char *label, float *value, float min,
+bool EnvironmentPanel::DrawSlider(const char *label, float *value, float min,
                                   float max, const char *fmt)
 {
-    ImGui::SliderFloat(label, value, min, max, fmt);
+    return ImGui::SliderFloat(label, value, min, max, fmt);
 }
 
 void EnvironmentPanel::OnImGuiRender(float dt)
@@ -137,6 +139,19 @@ void EnvironmentPanel::OnImGuiRender(float dt)
                             "judged on its own.");
     }
 
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // --- Audio ---
+    if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        if (DrawSlider("Master Volume", &m_settings->master_volume, 0.0f, 1.0f) && m_audio)
+            m_audio->SetMasterVolume(m_settings->master_volume);
+        TextDisabledWrapped("One global gain over every sound the engine plays -- "
+                            "footsteps, jump/landing, ambient beds, and any Audio.* "
+                            "call from a script.");
+    }
+
     ImGui::End();
 
     if (m_open_material_editor)
@@ -152,7 +167,11 @@ void EnvironmentPanel::Reload()
     EnvironmentSettings fresh;
     std::string error;
     if (LoadEnvironmentAsset(m_asset_path, fresh, &error))
+    {
         *m_settings = fresh;
+        if (m_audio)
+            m_audio->SetMasterVolume(m_settings->master_volume);
+    }
     else
         m_last_error = "Reload failed: " + error;
 }

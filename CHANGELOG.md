@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.48.0-alpha] — 2026-08-29
+
+### Added
+
+- **Movement audio** (Stage 4): jump and landing sound effects, plus material-aware footsteps while the player walks on the ground. `PlayerControllerComponent::ground_material_index` (new field) is recomputed every frame inside the headless `PlayerControllerUpdate` — matched by nearest-color against `kLandscapePaintPalette` when standing on a landscape vertex, or by exact `.mat` path when standing on a placed Solid entity — and read back in `Application::UpdatePlayerController` (which stays the only place that touches `AudioManager`, keeping `PlayerController.cpp` audio-free) to pick a footstep sample. Jump/landing/footstep triggers all reuse existing state rather than adding new dependencies: jump checks the same `grounded` value `PlayerControllerUpdate` itself uses to decide whether to actually launch; landing is a false→true edge on `grounded` across frames; footsteps run on a fixed cadence gated on the same WASD-input magnitude already computed for movement.
+- **8 procedurally-synthesized sound effects** (`assets/audio/`): `footstep_{grass,stone,metal,dirt,default}.wav`, `jump.wav`, `land.wav`, `ambient_wind.wav`. Generated with a small Python script (filtered noise bursts with attack/decay envelopes for footsteps, a rising sine sweep for jump, a low-frequency thump for landing, slow-LFO-modulated filtered noise for a seamlessly-loopable ambient bed) since no stock SFX were available — plain 16-bit mono PCM WAV, confirmed to load and play through the engine's real SDL_mixer backend.
+- **Ambient background audio**: the one-time startup demo scene gained an "Ambience" entity (`material.active = false`, so it never rasterizes) with `audio.auto_play = true` / `loop = true` — needed zero new C++, since `AudioComponent`'s existing auto-play/loop fields already do exactly this (started by `EnterPlayMode`, halted by `ExitPlayMode`'s `StopAll`).
+- **Master Volume slider** (Environment & Shading panel, new "Audio" section): `AudioManager::SetMasterVolume`/`MasterVolume()` already existed but nothing in the editor called them. `EnvironmentSettings` gained a persisted `master_volume` field (round-trips through the `.env` JSON like every other setting in that panel) and `EnvironmentPanel` gained an optional `AudioManager*` (same pattern `InspectorPanel` already uses for its audio Preview buttons) so the slider pushes the new value live, the instant it moves — not just on Save.
+
+### Fixed
+
+- Two stale doc comments referencing the pre-fix (v0.46.0) state of the player/PhysicsManager relationship — one in `Components.h`, one in `Application.cpp` — still said the player "does not set collider.enabled on itself," which stopped being true when that became the default. Updated to describe the actual current behavior (collider enabled, but `PhysicsManager::ResolveSolid` skips moving it).
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test in `Application::Init()` confirmed, against the real compiled engine: a player standing on a landscape painted entirely Stone-colored gets `ground_material_index` matching Stone's palette entry; a player landing on an entity with `material.material_path = "Metal.mat"` gets Metal's index; and all 8 generated WAV files load and play successfully through a real `AudioManager`/SDL_mixer instance (`Play()` returning a valid channel, not -1, for every one), plus a master-volume round-trip. All passed with exact expected values, then removed. Editor launches and runs without crashing; the default scene now reports 12 entities (up from 11) with the new Ambience entity present.
+
 ## [0.47.0-alpha] — 2026-08-29
 
 ### Added

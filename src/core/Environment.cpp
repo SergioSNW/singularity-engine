@@ -75,6 +75,8 @@ std::string EnvironmentSettingsToJson(const EnvironmentSettings &env)
     EmitField(root, "editor_fill_light_enabled", env.editor_fill_light_enabled);
     EmitField(root, "editor_fill_light_intensity", env.editor_fill_light_intensity);
 
+    EmitField(root, "master_volume", env.master_volume);
+
     return json::WritePretty(root);
 }
 
@@ -122,6 +124,8 @@ bool EnvironmentSettingsFromJson(const std::string &text, EnvironmentSettings &o
 
     out.editor_fill_light_enabled = root.Bool("editor_fill_light_enabled", out.editor_fill_light_enabled);
     out.editor_fill_light_intensity = (float)root.Number("editor_fill_light_intensity", out.editor_fill_light_intensity);
+
+    out.master_volume = (float)root.Number("master_volume", out.master_volume);
 
     return true;
 }

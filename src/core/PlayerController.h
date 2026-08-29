@@ -18,9 +18,13 @@ class Scene;
 // per-axis AABB collision against every OTHER entity's enabled Solid
 // collider (so walls block, floors/ramps support -- see the .cpp for why
 // one axis-separated resolver handles all three), then snaps to the
-// nearest landscape surface below the resolved position if one exists. Does
-// nothing if `self.player.enabled` is false. Mutates `self.transform.
-// position` and `self.player.velocity`/`.grounded`.
+// nearest landscape surface below the resolved position if one exists, and
+// finally re-derives `ground_material_index` (a best-effort match against
+// Landscape.h's shared paint palette, by vertex color on a landscape or by
+// exact .mat path on an entity) for Application.cpp's footstep audio to
+// read. Does nothing if `self.player.enabled` is false. Mutates
+// `self.transform.position` and `self.player.velocity`/`.grounded`/
+// `.ground_material_index`.
 void PlayerControllerUpdate(Entity &self, Scene &scene,
                             const Vec3 &desired_horizontal_velocity,
                             bool jump_pressed, float dt);

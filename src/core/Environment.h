@@ -86,6 +86,16 @@ struct EnvironmentSettings
     // unlit-looking faces stay readable from any camera angle while you work.
     bool editor_fill_light_enabled = true;
     float editor_fill_light_intensity = 0.35f; // 0 = off, 1 = fully flat/shadowless
+
+    // --- Audio (Stage 4) ---
+    // A single global gain over every sound the AudioManager plays --
+    // footsteps, jump/land, ambient beds, Lua's Audio.Play(), the Inspector's
+    // Preview buttons, all of it. Lives here rather than on AudioManager
+    // itself because this whole struct is exactly "scene-independent state
+    // the Environment & Shading panel edits live and persists to disk" --
+    // the same reason sky/fog/post/the editor light live here instead of on
+    // whatever subsystem actually consumes them.
+    float master_volume = 1.0f;
 };
 
 // Serialize to / from the .env JSON layout described above.
