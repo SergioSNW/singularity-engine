@@ -102,6 +102,22 @@ void Scene::DestroyEntity(int entity_id)
     }
 }
 
+void Scene::QueueDestroyEntity(int entity_id)
+{
+    m_pending_destroy.push_back(entity_id);
+}
+
+void Scene::FlushPendingDestroyEntities()
+{
+    // Swap out first: DestroyEntity's own descendant cascade could in theory
+    // grow this list from something else queuing more work, and we only want
+    // to process exactly the ids queued before this flush started.
+    std::vector<int> ids;
+    ids.swap(m_pending_destroy);
+    for (int id : ids)
+        DestroyEntity(id);
+}
+
 void Scene::SetParent(int entity_id, int parent_id)
 {
     Entity *child = GetEntityById(entity_id);

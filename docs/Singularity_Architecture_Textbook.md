@@ -2220,6 +2220,111 @@ exact expected values, then the self-test was removed. The editor launches
 and runs without crashing, and the default scene's entity count moved from
 10 to 11 with the new Player present.
 
+## Phase 49 — Deferred Entity Destruction, and an Eight-Year-Old Stack Bug
+
+The previous phase ended with an honest "not implemented": `collectible.lua`
+tracked a local `collected` flag instead of making the pickup actually
+disappear, because destroying an entity from inside a Lua callback that's
+itself running from *inside* `PhysicsManager::Step()`'s or
+`ScriptEngine::UpdateSession()`'s own iteration over the entity list looked
+unsafe. It is unsafe, synchronously — but the fix is the same "queue now,
+process after the frame" idiom the engine already uses for OS file drops,
+and it surfaced a much older, much sneakier bug along the way.
+
+### 49.1 The Deferral
+
+`Scene::DestroyEntity(int)` already existed (the editor's own delete action
+uses it) and already correctly cascades to children and unlinks from a
+parent's child list — nothing about *removing* an entity needed fixing, only
+*when* it's safe to call that function. Two new methods:
+`QueueDestroyEntity(id)` just appends to a private `std::vector<int>
+m_pending_destroy`; `FlushPendingDestroyEntities()` swaps that vector out
+(so a destroy queued *during* the flush itself, however unlikely, doesn't
+extend the batch being processed) and calls the real `DestroyEntity` for
+each id. `Application`'s Play-mode Update block calls the flush exactly
+once, as the very last thing it does — after `ScriptEngine::UpdateSession`,
+after `PhysicsManager::Step`, after the player controller and camera follow
+have both run. Every system that walks `Scene::GetEntities()` this frame has
+finished by the time anything actually gets removed.
+
+Reaching the scene from inside a Lua C function needed one more observer
+pointer: `entity`/`transform`/`player` userdata each hold a pointer to the
+one `Entity` they're bound to, but entity *lifetime* is a `Scene`-level
+operation with nothing to hang a scene reference off of. `g_play_scene`
+(file-static, set in `StartSession`, cleared in `StopSession`) follows the
+exact same shape as `g_audio_manager` and `g_game_state` before it — three
+observer globals now, one per external system Lua needs to reach that isn't
+already reachable through an entity handle.
+
+### 49.2 A Bug Eight Metatables Deep
+
+Verifying `entity:Destroy()` meant checking that the method-call syntax
+(`entity:Destroy()`, sugar for `entity.Destroy(entity)`) actually resolved
+to the new C function. It didn't, on the first attempt — and tracing why
+turned up something that had nothing to do with this phase's own work.
+
+Every one of the four bound Lua types (`Vector3`, `Transform`, `Player`,
+`Entity`) follows the same `__index`-with-a-methods-table-fallback pattern:
+explicit fields are checked first (`x`/`y`/`z`, `position`/`rotation`/
+`scale`, `enabled`/`velocity`/etc.), and anything else falls through to
+`lua_getfield(L, lua_upvalueindex(1), key)` — a lookup in a `methods` table
+that was supposed to have been captured as the `__index` closure's upvalue
+at registration time. All four `RegisterX()` functions captured the wrong
+value: `lua_pushvalue(L, -2)`, at the exact point it runs in each of them,
+duplicates the **metatable**, not `methods` — an off-by-one in which stack
+slot "the thing I just built" occupies. The methods table itself was built
+correctly (`Vector3`'s `norm`/`length`/`dot`/`cross` were genuinely
+populated); the closure just never got a working reference to it.
+
+The reason this shipped and stayed shipped: `Transform`'s and `Player`'s
+methods tables are empty by design (reserved for future use, per their own
+`RegisterX` comments), so the wrong upvalue was never observably wrong for
+either. `Vector3`'s methods table is populated and has been since the
+binding was first written — but nothing in this engine, across every phase
+before this one, had ever actually called `someVector:length()` or
+`:norm()`/`:dot()`/`:cross()` from a script. The bug was real and latent for
+as long as the Lua bridge has existed; `entity:Destroy()` is simply the
+first time anything asked a methods-table fallback to do real work.
+
+Confirmed empirically, not just by re-reading the stack trace by eye: a
+temporary self-test ran `Vector3(3, 4, 0):length()` through the real
+`ScriptEngine` and got back `"attempt to call a nil value (method
+'length')"` before the fix, clean execution after. The fix is one line
+repeated across all four functions — `lua_pushvalue(L, -1)` in place of
+`lua_pushvalue(L, -2)`, duplicating the actual top-of-stack `methods` table
+at the point each closure is built, documented inline so the next
+`RegisterX()`-shaped addition doesn't reintroduce it.
+
+### 49.3 A Second Bug, Caught by the Crash Dialog Itself
+
+The very first attempt at wiring `entity:Destroy()` into `RegisterEntity`
+used `lua_setfield(L, -1, "Destroy")` to add it to the methods table —
+`-1` was the function just pushed, not the table below it, so the call
+tried to set a field on a non-table value. Raw Lua C API misuse like this
+raises a Lua error; outside of a protected `lua_pcall`, an unhandled error
+reaches Lua's default panic handler, which calls `abort()`. The process
+didn't exit — it sat blocked behind a "Microsoft Visual C++ Runtime
+Library" dialog, `Responding=True`, main window title changed to match.
+Checking a launched process's actual window title before deciding it's
+"still running fine" (rather than just checking `HasExited`) is what caught
+this rather than a longer hang; the same signature was seen once earlier
+this session (the Place/Paint toolbar `PushStyleColor` imbalance) and is
+worth recognizing on sight in this codebase's Windows/MSVC environment.
+
+### 49.4 Verification
+
+Two temporary self-tests in `Application::Init()`, removed after confirming
+both fixes: one isolated the upvalue bug directly against the real
+`ScriptEngine` (fails before the fix with the exact expected error message,
+clean after); the other drove a real `entity:Destroy()` call from inside an
+actual `PhysicsManager::Step()` overlap dispatch, confirming the target
+entity survives `Step()` itself — proving the deferral genuinely defers,
+not merely that destruction eventually happens — and is gone only after the
+explicit `FlushPendingDestroyEntities()` call that follows it. `collectible.
+lua` now calls `entity:Destroy()` for real, keeping its local `collected`
+flag only as a same-frame guard against a second overlap scoring twice
+before the deferred removal takes effect.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2227,6 +2332,7 @@ UI polish sprint, the v0.41.0-alpha surface & material painting system, the
 v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
 character controller, the v0.43.1-alpha paint brush cursor hotfix, the
 v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
-state management & gameplay HUD, and the v0.46.0-alpha player/trigger/
-physics fix and jump.*
+state management & gameplay HUD, the v0.46.0-alpha player/trigger/
+physics fix and jump, and the v0.47.0-alpha deferred entity destruction
+and Lua methods-table fix.*
 

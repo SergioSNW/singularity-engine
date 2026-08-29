@@ -5206,12 +5206,23 @@ void Application::Run()
 
             // Stage 2 character controller: WASD + gravity + landscape/AABB
             // collision, then the gameplay camera follows the resolved
-            // position. Independent of PhysicsManager above -- the player
-            // does not set collider.enabled on itself (see
-            // PlayerControllerComponent's doc comment), so this never
-            // double-resolves against that generic solid/solid pass.
+            // position. The player DOES set collider.enabled (so
+            // PhysicsManager above can see it for trigger dispatch), but
+            // PhysicsManager's own ResolveSolid skips ever moving a
+            // player.enabled entity, so this never double-resolves against
+            // that generic solid/solid pass.
             UpdatePlayerController((float)dt);
             UpdatePlayerCameraFollow();
+
+            // Stage 3: entity:Destroy() from a script only ever queues the
+            // id (PhysicsManager::Step() and ScriptEngine::UpdateSession()
+            // above both call into Lua while iterating the entity list
+            // themselves, so removing one mid-iteration would be unsafe).
+            // This is the one safe point in the frame to actually apply it:
+            // after every system that walks the entity list this frame has
+            // finished, before the scene is ever read again this frame
+            // (rendering, next frame's Update).
+            m_scene->FlushPendingDestroyEntities();
         }
 
         // Phase 35 timeline playback: advances the global clock and writes the

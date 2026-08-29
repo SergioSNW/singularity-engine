@@ -61,6 +61,14 @@ AudioManager *g_audio_manager = nullptr;
 // lifetime, this is just where the Lua bridge reaches it.
 GameplayState *g_game_state = nullptr;
 
+// The Scene the current Play session is running against -- set at the top
+// of StartSession, cleared in StopSession. entity:Destroy() needs to reach
+// the scene to queue itself for removal, and unlike Vector3/Transform/
+// Player (which only ever touch the one Entity they're bound to), entity
+// lifetime is a Scene-level operation with no per-entity pointer to hang it
+// off of.
+Scene *g_play_scene = nullptr;
+
 // The Scene the REPL's `scene` table resolves against. Rebound on every
 // Execute() call so snippets always address the active scene (and never a torn
 // down play session); mirrors g_audio_manager's observer semantics.
@@ -296,7 +304,14 @@ void RegisterVec3(lua_State *L)
     lua_pushcfunction(L, LuaVec3Dot);    lua_setfield(L, -2, "dot");
     lua_pushcfunction(L, LuaVec3Cross);  lua_setfield(L, -2, "cross");
 
-    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushvalue(L, -1);                   // [mt, methods, methods] -- duplicate methods (top
+                                             // of stack here), not mt: a pre-existing bug (this
+                                             // line previously read -2, capturing mt as the
+                                             // __index closure's upvalue instead of methods,
+                                             // silently breaking every X:method() call routed
+                                             // through the "fall through to methods" path -- see
+                                             // e.g. Vector3:length()/:norm()/:dot()/:cross(),
+                                             // unnoticed until entity:Destroy() needed it to work)
     lua_pushcclosure(L, LuaVec3Index, 1);   // [mt, methods, closure]
     lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
     lua_pushcfunction(L, LuaVec3NewIndex);
@@ -366,7 +381,14 @@ void RegisterTransform(lua_State *L)
 {
     luaL_newmetatable(L, kTransformMT);     // [mt]
     lua_newtable(L);                        // [mt, methods]
-    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushvalue(L, -1);                   // [mt, methods, methods] -- duplicate methods (top
+                                             // of stack here), not mt: a pre-existing bug (this
+                                             // line previously read -2, capturing mt as the
+                                             // __index closure's upvalue instead of methods,
+                                             // silently breaking every X:method() call routed
+                                             // through the "fall through to methods" path -- see
+                                             // e.g. Vector3:length()/:norm()/:dot()/:cross(),
+                                             // unnoticed until entity:Destroy() needed it to work)
     lua_pushcclosure(L, LuaTransformIndex, 1);  // [mt, methods, closure]
     lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
     lua_pushcfunction(L, LuaTransformNewIndex);
@@ -448,7 +470,14 @@ void RegisterPlayer(lua_State *L)
 {
     luaL_newmetatable(L, kPlayerMT);        // [mt]
     lua_newtable(L);                        // [mt, methods]
-    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushvalue(L, -1);                   // [mt, methods, methods] -- duplicate methods (top
+                                             // of stack here), not mt: a pre-existing bug (this
+                                             // line previously read -2, capturing mt as the
+                                             // __index closure's upvalue instead of methods,
+                                             // silently breaking every X:method() call routed
+                                             // through the "fall through to methods" path -- see
+                                             // e.g. Vector3:length()/:norm()/:dot()/:cross(),
+                                             // unnoticed until entity:Destroy() needed it to work)
     lua_pushcclosure(L, LuaPlayerIndex, 1); // [mt, methods, closure]
     lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
     lua_pushcfunction(L, LuaPlayerNewIndex);
@@ -728,11 +757,33 @@ int LuaGameGetStatus(lua_State *L)
     return 1;
 }
 
+// entity:Destroy() -- queues the entity for removal (see Scene::
+// QueueDestroyEntity's comment for why this can't just call DestroyEntity
+// synchronously: this may be running from inside PhysicsManager::Step()'s or
+// ScriptEngine::UpdateSession()'s own iteration over the entity list). A
+// no-op if called outside a running Play session (g_play_scene unset) or on
+// a nil/already-gone entity.
+int LuaEntityDestroy(lua_State *L)
+{
+    LuaEntity *e = (LuaEntity *)luaL_checkudata(L, 1, kEntityMT);
+    if (g_play_scene && e->entity)
+        g_play_scene->QueueDestroyEntity(e->entity->id);
+    return 0;
+}
+
 void RegisterEntity(lua_State *L)
 {
     luaL_newmetatable(L, kEntityMT);        // [mt]
     lua_newtable(L);                        // [mt, methods]
-    lua_pushvalue(L, -2);                   // [mt, methods, methods]
+    lua_pushcfunction(L, LuaEntityDestroy); lua_setfield(L, -2, "Destroy");
+    lua_pushvalue(L, -1);                   // [mt, methods, methods] -- duplicate methods (top
+                                             // of stack here), not mt: a pre-existing bug (this
+                                             // line previously read -2, capturing mt as the
+                                             // __index closure's upvalue instead of methods,
+                                             // silently breaking every X:method() call routed
+                                             // through the "fall through to methods" path -- see
+                                             // e.g. Vector3:length()/:norm()/:dot()/:cross(),
+                                             // unnoticed until entity:Destroy() needed it to work)
     lua_pushcclosure(L, LuaEntityIndex, 1); // [mt, methods, closure]
     lua_setfield(L, -3, "__index");         // mt.__index = closure -> [mt, methods]
     lua_pushcfunction(L, LuaEntityNewIndex);
@@ -977,6 +1028,8 @@ bool ScriptEngine::StartSession(Scene &scene, std::string &errors)
 {
     StopSession();                          // no-op when not running
 
+    g_play_scene = &scene;
+
     m_lua = luaL_newstate();
     if (!m_lua)
     {
@@ -1099,6 +1152,8 @@ bool ScriptEngine::ReloadSession(Scene &scene, std::string &errors)
 
 void ScriptEngine::StopSession()
 {
+    g_play_scene = nullptr;
+
     if (!m_lua)
         return;
 

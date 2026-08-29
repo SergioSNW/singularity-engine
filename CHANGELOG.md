@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.47.0-alpha] — 2026-08-29
+
+### Added
+
+- **Deferred entity destruction from Lua** (`entity:Destroy()`): `Scene` gained `QueueDestroyEntity(id)`/`FlushPendingDestroyEntities()` — the former just records an id, the latter (called once, in `Application`'s Play-mode Update block, after `ScriptEngine::UpdateSession` and `PhysicsManager::Step` have both fully finished walking the entity list for the frame) is where the existing `Scene::DestroyEntity` actually runs. A new `g_play_scene` observer pointer (set in `ScriptEngine::StartSession`, cleared in `StopSession`, same pattern as `g_audio_manager`/`g_game_state`) lets the new `LuaEntityDestroy` binding reach the scene. This closes the gap flagged in the previous round: a script can now make a collectible really disappear (`collectible.lua` updated to call `entity:Destroy()` after scoring) rather than only tracking a "already collected" flag.
+
+### Fixed
+
+- **A pre-existing, previously-unnoticed bug in every Lua metatable's method-fallback path** (`ScriptEngine.cpp`, `RegisterVec3`/`RegisterTransform`/`RegisterPlayer`/`RegisterEntity`): each `__index` closure is supposed to capture the type's `methods` table as its upvalue, so a call like `someVector:length()` (a real `Vector3` method that predates this whole session) falls through to it when the explicit field checks don't match. All four registration functions instead wrote `lua_pushvalue(L, -2)` at the point the closure's upvalue gets pushed — at that point in the stack (`[mt, methods]`), `-2` is the **metatable**, not `methods`. Every method-table method on every bound Lua type — `Vector3:norm()/:length()/:dot()/:cross()` included — has silently been unreachable (`"attempt to call a nil value"`) since the binding was first written; nothing surfaced it because Transform's and Player's methods tables were empty (reserved, unused) and nobody had scripted a call to a Vector3 method before. Found while verifying `entity:Destroy()` (the first *new* method added to a previously-empty methods table), fixed by duplicating the top of the stack (`-1`, the actual `methods` table) instead of `-2` in all four functions.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). Two temporary self-tests in `Application::Init()`: one isolated the upvalue bug directly (`Vector3(3,4,0):length()` failed with the exact `"attempt to call a nil value (method 'length')"` error before the fix, ran clean after); the other drove a real `entity:Destroy()` call from inside an actual `PhysicsManager::Step()` overlap dispatch, confirming the target entity survives `Step()` itself (proving the deferral genuinely defers) and is gone only after the explicit flush. Both fully passed after the fixes, then removed. Also caught and fixed a second bug along the way: the first `entity:Destroy()` attempt used the wrong stack index in `RegisterEntity` (`lua_setfield(L, -1, ...)` instead of `-2`), which set a field on a non-table value and triggered Lua's default panic handler — an unprotected `abort()` — confirmed via a hung "Microsoft Visual C++ Runtime Library" crash dialog rather than a clean process exit.
+
 ## [0.46.0-alpha] — 2026-08-28
 
 ### Fixed

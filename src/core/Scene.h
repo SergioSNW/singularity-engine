@@ -27,6 +27,21 @@ public:
 
     Entity& CreateEntity(const std::string &name, Entity *parent = nullptr);
     void DestroyEntity(int entity_id);
+
+    // Stage 3: safe entity destruction from inside a callback that is itself
+    // iterating the entity list (PhysicsManager::Step()'s overlap pairs,
+    // ScriptEngine::UpdateSession()'s per-entity OnUpdate loop) -- both call
+    // into Lua while mid-loop over GetEntities(), so an immediate
+    // DestroyEntity() from a Lua hook (e.g. entity:Destroy()) would mutate
+    // the vector those loops are actively walking. QueueDestroyEntity just
+    // records the id; FlushPendingDestroyEntities (called once, after every
+    // per-frame system that iterates entities has finished) is where the
+    // actual removal happens. Duplicate/stale ids are handled by
+    // DestroyEntity's own existing not-found behavior, so no dedup is done
+    // here.
+    void QueueDestroyEntity(int entity_id);
+    void FlushPendingDestroyEntities();
+
     void SetParent(int entity_id, int parent_id);
     void Clear();
     std::vector<std::unique_ptr<Entity>>& GetEntities();
@@ -50,6 +65,7 @@ private:
     std::vector<std::unique_ptr<Entity>> m_entities;
     SceneMetadata m_meta;
     int m_next_id;
+    std::vector<int> m_pending_destroy;
 };
 
 // Create a ready-to-use directional light entity: the light is active and its
