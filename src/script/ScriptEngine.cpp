@@ -56,6 +56,11 @@ const char *kApiRegistry = "Singe.EngineApi";
 // (the engine owns the manager; this is only an observer for the Lua bridge).
 AudioManager *g_audio_manager = nullptr;
 
+// The GameplayState the Game.* bindings read/write. Same observer semantics
+// as g_audio_manager -- Application owns the instance for the app's whole
+// lifetime, this is just where the Lua bridge reaches it.
+GameplayState *g_game_state = nullptr;
+
 // The Scene the REPL's `scene` table resolves against. Rebound on every
 // Execute() call so snippets always address the active scene (and never a torn
 // down play session); mirrors g_audio_manager's observer semantics.
@@ -649,6 +654,78 @@ int LuaAudioStop(lua_State *L)
     return 0;
 }
 
+// --- Game (Stage 3 gameplay HUD / state bridge) ---
+//
+// health/score are plain numbers with no built-in meaning -- there is no
+// "health <= 0 auto-loses" rule baked in here; a level's own script decides
+// what they mean and calls Win()/Lose() explicitly when it wants to end the
+// session (e.g. from an OnTriggerEnter on a goal zone, or an OnUpdate check
+// after SetHealth). All calls degrade to a no-op (Get* return defaults) when
+// no GameplayState is attached, same convention as the Audio.* bridge.
+
+int LuaGameSetHealth(lua_State *L)
+{
+    if (g_game_state) g_game_state->health = (int)luaL_checkinteger(L, 1);
+    return 0;
+}
+int LuaGameGetHealth(lua_State *L)
+{
+    lua_pushinteger(L, g_game_state ? g_game_state->health : 0);
+    return 1;
+}
+int LuaGameSetScore(lua_State *L)
+{
+    if (g_game_state) g_game_state->score = (int)luaL_checkinteger(L, 1);
+    return 0;
+}
+int LuaGameAddScore(lua_State *L)
+{
+    if (g_game_state) g_game_state->score += (int)luaL_checkinteger(L, 1);
+    return 0;
+}
+int LuaGameGetScore(lua_State *L)
+{
+    lua_pushinteger(L, g_game_state ? g_game_state->score : 0);
+    return 1;
+}
+int LuaGameShowPrompt(lua_State *L)
+{
+    if (g_game_state) g_game_state->prompt = luaL_checkstring(L, 1);
+    return 0;
+}
+int LuaGameClearPrompt(lua_State *L)
+{
+    if (g_game_state) g_game_state->prompt.clear();
+    return 0;
+}
+int LuaGameWin(lua_State *L)
+{
+    (void)L;
+    if (g_game_state) g_game_state->status = GameplayState::Status::Won;
+    return 0;
+}
+int LuaGameLose(lua_State *L)
+{
+    (void)L;
+    if (g_game_state) g_game_state->status = GameplayState::Status::Lost;
+    return 0;
+}
+int LuaGameGetStatus(lua_State *L)
+{
+    const char *s = "playing";
+    if (g_game_state)
+    {
+        switch (g_game_state->status)
+        {
+            case GameplayState::Status::Won:  s = "won";  break;
+            case GameplayState::Status::Lost: s = "lost"; break;
+            default: break;
+        }
+    }
+    lua_pushstring(L, s);
+    return 1;
+}
+
 void RegisterEntity(lua_State *L)
 {
     luaL_newmetatable(L, kEntityMT);        // [mt]
@@ -690,6 +767,19 @@ void RegisterEngineApi(lua_State *L)
     lua_pushcfunction(L, LuaInputRegisterAction); lua_setfield(L, -2, "RegisterAction");
     lua_pushcfunction(L, LuaInputRegisterAxis); lua_setfield(L, -2, "RegisterAxis");
     lua_setfield(L, -2, "Input");           // api.Input = input -> [api]
+
+    lua_newtable(L);                        // [api, game]
+    lua_pushcfunction(L, LuaGameSetHealth); lua_setfield(L, -2, "SetHealth");
+    lua_pushcfunction(L, LuaGameGetHealth); lua_setfield(L, -2, "GetHealth");
+    lua_pushcfunction(L, LuaGameSetScore); lua_setfield(L, -2, "SetScore");
+    lua_pushcfunction(L, LuaGameAddScore); lua_setfield(L, -2, "AddScore");
+    lua_pushcfunction(L, LuaGameGetScore); lua_setfield(L, -2, "GetScore");
+    lua_pushcfunction(L, LuaGameShowPrompt); lua_setfield(L, -2, "ShowPrompt");
+    lua_pushcfunction(L, LuaGameClearPrompt); lua_setfield(L, -2, "ClearPrompt");
+    lua_pushcfunction(L, LuaGameWin); lua_setfield(L, -2, "Win");
+    lua_pushcfunction(L, LuaGameLose); lua_setfield(L, -2, "Lose");
+    lua_pushcfunction(L, LuaGameGetStatus); lua_setfield(L, -2, "GetStatus");
+    lua_setfield(L, -2, "Game");            // api.Game = game -> [api]
 
     lua_newtable(L);                        // [api, api_mt]
     lua_getglobal(L, "_G");
@@ -786,6 +876,7 @@ void NewScriptEnv(lua_State *L, Entity *entity)
 ScriptEngine::ScriptEngine()
     : m_lua(nullptr)
     , m_audio(nullptr)
+    , m_game(nullptr)
     , m_repl(nullptr)
     , m_repl_env_ref(LUA_NOREF)
 {
@@ -806,6 +897,12 @@ void ScriptEngine::SetAudioManager(AudioManager *audio)
 {
     m_audio = audio;
     g_audio_manager = audio;
+}
+
+void ScriptEngine::SetGameplayState(GameplayState *state)
+{
+    m_game = state;
+    g_game_state = state;
 }
 
 bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)

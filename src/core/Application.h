@@ -19,6 +19,7 @@ struct SDL_Texture;
 #include "editor/GizmoController.h"
 #include "core/EditorCamera.h"
 #include "core/Landscape.h"
+#include "core/GameplayState.h"
 #include "core/Environment.h"
 #include "core/Material.h"
 #include "render/EnvironmentFX.h"
@@ -247,6 +248,13 @@ private:
     Entity *FindPlayerEntity() const;
     void UpdatePlayerController(float dt);
     void UpdatePlayerCameraFollow();
+
+    // Stage 3: the Play-mode gameplay HUD (health/score/prompt banner, and
+    // the win/lose screen once m_game.status leaves Playing). Wired as
+    // ViewportPanel::on_gameplay_hud, so it draws only in the isolated Play
+    // view -- never over the editor. Handles its own restart key (R) while
+    // won/lost, cycling ExitPlayMode()+EnterPlayMode().
+    void RenderGameplayHUD();
 
     // Phase 35 animation & timeline foundation:
     //   ApplyTimeline        - editor Update stage: advance the global clock
@@ -493,6 +501,10 @@ private:
     bool m_landscape_brush_valid = false;
     Vec3 m_landscape_brush_center{0.0f, 0.0f, 0.0f};
     bool m_landscape_sculpting = false;
+
+    // Stage 3 gameplay HUD/state: reset to defaults every EnterPlayMode(),
+    // driven from Lua via the Game.* bindings, read by RenderGameplayHUD().
+    GameplayState m_game;
 
     // Asset placement mode (see UpdateAssetPlacement): the armed asset and
     // whether it's a prefab (LoadPrefab) or a bare mesh (SpawnMeshEntity).

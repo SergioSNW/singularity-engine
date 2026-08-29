@@ -2044,6 +2044,11 @@ void Application::EnterPlayMode()
     if (m_state == EngineState::Play)
         return;
 
+    // Stage 3: fresh gameplay HUD state every session -- health/score/prompt
+    // and the win/lose status never survive a Stop, the same way the scene
+    // snapshot below discards every other in-play mutation.
+    m_game = GameplayState();
+
     // Snapshot the whole scene graph in-memory (reuses the JSON serializer).
     // Any mutation made during play — flythrough camera moves, transform
     // edits, scene changes — is thrown away on Stop.
@@ -3076,6 +3081,12 @@ void Application::UpdatePlayerController(float dt)
 {
     if (m_state != EngineState::Play || !m_scene)
         return;
+    // Stage 3: freeze player input once the round has ended (RenderGameplayHUD
+    // shows the win/lose screen and handles the Restart key) -- gravity/
+    // collision from the last held frame shouldn't keep nudging the capsule
+    // around behind a "GAME OVER" banner.
+    if (m_game.status != GameplayState::Status::Playing)
+        return;
     Entity *player = FindPlayerEntity();
     if (!player)
         return;
@@ -3132,6 +3143,89 @@ void Application::UpdatePlayerCameraFollow()
         player->transform.position[1] + kAbove;
     cam_entity->transform.position[2] =
         player->transform.position[2] + std::cos(yaw) * kBehind;
+}
+
+// Stage 3 gameplay HUD, drawn inside the isolated Play viewport (see
+// ViewportPanel::on_gameplay_hud) using the exact same
+// GetWindowDrawList()-and-manual-rect idiom as DrawViewportHud's editor
+// stats overlay: health/score in the top-left, a prompt banner across the
+// bottom when Game.ShowPrompt() has set one, and a full win/lose screen
+// (with a Restart hint) once m_game.status leaves Playing.
+void Application::RenderGameplayHUD()
+{
+    if (!m_viewport)
+        return;
+    const ImVec2 img_min = m_viewport->GetImageMin();
+    const ImVec2 img_size = m_viewport->GetImageSize();
+    if (img_size.x < 8.0f || img_size.y < 8.0f)
+        return;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+
+    // --- Health / Score ---
+    char line1[64], line2[64];
+    snprintf(line1, sizeof(line1), "Health: %d", m_game.health);
+    snprintf(line2, sizeof(line2), "Score: %d", m_game.score);
+    {
+        const ImVec2 pad(10.0f, 7.0f);
+        const ImVec2 ts1 = ImGui::CalcTextSize(line1);
+        const ImVec2 ts2 = ImGui::CalcTextSize(line2);
+        const float box_w = std::max(ts1.x, ts2.x) + pad.x * 2.0f;
+        const float box_h = ts1.y + ts2.y + pad.y * 2.0f + 3.0f;
+        const ImVec2 p0(img_min.x + 12.0f, img_min.y + 12.0f);
+        const ImVec2 p1(p0.x + box_w, p0.y + box_h);
+        dl->AddRectFilled(p0, p1, IM_COL32(18, 18, 24, 190), 4.0f);
+        dl->AddRect(p0, p1, IM_COL32(90, 90, 110, 255), 4.0f);
+        dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y),
+                    IM_COL32(230, 230, 240, 255), line1);
+        dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y + ts1.y + 3.0f),
+                    IM_COL32(230, 210, 120, 255), line2);
+    }
+
+    // --- Prompt banner ---
+    if (!m_game.prompt.empty())
+    {
+        const ImVec2 pad(16.0f, 10.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(m_game.prompt.c_str());
+        const float box_w = ts.x + pad.x * 2.0f;
+        const float box_h = ts.y + pad.y * 2.0f;
+        const ImVec2 p0(img_min.x + (img_size.x - box_w) * 0.5f,
+                        img_min.y + img_size.y - box_h - 24.0f);
+        const ImVec2 p1(p0.x + box_w, p0.y + box_h);
+        dl->AddRectFilled(p0, p1, IM_COL32(18, 18, 24, 200), 6.0f);
+        dl->AddRect(p0, p1, IM_COL32(90, 90, 110, 255), 6.0f);
+        dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y),
+                    IM_COL32(240, 240, 245, 255), m_game.prompt.c_str());
+    }
+
+    // --- Win / lose screen ---
+    if (m_game.status != GameplayState::Status::Won &&
+        m_game.status != GameplayState::Status::Lost)
+        return;
+
+    const bool won = (m_game.status == GameplayState::Status::Won);
+    dl->AddRectFilled(img_min, ImVec2(img_min.x + img_size.x, img_min.y + img_size.y),
+                      IM_COL32(10, 10, 14, 150));
+
+    const char *headline = won ? "YOU WIN" : "GAME OVER";
+    const char *sub = "Press R to Restart, or Stop to return to the editor";
+    ImFont *font = ImGui::GetFont();
+    const float head_size = ImGui::GetFontSize() * 2.2f;
+    const ImVec2 head_ts = font->CalcTextSizeA(head_size, FLT_MAX, 0.0f, headline);
+    const ImVec2 sub_ts = ImGui::CalcTextSize(sub);
+
+    const ImVec2 center(img_min.x + img_size.x * 0.5f, img_min.y + img_size.y * 0.5f);
+    const ImU32 headline_color = won ? IM_COL32(140, 230, 150, 255) : IM_COL32(230, 100, 100, 255);
+    dl->AddText(font, head_size,
+               ImVec2(center.x - head_ts.x * 0.5f, center.y - head_ts.y * 0.5f - 10.0f),
+               headline_color, headline);
+    dl->AddText(ImVec2(center.x - sub_ts.x * 0.5f, center.y + head_ts.y * 0.5f + 6.0f),
+               IM_COL32(220, 220, 230, 255), sub);
+
+    if (ImGui::IsKeyPressed(ImGuiKey_R))
+    {
+        ExitPlayMode();
+        EnterPlayMode();
+    }
 }
 
 bool Application::ComputeDropWorldPosFromMouse(Vec3 &out)
@@ -3814,6 +3908,7 @@ bool Application::Init(int width, int height, const char *title)
     m_audio = new AudioManager();
     m_audio->Init();
     m_script_engine->SetAudioManager(m_audio);
+    m_script_engine->SetGameplayState(&m_game);
 
     // Phase 27 camera stack: a pure, headless-testable list of camera entries
     // (source + normalized viewport rect + z-order). It ships with the classic
@@ -3951,6 +4046,7 @@ bool Application::Init(int width, int height, const char *title)
     // stays the single source of truth for the render passes and gizmo math.
     m_viewport->on_toolbar = [this]() { DrawViewportToolbar(); };
     m_viewport->on_overlay = [this]() { DrawViewportHud(); };
+    m_viewport->on_gameplay_hud = [this]() { RenderGameplayHUD(); };
 
     // Viewport drag-drop (Phase 23): a prefab/mesh dropped onto the 3D view
     // spawns an instance at the cursor's ground point; a material/texture is

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GameplayState.h"
+
 #include <string>
 #include <vector>
 
@@ -67,6 +69,12 @@ public:
     // silent error-free no-op. The engine never owns it through this pointer.
     void SetAudioManager(AudioManager *audio);
 
+    // The GameplayState the Game.* bindings (SetHealth/AddScore/ShowPrompt/
+    // Win/Lose/...) read and write. Set once by Application; never null in
+    // practice (Application owns one GameplayState for the whole app
+    // lifetime), but the bindings degrade to a no-op if it somehow is.
+    void SetGameplayState(GameplayState *state);
+
     const std::string &LastError() const { return m_error; }
 
 private:
@@ -90,6 +98,7 @@ private:
     std::string m_error;
     std::string m_last_error_logged;  // dedupe persistent runtime errors
     AudioManager *m_audio;
+    GameplayState *m_game;
 
     lua_State *m_repl;        // persistent REPL VM (null until first Execute)
     int m_repl_env_ref;       // registry ref to the REPL scratchpad _ENV

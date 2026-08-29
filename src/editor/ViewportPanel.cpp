@@ -111,5 +111,10 @@ void ViewportPanel::OnImGuiRender(float dt)
     if (on_overlay && !m_isolated)
         on_overlay();
 
+    // Stage 3 gameplay HUD: the Play-mode counterpart, drawn only when the
+    // viewport IS isolated (i.e. only while actually playing).
+    if (on_gameplay_hud && m_isolated)
+        on_gameplay_hud();
+
     ImGui::End();
 }

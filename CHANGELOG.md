@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.45.0-alpha] — 2026-08-28
+
+### Added
+
+- **Game state management & gameplay HUD** (Stage 3): a new `GameplayState` (`src/core/GameplayState.h`) — `health`, `score`, `prompt`, and a `Status` of `Playing`/`Won`/`Lost` — owned by `Application`, reset to defaults every `EnterPlayMode()`, and deliberately **not** serialized (it's Play-session state, not scene data) or given any built-in meaning (no hardcoded "health <= 0 loses" rule): a level's own script decides what the numbers mean and calls `Win()`/`Lose()` explicitly, keeping the HUD reusable across genres rather than assuming what kind of game is being built.
+- **`Game.*` Lua bindings** (`src/script/ScriptEngine.cpp`): `SetHealth`/`GetHealth`, `SetScore`/`AddScore`/`GetScore`, `ShowPrompt`/`ClearPrompt`, `Win`/`Lose`, `GetStatus`. Registered the same way `Audio.*` already is (an observer pointer set once via `ScriptEngine::SetGameplayState`, degrading to a no-op when unset) — a Trigger Zone's `OnTriggerEnter` calling `Game.Win()` needs zero new C++ trigger-detection code, reusing the existing physics/scripting bridge entirely.
+- **In-viewport gameplay HUD** (`Application::RenderGameplayHUD`): health/score box (top-left), a centered prompt banner (bottom) when `Game.ShowPrompt()` has set one, and a full win/lose screen (dimmed backdrop, large headline, a Restart hint) once the round ends. Wired through a new `ViewportPanel::on_gameplay_hud` callback — the mirror image of the existing editor-only `on_overlay` stats HUD, firing only in the *isolated* (Play) viewport instead of the docked editor one, so the two overlays can never show at the same time by construction.
+- **Round lifecycle**: `UpdatePlayerController` now freezes all player input once `GameplayState::status` leaves `Playing` (no gravity/collision nudging the capsule around behind a "GAME OVER" banner); pressing **R** while won/lost cycles `ExitPlayMode()` + `EnterPlayMode()` for an instant restart, without leaving Play mode.
+- **Two example scripts** (`assets/scripts/goal_zone.lua`, `hazard_zone.lua`): drop either path into any Trigger-collider entity's Inspector Script field to get a working win or lose condition with zero Lua required.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only), no CMake generator conflict this round. Functionally verified through the real compiled `ScriptEngine` + `GameplayState`, not just a compile check: a temporary self-test in `Application::Init()` ran a script calling `SetHealth`/`AddScore` (twice)/`ShowPrompt`/`Win`, then read the resulting struct back in C++. All 4 checks passed with exact expected values (`health=50`, `score=15`, `prompt='Hello'`, `status=won`), then the self-test was removed. Editor launches and runs without crashing with the HUD wired into the real Play-mode viewport.
+
 ## [0.44.0-alpha] — 2026-08-28
 
 ### Added

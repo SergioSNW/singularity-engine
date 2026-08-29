@@ -1,4 +1,4 @@
-[diag] 10000000 FPS | 0.000 ms/frame | 99 draws | 10 entities
-[diag] 341 FPS | 13.11 ms/frame | 99 draws | 10 entities
-[diag] 68 FPS | 15.20 ms/frame | 99 draws | 10 entities
-[diag] 66 FPS | 21.65 ms/frame | 99 draws | 10 entities
+[diag] 0 FPS | 0.000 ms/frame | 99 draws | 10 entities
+[diag] 66 FPS | 14.63 ms/frame | 99 draws | 10 entities
+[diag] 67 FPS | 16.73 ms/frame | 99 draws | 10 entities
+[diag] 67 FPS | 15.03 ms/frame | 99 draws | 10 entities

@@ -1983,11 +1983,119 @@ during this phase (see Phase 45's note on `CMakePresets.json` and the
 Visual Studio generator this session's builds actually use) — resolved the
 same way, by removing and reconfiguring the directory.
 
+## Phase 47 — Game State Management & the Gameplay HUD (Stage 3)
+
+Stage 3 closes the loop the last few phases built toward: a player that can
+walk, collide, and now be scripted (Phase 44/46) still wasn't playing *a
+game* — there was no way to win, lose, or see anything on screen besides the
+3D world itself. This phase adds the thinnest possible layer that turns
+"walk around a world" into "play a game with a goal," while deliberately
+not assuming what that goal is.
+
+### 47.1 `GameplayState`: Deliberately Meaningless Numbers
+
+`src/core/GameplayState.h` is a small, unserialized, un-componentized
+struct: `health`, `score`, `prompt` (a string, empty = no banner), and a
+`Status` enum (`Playing`/`Won`/`Lost`). `Application` owns exactly one
+instance, reset to defaults every `EnterPlayMode()` — session state, thrown
+away on Stop the same way the scene snapshot restore throws away every
+other in-play mutation.
+
+The deliberate choice, stated directly in the header's own comment: health
+and score carry **no built-in meaning**. There is no "health reaching zero
+auto-loses" rule anywhere in the engine. A level's script decides what the
+numbers mean and calls `Game.Win()`/`Game.Lose()` explicitly when it wants
+the round to end. This mirrors how the engine already treats a Wall or a
+Trigger Zone — plain data and a collision volume, with all the actual
+*meaning* supplied by whatever script is attached — and keeps the HUD
+equally usable for a platformer, a survival game, or something with no
+health concept at all.
+
+### 47.2 The `Game.*` Bridge
+
+`ScriptEngine.cpp` gains a fifth Lua-facing surface (after `Vector3`,
+`Transform`, `Entity`, and Phase 46's `PlayerController`), but a simpler one
+— a flat function table, not a userdata/metatable, following the exact
+pattern `Audio.*` already established: a file-static observer pointer
+(`g_game_state`, alongside the existing `g_audio_manager`) set once via
+`ScriptEngine::SetGameplayState`, read/written by ten small C functions
+(`SetHealth`/`GetHealth`, `SetScore`/`AddScore`/`GetScore`,
+`ShowPrompt`/`ClearPrompt`, `Win`/`Lose`, `GetStatus`), all degrading to a
+harmless no-op (or a default return value) when no `GameplayState` is
+attached — the same graceful-degradation contract `Audio.Play`/`Audio.Stop`
+already have when no `AudioManager` exists.
+
+The payoff of building on the *existing* trigger/scripting bridge (Phase
+14's `PhysicsManager` → `ScriptEngine::DispatchEvent` → `OnTriggerEnter`)
+rather than inventing a new one: a working win condition is a two-line Lua
+file with zero new C++ trigger-detection code —
+
+```lua
+function OnTriggerEnter(other)
+    Game.ShowPrompt("You reached the goal!")
+    Game.Win()
+end
+```
+
+— shipped as a ready-to-use example (`assets/scripts/goal_zone.lua`, plus a
+`hazard_zone.lua` for the lose case), droppable onto any Trigger-collider
+entity's Inspector Script field.
+
+### 47.3 One Viewport, Two Mutually Exclusive Overlays
+
+The HUD needed a place to draw that the existing on-viewport overlay
+mechanism didn't provide: `ViewportPanel::on_overlay` (Phase 29's editor
+stats HUD — FPS, camera position) is explicitly skipped whenever the
+viewport is `isolated` (Play mode detaches from the dock layout and fills
+the screen as a true game view). A new callback,
+`ViewportPanel::on_gameplay_hud`, is the mirror image: drawn at the exact
+same point (right before `ImGui::End()`, on top of the 3D image) but gated
+on `m_isolated` being *true* instead of false. Since `SetIsolated(true)`
+and `SetIsolated(false)` already track Play/Editor state 1:1 (`Application`
+toggles them together in the Play/Stop transition), the two overlays can
+never both fire in the same frame by construction — no runtime check
+needed beyond the two boolean gates already in `ViewportPanel::OnImGuiRender`.
+
+`Application::RenderGameplayHUD` draws with the same
+`ImGui::GetWindowDrawList()`-and-manual-`AddRectFilled`/`AddText` technique
+`DrawViewportHud` (the editor stats overlay) already uses — a health/score
+box top-left, a centered prompt banner along the bottom when
+`Game.ShowPrompt()` has set one, and, once `status` leaves `Playing`, a
+dimmed full-viewport backdrop with a large win/lose headline sized via
+`ImFont::CalcTextSizeA` (the correct way to measure text at a scale other
+than the current font size — an early draft of this reached for
+`PushFont(nullptr)`, which isn't a valid call; measuring through the font
+object directly avoids the push/pop dance entirely).
+
+### 47.4 Round Lifecycle
+
+Two small additions close the loop: `UpdatePlayerController` now returns
+immediately whenever `m_game.status != Playing`, so gravity and collision
+from the last held input don't keep nudging the capsule around behind a
+"GAME OVER" banner; and `RenderGameplayHUD` itself checks for the **R** key
+while won/lost, calling `ExitPlayMode()` immediately followed by
+`EnterPlayMode()` for an instant restart — reusing the existing full
+scene-snapshot restore and fresh `GameplayState` reset rather than adding a
+second, parallel "reset the level" code path.
+
+### 47.5 Verification
+
+Same technique as Phase 44/46's Lua verification (the standalone g++
+harness still can't link in this environment): a temporary self-test in
+`Application::Init()` ran a real script through the real `ScriptEngine`
+against a real `GameplayState` — `SetHealth(50)`, two `AddScore` calls,
+`ShowPrompt`, then `Win()` — and read the struct back in C++. All four
+checks passed with exact expected values (`health=50`, `score=15`,
+`prompt='Hello'`, `status=won`) before the self-test was removed. The
+editor also launches and runs without crashing with the HUD wired into the
+real Play-mode viewport.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
 UI polish sprint, the v0.41.0-alpha surface & material painting system, the
 v0.42.0-alpha editor working light, the v0.43.0-alpha player capsule
-character controller, the v0.43.1-alpha paint brush cursor hotfix, and the
-v0.44.0-alpha Lua player-controller binding.*
+character controller, the v0.43.1-alpha paint brush cursor hotfix, the
+v0.44.0-alpha Lua player-controller binding, and the v0.45.0-alpha game
+state management & gameplay HUD.*
 

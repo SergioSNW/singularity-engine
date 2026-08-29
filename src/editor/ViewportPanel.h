@@ -52,6 +52,12 @@ public:
     std::function<void()> on_toolbar;
     std::function<void()> on_overlay;
 
+    // Stage 3 gameplay HUD: the mirror image of on_overlay -- drawn at the
+    // same point (right before ImGui::End, on top of the 3D image) but only
+    // in isolated (Play) mode, since on_overlay is an editor-only stats
+    // readout that intentionally never shows during Play.
+    std::function<void()> on_gameplay_hud;
+
 private:
     int m_viewport_width;
     int m_viewport_height;
