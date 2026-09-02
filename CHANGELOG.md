@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.49.0-alpha] — 2026-09-02
+
+### Added
+
+- **Export/build pipeline** (Stage 5): a "Export Build..." command (File menu and Command Palette) packages the currently-open scene into a standalone, double-click-runnable folder — `game.scene` (the active scene, saved via the existing `SceneSerializer`), a full recursive copy of `assets/`, and a renamed copy of the running executable (`GetModuleFileNameA` + `std::filesystem::copy_file`). No new build target, no separate "player" binary, no stripped-down `Init()` path: the exported `.exe` is byte-identical to the editor binary — it behaves as a pure player purely because `game.scene` sits next to it.
+- **Runtime mode**: a new `Application::InitRuntime(...)` calls the existing `Init()` unchanged, then runs a lean subset of `EnterPlayMode()`'s logic (no undo snapshot, no camera blend, no panel-visibility save/restore) against the loaded scene. A single new `bool m_runtime_mode` flag (orthogonal to `EngineState::Play`, which is otherwise reused entirely as-is) suppresses the main menu bar and makes Esc quit instead of returning to the editor — every other Play-mode gate already in place (isolated viewport, gameplay HUD, script session, physics) applies automatically with zero duplication.
+- **CLI + auto-detection** (`main.cpp`): `--play <scene>` boots straight into that scene's Play session with no editor UI. With no arguments, a `game.scene` file found next to the executable (written by `ExportBuild`) is auto-detected and loaded the same way — so a shipped build's `.exe` needs no launch arguments or shortcut configuration at all. `main.cpp` also now calls `SDL_GetBasePath()` and normalizes the process's working directory to the executable's own folder before anything else runs, so relative `assets/...` paths resolve correctly regardless of how the binary was launched (double-click, shortcut with a different "Start in" target, or invoked from an arbitrary shell directory).
+
+### Fixed
+
+- `Application.cpp`'s new `#include <windows.h>` (needed for `GetModuleFileNameA`) was pulling in `min`/`max` macros ahead of `<algorithm>`, silently breaking every `std::min`/`std::max`/`std::clamp` call site in the file into malformed syntax (`C2059`/`C2589` errors at over a dozen unrelated lines). Fixed by defining `NOMINMAX` before the include, the standard fix for mixing `<windows.h>` with the STL.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test in `Application::Init()` confirmed, against the real compiled engine: `SceneSerializer::SaveToFile` round-trips a scene to disk; `ExportBuild` produces a folder containing a readable `game.scene`, a full `assets/` copy, and a working renamed `.exe`. Separately launched the built editor exe directly (no crash, correct window title), launched it with `--play <saved scene>` (booted cleanly, no crash, no stderr output), and launched the *exported* build's own `.exe` with zero arguments from its own folder (auto-detected `game.scene`, booted cleanly, no crash, no stderr output) — exercising all three entry paths end to end.
+
 ## [0.48.0-alpha] — 2026-08-29
 
 ### Added

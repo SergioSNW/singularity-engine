@@ -2445,6 +2445,141 @@ script's output. A master-volume set/get round-trip passed alongside. The
 editor also launches and runs without crashing, with the default scene's
 entity count moving from 11 to 12 with the new Ambience entity present.
 
+## Phase 51 — Export & Runtime Pipeline (Stage 5)
+
+Stage 5 is the first item on the "what's still missing for a professional
+product" list drawn up at the end of Phase 50 -- and deliberately the
+narrowest possible version of it. The question going in was whether a
+shipped Singularity game needs its own separate player binary and build
+target, or whether the existing `EngineState::Play` machinery already does
+essentially everything a player needs and just needs a door into it that
+doesn't go through the editor UI. An Explore-agent investigation before any
+code was written confirmed the latter: Play mode's isolated-viewport
+rendering, gameplay HUD, script session lifecycle, and physics stepping
+were all already scene-agnostic and editor-UI-agnostic. The risk flagged
+by that investigation -- that many panels capture `this`/manager pointers
+via lambdas set up during `Init()`, making a parallel "stripped" `Init()`
+path for a separate player target a large, error-prone rewrite -- pointed
+straight at the design actually shipped: reuse `Init()` completely
+unchanged, and gate everything else behind one boolean.
+
+### 51.1 One Flag, Not a New State
+
+`EngineState::Play` already exists and already does the right thing the
+instant a scene is loaded and `EnterPlayMode()`-equivalent setup runs.
+Nothing about Play mode itself needed to change. The only two behaviors
+that are specific to *running as a shipped game* rather than *previewing
+inside the editor* are: the main menu bar must never appear, and Esc must
+quit the process rather than fall back to the editor. Both are one-line
+checks against a new `bool m_runtime_mode`, orthogonal to `m_state`:
+
+```cpp
+if (!m_runtime_mode && ImGui::BeginMainMenuBar()) { ... }
+```
+
+No new `EngineState` enum value, no second code path through `Run()`'s
+main loop, no separate CMake target. A runtime-mode session is a Play-mode
+session in every way that matters to rendering, physics, scripting, and
+audio -- it just never had an editor around it to return to.
+
+### 51.2 `InitRuntime`: `Init()` Plus a Lean Scene Load
+
+`Application::InitRuntime(width, height, title, scene_path, &error)` calls
+the existing `Init()` completely unchanged -- window, ImGui, all the
+managers/libraries, the one-time demo scene construction -- and only then
+loads the real scene over the top of it and runs a lean subset of what
+`EnterPlayMode()` does for the editor: starting the script session and
+audio, but skipping the parts that only make sense when there's an editor
+UI state to preserve and later restore (the undo snapshot taken before
+entering Play, the camera-position blend back to the editor's last view,
+saving and restoring which panels were visible). A runtime session has
+nothing to blend back to, so none of that machinery runs.
+
+### 51.3 `ExportBuild`: Copy Three Things Into a Folder
+
+`Application::ExportBuild(output_dir, game_name, &error)` packages the
+*currently open* scene:
+
+1. `SceneSerializer::SaveToFile` writes it as `<output_dir>/game.scene` --
+   the same serializer, same format, the editor's own Save uses.
+2. `std::filesystem::copy` recursively copies `assets/` into
+   `<output_dir>/assets` (`overwrite_existing`, so re-exporting into the
+   same folder while iterating doesn't require manually clearing it first).
+3. `GetModuleFileNameA(nullptr, ...)` resolves the path of the *currently
+   running* process's own executable, and `std::filesystem::copy_file`
+   copies it to `<output_dir>/<game_name>.exe`.
+
+The exported `.exe` is byte-identical to the editor binary. There is no
+separate, stripped-down "player" build -- the same executable can be the
+editor or a shipped game, and which one it behaves as is decided entirely
+by whether a `game.scene` file happens to be sitting next to it. This is
+the direct, deliberate consequence of the Phase 51 investigation's finding:
+building a genuinely separate, ImGui-free runtime target would mean
+duplicating or heavily refactoring every panel's setup in `Init()`, for a
+portfolio-stage engine that doesn't yet need the binary-size or startup-time
+win that would justify it. The tradeoff is disclosed plainly rather than
+hidden: an exported build still links the full editor and Dear ImGui, just
+never draws any of it.
+
+### 51.4 Entry Points: CLI Flag, Auto-Detection, and Working-Directory Safety
+
+`main.cpp` recognizes one flag, `--play <scene>`, which calls
+`InitRuntime` directly with no editor ever constructed. With no arguments,
+it checks for a `game.scene` file next to the executable -- exactly the
+file `ExportBuild` writes -- and if present, loads it the same way. A
+double-click on an exported build's `.exe`, with no shortcut configuration
+and no arguments, boots straight into Play.
+
+That auto-detection is only reliable if "next to the executable" is
+resolved the same way regardless of how the process was launched. Before
+any of this logic runs, `main.cpp` now calls `SDL_GetBasePath()` (SDL's
+portable answer to "where does this binary actually live," independent of
+the process's inherited working directory) and calls
+`std::filesystem::current_path(base_path)` to normalize the CWD to it. Not
+doing this would make every relative `assets/...` path resolution
+(already used everywhere: `MeshLibrary`, `MaterialLibrary`,
+`TextureLibrary`, script paths) depend on launch method -- a plain
+double-click happens to set CWD correctly, but a shortcut with a different
+"Start in" target, or invoking the exe from an arbitrary shell directory,
+would not.
+
+### 51.5 A `windows.h`/STL Macro Collision, Caught at Compile Time
+
+`GetModuleFileNameA` requires `#include <windows.h>`, added to
+`Application.cpp` for the first time this phase. `windows.h` defines `min`
+and `max` as preprocessor macros unless `NOMINMAX` is defined first --
+and because `Application.cpp` also includes `<algorithm>` (for
+`std::min`/`std::max`/`std::clamp`, used throughout the file's UI layout
+math), every one of those call sites was silently rewritten by the
+preprocessor into malformed syntax the instant the new include was added.
+The result wasn't a subtle runtime bug but an immediate, if cryptic, wall
+of MSVC syntax errors (`C2059`/`C2589`, "illegal token on right side of
+'::' ") scattered across more than a dozen unrelated lines -- variables
+named `dpi`, `box_w`, `alb_r/g/b`, none of which had anything to do with
+the actual change. Recognized by the shape of the failure (many unrelated
+`std::min`/`std::max`/`std::clamp` call sites breaking at once, right after
+a `windows.h` include was added) rather than by reading any single error
+in isolation. Fixed with the standard one-line remedy: `#define NOMINMAX`
+immediately before the `#include <windows.h>`.
+
+### 51.6 Verification
+
+No standalone smoke-test harness exists in this environment (the
+project's `ld`-based link step has been unreliable here since long before
+this phase), so verification follows the session's established pattern:
+a temporary self-test block in `Application::Init()`, run through the
+actual compiled engine, removed once confirmed. It checked, in order:
+`SceneSerializer::SaveToFile` round-tripping a scene to disk;
+`ExportBuild` producing a folder with a readable `game.scene`, a full
+`assets/` copy, and a working renamed `.exe`; then, outside the self-test,
+three separate real process launches -- the editor exe with no arguments
+(clean launch, correct window title, no crash), the editor exe invoked as
+`--play <the just-saved scene>` (clean launch, no crash, no stderr), and
+the *exported* build's own `.exe` launched with zero arguments directly
+from its own output folder (auto-detected `game.scene`, clean launch, no
+crash, no stderr) -- exercising the full editor-mode, explicit-runtime,
+and shipped-build entry paths end to end.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2454,5 +2589,6 @@ character controller, the v0.43.1-alpha paint brush cursor hotfix, the
 v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
 state management & gameplay HUD, the v0.46.0-alpha player/trigger/
 physics fix and jump, the v0.47.0-alpha deferred entity destruction
-and Lua methods-table fix, and the v0.48.0-alpha movement audio pass.*
+and Lua methods-table fix, the v0.48.0-alpha movement audio pass, and
+the v0.49.0-alpha export/runtime pipeline (Stage 5).*
 

@@ -41,6 +41,8 @@
 #include "render/MaterialCore.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
+#define NOMINMAX
+#include <windows.h>  // GetModuleFileNameA, for ExportBuild's self-copy (Stage 5)
 #include "core/AssetImporter.h"
 #include "core/Landscape.h"
 #include "core/PlayerController.h"
@@ -2035,6 +2037,120 @@ void Application::DrawSaveAsModal()
     ImGui::SameLine();
     if (ImGui::Button("Cancel"))
         ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+}
+
+// Stage 5: packages a standalone, double-click-able build into `output_dir`
+// -- the current scene as game.scene, a full copy of assets/, and a renamed
+// copy of the running executable. The copied .exe is byte-identical to this
+// one; it becomes a player rather than the editor purely because InitRuntime
+// (see main.cpp) finds a `game.scene` sitting next to it. That's the whole
+// trick: one binary, two roles, decided by what's in the folder around it.
+bool Application::ExportBuild(const std::string &output_dir, const std::string &game_name,
+                              std::string *error)
+{
+    if (!m_scene)
+    {
+        if (error) *error = "no active scene";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(output_dir, ec);
+    if (ec)
+    {
+        if (error) *error = "failed to create '" + output_dir + "': " + ec.message();
+        return false;
+    }
+
+    std::string save_error;
+    if (!SceneSerializer::SaveToFile(*m_scene, output_dir + "/game.scene", &save_error))
+    {
+        if (error) *error = "scene save failed: " + save_error;
+        return false;
+    }
+
+    // overwrite_existing so re-exporting into the same folder (iterating on
+    // a build) doesn't require the caller to clean it out first.
+    std::filesystem::copy("assets", output_dir + "/assets",
+                          std::filesystem::copy_options::recursive |
+                          std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec)
+    {
+        if (error) *error = "asset copy failed: " + ec.message();
+        return false;
+    }
+
+    char exe_path[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH)
+    {
+        if (error) *error = "could not resolve the running executable's own path";
+        return false;
+    }
+    const std::string dest_exe = output_dir + "/" + game_name + ".exe";
+    std::filesystem::copy_file(exe_path, dest_exe,
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec)
+    {
+        if (error) *error = "executable copy failed: " + ec.message();
+        return false;
+    }
+
+    return true;
+}
+
+void Application::DrawExportBuildModal()
+{
+    if (m_export_build_open)
+    {
+        ImGui::OpenPopup("Export Build");
+        m_export_build_open = false;
+        m_export_status.clear();
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Export Build", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextWrapped("Packages the current scene into a standalone build: "
+                       "a copy of this engine, all of assets/, and the scene "
+                       "as game.scene. Double-clicking the resulting .exe "
+                       "boots straight into Play mode -- no editor.");
+    ImGui::Separator();
+
+    ImGui::InputText("Game Name", m_export_game_name, sizeof(m_export_game_name));
+    ImGui::InputText("Output Folder", m_export_output_dir, sizeof(m_export_output_dir));
+    ImGui::TextDisabled("Relative to the working directory, e.g. builds/MyGame");
+
+    ImGui::Separator();
+    if (ImGui::Button("Export"))
+    {
+        std::string error;
+        if (ExportBuild(m_export_output_dir, m_export_game_name, &error))
+        {
+            m_export_status = "Exported to " +
+                std::filesystem::absolute(m_export_output_dir).string();
+            ConsoleInfo("[export] " + m_export_status);
+        }
+        else
+        {
+            m_export_status = "Export failed: " + error;
+            ConsoleError("[export] " + m_export_status);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close"))
+        ImGui::CloseCurrentPopup();
+
+    if (!m_export_status.empty())
+    {
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", m_export_status.c_str());
+        ImGui::PopStyleColor();
+    }
 
     ImGui::EndPopup();
 }
@@ -4380,6 +4496,7 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Open Scene", "File", "Ctrl+O", [this]() { OpenScene(); } });
     cp.Register({ "New Scene", "File", "", [this]() { NewScene(); } });
     cp.Register({ "Save Scene As...", "File", "", [this]() { OpenSaveAsModal(); } });
+    cp.Register({ "Export Build...", "File", "", [this]() { m_export_build_open = true; } });
     cp.Register({ "Enter Play Mode", "Transport", "", [this]() { EnterPlayMode(); } });
     cp.Register({ "Stop Play Mode", "Transport", "", [this]() { ExitPlayMode(); } });
     cp.Register({ "Play Timeline", "Transport", "", [this]() { PlayPauseTimeline(); } });
@@ -4610,6 +4727,58 @@ bool Application::Init(int width, int height, const char *title)
     return true;
 }
 
+bool Application::InitRuntime(int width, int height, const char *title,
+                              const std::string &scene_path, std::string *error)
+{
+    if (!Init(width, height, title))
+    {
+        if (error) *error = "engine Init() failed";
+        return false;
+    }
+
+    // Replace the hardcoded startup demo scene with the exported one. A
+    // missing/corrupt scene.json still leaves a running (if empty) engine
+    // rather than a hard crash -- better for a shipped build to show
+    // *something* than vanish.
+    std::string load_error;
+    if (!SceneSerializer::LoadFromFile(*m_scene, scene_path, &load_error))
+    {
+        ConsoleError("[runtime] failed to load '" + scene_path + "': " + load_error);
+        if (error) *error = load_error;
+    }
+
+    // The lean subset of EnterPlayMode(): a runtime boot has no editor
+    // state to snapshot (nothing to restore to on "stop" -- there is no
+    // stop), no flight mode to have been in, and no camera to blend from,
+    // so BeginCameraTransition/SavePlayModePanelState/the scene-snapshot
+    // JSON copy are all skipped outright rather than adapted.
+    m_game = GameplayState();
+    m_footstep_timer = 0.0f;
+    m_player_was_grounded = false;
+    if (m_physics)
+        m_physics->Clear();
+    std::string script_errors;
+    if (m_script_engine)
+        m_script_engine->StartSession(*m_scene, script_errors);
+    if (!script_errors.empty())
+        ConsoleError("[runtime] script errors: " + script_errors);
+    if (m_audio)
+    {
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &entity = *entity_ptr;
+            if (entity.audio.auto_play && !entity.audio.path.empty())
+                m_audio->Play(entity.audio.path, entity.audio.volume, entity.audio.loop);
+        }
+    }
+
+    m_state = EngineState::Play;
+    m_runtime_mode = true;
+    m_viewport->SetIsolated(true);
+    RecreateViewportTarget(width, height);
+    return true;
+}
+
 void Application::Run()
 {
     if (!m_running)
@@ -4661,8 +4830,13 @@ void Application::Run()
                 m_running = false;
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)
             {
-                // In play mode Esc exits the game view; in the editor it quits.
-                if (m_state == EngineState::Play)
+                // Exported builds boot straight into Play with no editor to
+                // return to (see InitRuntime) -- Esc there just quits, the
+                // same as closing the window. Otherwise: in play mode Esc
+                // exits the game view; in the editor it quits.
+                if (m_runtime_mode)
+                    m_running = false;
+                else if (m_state == EngineState::Play)
                     ExitPlayMode();
                 else
                     m_running = false;
@@ -4784,7 +4958,10 @@ void Application::Run()
         // --- Main menu bar (transport controls + editor chrome) ---
         const bool playing = (m_state == EngineState::Play);
 
-        if (ImGui::BeginMainMenuBar())
+        // Exported builds (InitRuntime) never show any editor chrome at
+        // all -- not even Play mode's own reduced "Stop"/"PLAYING" strip,
+        // since there's no editor underneath to stop back into.
+        if (!m_runtime_mode && ImGui::BeginMainMenuBar())
         {
             if (playing)
             {
@@ -5013,6 +5190,9 @@ void Application::Run()
                     if (ImGui::MenuItem("New Scene"))
                         NewScene();
                     ImGui::Separator();
+                    if (ImGui::MenuItem("Export Build..."))
+                        m_export_build_open = true;
+                    ImGui::Separator();
                     if (ImGui::MenuItem("Exit"))
                         m_running = false;
                     ImGui::EndMenu();
@@ -5199,6 +5379,7 @@ void Application::Run()
                 panel->OnImGuiRender((float)dt);
 
             DrawSaveAsModal();
+            DrawExportBuildModal();
             DrawViewportContextMenu();
             DrawStatusBar((float)dt);
             DrawToasts();

@@ -81,6 +81,18 @@ public:
     ~Application();
 
     bool Init(int width, int height, const char *title);
+
+    // Stage 5 export pipeline: boots straight into a Play session for
+    // `scene_path` with zero editor UI ever constructed-and-shown (calls the
+    // normal Init() unchanged, then loads the scene and starts the session
+    // directly, skipping EnterPlayMode()'s snapshot/panel-visibility
+    // bookkeeping -- there is no editor to preserve or return to). Used by
+    // an exported build's main.cpp when a `game.scene` file sits next to
+    // the executable. Returns false (with `error` filled) on a bad Init or
+    // a scene that fails to load.
+    bool InitRuntime(int width, int height, const char *title,
+                     const std::string &scene_path, std::string *error = nullptr);
+
     void Run();
     void Shutdown();
 
@@ -175,6 +187,15 @@ private:
     void DrawSaveAsModal();
     void EnterPlayMode();
     void ExitPlayMode();
+
+    // Stage 5: packages the current scene + assets/ + a copy of this
+    // executable into `output_dir` as a standalone, double-click-able build.
+    // The copied executable is unmodified -- it becomes a player purely
+    // because a `game.scene` file sits next to it (see main.cpp), so the
+    // exact same binary serves as both the editor and every exported game.
+    bool ExportBuild(const std::string &output_dir, const std::string &game_name,
+                     std::string *error);
+    void DrawExportBuildModal();
 
     // Phase 34 landscape & topology design:
     //   ResolveEntityMesh    - the mesh that renders/picks an entity: a
@@ -416,6 +437,18 @@ private:
     json::Value m_scene_snapshot;   // pre-play backup; restored on Stop
     std::vector<std::shared_ptr<EditorPanel>> m_panels;
     bool m_save_as_open;            // "Save Scene As" modal is pending
+
+    // Stage 5: true only for a process booted via InitRuntime() (an
+    // exported build) -- m_state is still plain EngineState::Play (every
+    // existing Play-mode gameplay/rendering check already applies
+    // correctly), this just additionally suppresses the small amount of
+    // chrome Play mode normally still shows (the menu bar's Stop button)
+    // and changes what Esc does (quit, not "return to the editor").
+    bool m_runtime_mode = false;
+    bool m_export_build_open = false;   // "Export Build" modal is pending
+    char m_export_game_name[64] = "Game";
+    char m_export_output_dir[260] = "builds/Game";
+    std::string m_export_status;
     char m_save_as_name[128] = {};  // file name typed into that modal
     bool m_play_panel_saved;        // play-mode panel snapshot is valid
     bool m_script_editor_was_visible;
