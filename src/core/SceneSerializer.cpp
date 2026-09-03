@@ -164,8 +164,11 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     light.object.emplace_back("shadow_distance", json::Value::MakeNumber(e.light.shadow_distance));
     ent.object.emplace_back("light", std::move(light));
 
-    // Procedural landscape: the height grid is serialized; the runtime mesh is
-    // derived data and is regenerated on the next render frame.
+    // Procedural landscape: the height grid AND the painted vertex colors are
+    // serialized (Phase 42's Surface & Material Painting writes `colors` at
+    // runtime same as sculpting writes `heights` -- dropping either one here
+    // would silently discard real authored work on every save); the runtime
+    // mesh is derived data and is regenerated on the next render frame.
     json::Value landscape = json::Value::MakeObject();
     landscape.object.emplace_back("enabled", json::Value::MakeBool(e.landscape.enabled));
     if (e.landscape.enabled)
@@ -177,6 +180,10 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
         for (float h : e.landscape.heights)
             heights.array.push_back(json::Value::MakeNumber(h));
         landscape.object.emplace_back("heights", std::move(heights));
+        json::Value colors = json::Value::MakeArray();
+        for (float c : e.landscape.colors)
+            colors.array.push_back(json::Value::MakeNumber(c));
+        landscape.object.emplace_back("colors", std::move(colors));
     }
     ent.object.emplace_back("landscape", std::move(landscape));
 
@@ -290,6 +297,19 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
                 if (v.IsNumber())
                     e.landscape.heights.push_back((float)v.num);
         }
+        // Missing (older scene files saved before this field existed) falls
+        // back to an empty array, same as a missing "heights" above --
+        // LandscapeRebuildMesh's own size check resets it to all-white the
+        // next time the mesh regenerates, rather than crashing on a size
+        // mismatch against the restored resolution.
+        e.landscape.colors.clear();
+        if (const json::Value *cs = lsc->Find("colors"); cs && cs->IsArray())
+        {
+            e.landscape.colors.reserve(cs->array.size());
+            for (const json::Value &v : cs->array)
+                if (v.IsNumber())
+                    e.landscape.colors.push_back((float)v.num);
+        }
         // The runtime mesh is derived data: drop it so the first render frame
         // regenerates it from the restored heights.
         e.landscape.mesh.reset();
@@ -363,6 +383,53 @@ bool ReadJsonFile(const std::string &path, json::Value &out, std::string *error)
         if (error) *error = "'" + path + "': " + parse_error;
         return false;
     }
+    return true;
+}
+
+// Write `root` to `path` atomically: the full document is written to a
+// sibling ".tmp" file first, then that file is renamed over `path`. A crash,
+// power loss, or full disk partway through the write leaves the temp file
+// corrupted (harmlessly discarded next attempt) and the real file exactly as
+// it was before -- there is no window where `path` itself is missing or
+// half-written. Renaming within the same directory is a single filesystem
+// operation on both Windows and POSIX. Shared by every save path (scenes,
+// prefabs) the way ReadJsonFile is shared by every load path.
+bool WriteJsonFile(const std::string &path, const json::Value &root, std::string *error)
+{
+    std::error_code ec;
+    const std::filesystem::path file_path(path);
+    const std::filesystem::path dir = file_path.parent_path();
+    if (!dir.empty())
+        std::filesystem::create_directories(dir, ec);
+
+    const std::filesystem::path tmp_path = file_path.string() + ".tmp";
+    {
+        std::ofstream out(tmp_path, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!out)
+        {
+            if (error) *error = "cannot open '" + tmp_path.string() + "' for writing";
+            return false;
+        }
+        const std::string text = json::WritePretty(root) + "\n";
+        out.write(text.data(), (std::streamsize)text.size());
+        out.close();
+        if (!out)
+        {
+            if (error) *error = "write failed for '" + tmp_path.string() + "' (disk full?)";
+            std::filesystem::remove(tmp_path, ec);
+            return false;
+        }
+    }
+
+    std::filesystem::rename(tmp_path, file_path, ec);
+    if (ec)
+    {
+        if (error) *error = "cannot replace '" + path + "': " + ec.message();
+        std::filesystem::remove(tmp_path, ec);
+        return false;
+    }
+
+    if (error) error->clear();
     return true;
 }
 
@@ -497,6 +564,7 @@ bool SceneSerializer::DeserializeScene(Scene &scene, const json::Value &root, st
             scene.SetParent(child->id, ancestor->id);
     }
 
+    if (error) error->clear();
     return true;
 }
 
@@ -510,23 +578,7 @@ bool SceneSerializer::SavePrefab(const Entity &entity, const std::string &path,
     root.object.emplace_back("name", json::Value::MakeString(entity.tag.tag));
     root.object.emplace_back("root", EntityTreeToJson(entity));
 
-    std::error_code ec;
-    const std::filesystem::path file_path(path);
-    const std::filesystem::path dir = file_path.parent_path();
-    if (!dir.empty())
-        std::filesystem::create_directories(dir, ec);
-
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out)
-    {
-        if (error) *error = "cannot open '" + path + "' for writing";
-        return false;
-    }
-    out << json::WritePretty(root) << "\n";
-    out.close();
-
-    if (error) error->clear();
-    return true;
+    return WriteJsonFile(path, root, error);
 }
 
 Entity *SceneSerializer::LoadPrefab(Scene &scene, const std::string &path,
@@ -592,24 +644,7 @@ bool SceneSerializer::IsPrefabFile(const std::string &path)
 
 bool SceneSerializer::SaveToFile(const Scene &scene, const std::string &path, std::string *error)
 {
-    std::error_code ec;
-    const std::filesystem::path file_path(path);
-    const std::filesystem::path dir = file_path.parent_path();
-    if (!dir.empty())
-        std::filesystem::create_directories(dir, ec);
-
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out)
-    {
-        if (error) *error = "cannot open '" + path + "' for writing";
-        return false;
-    }
-
-    out << json::WritePretty(SerializeScene(scene)) << "\n";
-    out.close();
-
-    if (error) error->clear();
-    return true;
+    return WriteJsonFile(path, SerializeScene(scene), error);
 }
 
 bool SceneSerializer::LoadFromFile(Scene &scene, const std::string &path, std::string *error)

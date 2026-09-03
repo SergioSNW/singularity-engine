@@ -2721,6 +2721,122 @@ past the fade-in duration returns the phase to `None`. Separately,
 directly (the same entry path Stage 5 built): clean launch, no crash, no
 stderr output.
 
+## Phase 53 — Save/Load Robustness
+
+Stage 6 was the last of the gameplay-facing roadmap items; this phase is
+the third, verification-shaped one: "what's still missing to reach a nice
+professional product" specifically called out save/load robustness as
+something to *verify*, not a feature to add. That framing matters --
+the right first step wasn't writing new hardening code speculatively, it
+was reading `SceneSerializer.cpp`, `Scene.cpp`, and `Json.cpp` end to end
+looking for what could actually go wrong, and separating real, confirmed
+bugs from defenses that turned out to already exist.
+
+### 53.1 What Was Already Solid
+
+Three things this phase went in suspecting might be gaps turned out to
+already be correctly handled, and are recorded here so a future pass
+doesn't waste time re-litigating them:
+
+- **Cyclic parent/child graphs from a hand-edited scene file.** Pass 2 of
+  `DeserializeScene` resolves every parent link through `Scene::SetParent`
+  -- the exact same function the editor's drag-and-drop hierarchy uses --
+  which already rejects self-parenting and, via `IsDescendantOf`, rejects
+  any reparent that would create a cycle. Tracing through a two-node
+  mutual-parent file (A's parent is B, B's parent is A) by hand confirms
+  this holds regardless of which entity appears first in the file: whichever
+  link is applied second finds the first already in place and is rejected.
+- **Deeply nested / hostile JSON.** `Json.cpp`'s recursive-descent parser
+  already caps nesting at `kMaxJsonDepth` (1024) and rejects anything
+  deeper with a clean parse error instead of overflowing the call stack --
+  on top of `SceneSerializer.cpp`'s own separate `kMaxTreeDepth` (256) cap
+  on entity-tree nesting specifically. Malformed numbers, unterminated
+  strings, and truncated escapes are all already rejected with specific
+  error messages rather than undefined behavior.
+- **A landscape's `heights` array not matching its declared `resolution`.**
+  `LandscapeRebuildMesh` already checks `heights.size() != count` (and,
+  after this phase, the same check for `colors`) and resets to a safe,
+  correctly-sized default before any indexed access happens -- so a
+  corrupted or hand-edited scene file with a wildly mismatched array can't
+  reach an out-of-bounds read during mesh generation.
+
+### 53.2 What Wasn't: Painted Landscape Colors Never Serialized
+
+The one real, confirmed bug, and the highest-value fix in this phase:
+`WriteEntityFields`'s landscape block wrote `heights` (sculpted geometry)
+but never `colors` -- the per-vertex paint data Phase 42's Surface &
+Material Painting system writes into `LandscapeComponent::colors` at
+runtime. `ReadEntityFields` correspondingly never read it back. The
+result: painting a landscape, then saving the scene (or just switching
+scenes and back), silently lost every bit of paint work, with
+`LandscapeRebuildMesh`'s own size-mismatch self-heal being exactly what
+made the loss invisible -- the freshly-loaded `colors` array is empty, the
+count check fires, and it gets quietly reset to uniform white instead of
+erroring.
+
+The blast radius was wider than "Save Scene" alone. `EntityTreeToJson`/
+`EntityTreeFromJson` -- the pair `WriteEntityFields`/`ReadEntityFields`
+actually live inside -- are also exactly what `SceneSerializer::
+DuplicateEntity` (the editor's Duplicate command) and the Phase 22 undo
+history's spawn/restore path round-trip an entity through. So this single
+missing field meant duplicating a painted landscape, or undoing its
+deletion, *also* silently reset it to white -- three different-looking
+symptoms, one shared root cause. Fixed by serializing `colors` alongside
+`heights`; an older save missing the key falls back to empty, which hits
+the same pre-existing self-heal path harmlessly (identical to today's
+behavior for a scene that was never painted).
+
+### 53.3 Atomic Writes
+
+`SaveToFile` and `SavePrefab` each wrote straight into the destination
+path with `std::ios::trunc` -- meaning the moment the file is opened for
+writing, the previous good save is already gone, before a single byte of
+the new content has landed. A crash, a killed process, a full disk, or
+power loss at any point during that write left a truncated or empty file
+with no way back. Both now go through a new shared `WriteJsonFile`
+helper (mirroring the load side's existing `ReadJsonFile`): the full
+document is written to a sibling `<path>.tmp` file first, and only once
+that succeeds completely is the temp file renamed over the real path.
+`std::filesystem::rename` replacing an existing destination is a single
+atomic operation on both Windows and POSIX, so there is no window where
+the real file is missing, truncated, or partially written -- a failure
+anywhere before the rename leaves the original save exactly as it was,
+with only the (now-irrelevant) temp file corrupted.
+
+This also deleted about 30 lines of near-identical duplicated
+open/write/error-handling code between `SaveToFile` and `SavePrefab`,
+the same kind of consolidation Stage 5's `ExportBuild` and Stage 6's
+`PerformSceneTransition` both did by reusing existing save/load entry
+points rather than inventing parallel ones.
+
+### 53.4 A Small API Consistency Fix
+
+While touching every return path in this file, `DeserializeScene` (and by
+extension `LoadFromFile`) turned out to be the only functions here that
+didn't clear the caller's `error` string on success -- `SaveToFile`,
+`SavePrefab`, and `LoadPrefab` all already did. Not a live bug (every
+current call site either declares a fresh string right before the call or
+clears it itself afterward), but exactly the kind of API inconsistency
+that becomes a real, confusing bug the day some future caller reuses one
+error string across a batch of load attempts and trusts an empty string
+to mean success. Fixed to match the convention already established
+everywhere else in the file.
+
+### 53.5 Verification
+
+A temporary self-test in `Application::Init()` (removed after confirming)
+ran twelve checks against the real compiled engine, all passing: a
+painted landscape's `colors` and `heights` both survive save-then-load
+and `DuplicateEntity` exactly; two sequential saves to the same path both
+succeed, leave no stray `.tmp` file, and the final file reflects the
+second save; a missing file, corrupt JSON, and JSON missing the
+`entities` array all fail cleanly with a non-empty error while leaving an
+existing scene's entity count unchanged (proving a failed load never
+mutates the scene passed into it); a landscape with `heights`/`colors`
+arrays far too short for a `resolution` of 64 loads and rebuilds its mesh
+without crashing; and a stale, pre-filled error string ends up empty
+after a successful load.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2731,6 +2847,7 @@ v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
 state management & gameplay HUD, the v0.46.0-alpha player/trigger/
 physics fix and jump, the v0.47.0-alpha deferred entity destruction
 and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
-v0.49.0-alpha export/runtime pipeline (Stage 5), and the v0.50.0-alpha
-scene transitions pass (Stage 6).*
+v0.49.0-alpha export/runtime pipeline (Stage 5), the v0.50.0-alpha
+scene transitions pass (Stage 6), and the v0.51.0-alpha save/load
+robustness pass.*
 

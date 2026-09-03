@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.51.0-alpha] — 2026-09-03
+
+### Fixed
+
+- **Painted landscape colors were silently dropped by every save** (`SceneSerializer.cpp`): `WriteEntityFields`/`ReadEntityFields`'s landscape block serialized `heights` (sculpting) but never `colors` (Phase 42's Surface & Material Painting) — a real, confirmed data-loss bug affecting every landscape entity that had ever been painted. Since `SceneSerializer::EntityTreeToJson`/`EntityTreeFromJson` are the same shared functions behind Scene save/load, `Duplicate Entity`, and undo-restore-after-delete, the bug wasn't limited to disk saves: duplicating a painted landscape or undoing its deletion also silently reset it to white. `colors` now round-trips exactly like `heights`; an older scene file saved before this fix (missing the key entirely) falls back to empty, which `LandscapeRebuildMesh`'s existing size-mismatch guard already resets to a safe all-white default rather than crashing.
+- **Scene/prefab saves were not crash-safe**: `SaveToFile`/`SavePrefab` wrote directly into the destination file (`trunc`), so a crash, power loss, or a full disk partway through a write left a corrupted or truncated file with no way back to the previous good save. Both now go through a new shared `WriteJsonFile` helper (mirroring the existing `ReadJsonFile`) that writes the full document to a sibling `.tmp` file first and only then renames it over the real path — a crash mid-write leaves the temp file corrupted and harmlessly discarded, while the original save is untouched until the rename, which is a single atomic filesystem operation on both Windows and POSIX.
+- **`DeserializeScene`/`LoadFromFile` never cleared the caller's error string on success**, unlike every other function in this file (`SaveToFile`, `SavePrefab`, `LoadPrefab`). Harmless with every current call site (each either declares a fresh string or clears it itself afterward), but inconsistent with the rest of the API and a real footgun for any future caller reusing one error string across several load attempts. Now clears it on success like everything else here.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test in `Application::Init()` ran 12 checks against the real compiled engine, all passing: a painted landscape's `colors` and `heights` both round-trip exactly through save-then-load and through `DuplicateEntity`; two sequential saves to the same path both succeed with no leftover `.tmp` file and the final file reflecting the second save; loading a missing file, corrupt JSON, and JSON missing the `entities` array all fail cleanly with a non-empty error and leave an existing scene's entity count unchanged; a landscape with `heights`/`colors` arrays far too short for its declared `resolution` loads and rebuilds its mesh without crashing (self-heals to the correctly-sized default); and a stale pre-filled error string is empty after a successful load.
+
 ## [0.50.0-alpha] — 2026-09-03
 
 ### Added
