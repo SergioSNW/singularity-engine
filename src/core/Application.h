@@ -20,6 +20,7 @@ struct SDL_Texture;
 #include "core/EditorCamera.h"
 #include "core/Landscape.h"
 #include "core/GameplayState.h"
+#include "core/SceneTransition.h"
 #include "core/Environment.h"
 #include "core/Material.h"
 #include "render/EnvironmentFX.h"
@@ -196,6 +197,18 @@ private:
     bool ExportBuild(const std::string &output_dir, const std::string &game_name,
                      std::string *error);
     void DrawExportBuildModal();
+
+    // Stage 6: a script's Game.LoadScene(path) call swaps the active scene
+    // without ever leaving Play mode. UpdateSceneTransition advances the
+    // fade-out/fade-in timer (see SceneTransition.h); at the FadingOut ->
+    // FadingIn boundary it calls PerformSceneTransition, which stops the
+    // outgoing session, reloads the scene in place via SceneManager (so
+    // every panel's cached Scene* stays valid), and starts a fresh session
+    // for the new one -- the same steps EnterPlayMode takes, minus the
+    // parts (undo snapshot, camera blend from the editor, panel-visibility
+    // save) that only make sense when there's an editor to return to.
+    void UpdateSceneTransition(float dt);
+    void PerformSceneTransition(const std::string &path);
 
     // Phase 34 landscape & topology design:
     //   ResolveEntityMesh    - the mesh that renders/picks an entity: a
@@ -538,6 +551,10 @@ private:
     // Stage 3 gameplay HUD/state: reset to defaults every EnterPlayMode(),
     // driven from Lua via the Game.* bindings, read by RenderGameplayHUD().
     GameplayState m_game;
+
+    // Stage 6: in-flight Game.LoadScene() fade, reset alongside m_game every
+    // EnterPlayMode() so nothing carries over from a Stop mid-transition.
+    SceneTransitionState m_scene_transition;
 
     // Stage 4 footstep/landing audio (UpdatePlayerController): the cadence
     // timer counts up while the player is moving and grounded, firing a

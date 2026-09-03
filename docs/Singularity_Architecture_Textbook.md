@@ -2580,6 +2580,147 @@ from its own output folder (auto-detected `game.scene`, clean launch, no
 crash, no stderr) -- exercising the full editor-mode, explicit-runtime,
 and shipped-build entry paths end to end.
 
+## Phase 52 — Scene Transitions (Stage 6)
+
+Stage 6 is the second item from the "what's still missing" roadmap drawn
+up after Stage 5. The question going in was the same shape as every prior
+Stage: does this need new machinery, or does an existing mechanism just
+need a new door into it? A scene reload already existed and was already
+proven safe against live panel pointers -- `SceneManager::LoadScene`,
+used by the editor's own Open Scene menu item, reloads *into* the same
+`Scene` object rather than replacing it, specifically so every panel's
+cached `Scene*` survives a switch. The entire feature is that function,
+called from gameplay instead of from a menu, with a fade wrapped around
+the moment it happens so the swap never reads as a single dropped frame.
+
+### 52.1 A Fade, Not a State
+
+`Game.LoadScene(path)` (`ScriptEngine.cpp`) doesn't touch the scene at
+all -- it writes a path into `GameplayState::pending_scene` and returns.
+This mirrors `entity:Destroy()`'s own reasoning exactly: the call is very
+likely running from inside `PhysicsManager::Step()`'s own walk of the
+entity list (a trigger's `OnTriggerEnter`), so mutating -- let alone
+*replacing* -- the scene right there would corrupt whatever loop called
+into Lua in the first place. `Application::Run()` consumes
+`pending_scene` at the exact same safe point `FlushPendingDestroyEntities`
+already uses: after every per-frame system has finished iterating
+entities, before the scene is read again this frame.
+
+Consuming it starts a fade, not a load. `SceneTransitionState`
+(`src/core/SceneTransition.h`) is a tiny two-phase state machine --
+`FadingOut` then `FadingIn`, timed by `kSceneTransitionFadeDuration`
+(0.35s each half) -- modeled directly on `EditorCamera.h`'s
+`CameraTransitionState`/`CameraTransitionPhase` from Phase 25. Like
+`CameraBlend`, the opacity function (`SceneTransitionFadeAlpha`) is pure
+and header-only, so it's testable without SDL or ImGui in the loop. The
+actual scene swap (`Application::PerformSceneTransition`) runs exactly
+once, at the `FadingOut -> FadingIn` boundary -- the one instant the
+screen is fully black, so the load's cost (however brief) is hidden
+rather than visible as a hitch.
+
+### 52.2 `PerformSceneTransition` Is `EnterPlayMode`, Minus the Editor Parts
+
+`PerformSceneTransition` stops the outgoing script session and audio,
+clears physics, calls `SceneManager::LoadScene`, starts a fresh script
+session, and auto-plays the new scene's `auto_play` audio components --
+the same five steps `EnterPlayMode` already takes when a Play session
+begins. What it deliberately skips is everything in `EnterPlayMode` that
+exists only because there's an editor to eventually return to:
+
+- **No new undo snapshot.** `m_scene_snapshot` still holds the *original*
+  pre-Play scene, captured once when Play began. Stop always restores to
+  what the user was editing, no matter how many scene transitions
+  happened in between -- retaking the snapshot mid-session would make
+  Stop restore to whichever level the player happened to be standing in,
+  which is never what "return to the editor" should mean.
+- **No camera blend.** `GetActiveCameraPose` already resolves the active
+  gameplay camera fresh every frame via `FindActiveCamera()` rather than
+  caching it -- the same mechanism that makes any scene reload "just
+  work" for rendering. Blending would also be pointless here: the screen
+  is fully black at the swap instant, so there's nothing visible to blend
+  from.
+- **No panel-visibility bookkeeping.** `SavePlayModePanelState` already
+  ran once for the whole Play session; a scene transition doesn't change
+  which editor panels are hidden.
+
+Health and score are treated as the player's running progress and
+survive the swap untouched; the prompt banner and any Won/Lost status
+described the level being left, so both reset to their defaults --
+exactly the "numbers with no built-in meaning vs. session state" split
+`GameplayState`'s own doc comment already draws for `Game.Win`/`Game.Lose`.
+A failed load (bad path) logs to the console and the toast, then still
+fades back in on whatever `LoadScene` left the scene as -- a visible
+error beats a permanently black screen.
+
+### 52.3 A Pre-Existing Gap `Scene::Clear()` Had
+
+Tracing exactly what `PerformSceneTransition` touches turned up a real,
+if narrow, bug in Phase 49's deferred-destroy machinery: `Scene::Clear()`
+resets the entity list and the id counter, but never touched
+`m_pending_destroy`. A `entity:Destroy()` queued in the scene being
+discarded (say, a script that destroys a collected pickup and then loads
+the next level in the same handler -- a completely natural thing to
+write once scene transitions exist) would survive the clear as a stale
+id. Since `Clear()` also resets `m_next_id` to 0, that id is very likely
+reused by the *new* scene's own first few entities -- meaning the next
+`FlushPendingDestroyEntities()` could silently delete an unrelated
+entity in the level the player just loaded into. This was reachable
+before this phase too (`ExitPlayMode`'s snapshot restore and the
+editor's Open Scene both already go through `DeserializeScene` ->
+`Clear()`), but scene transitions are the first place a destroy-then-load
+combination becomes an obvious, expected pattern to write, so it's fixed
+here: `Clear()` now empties `m_pending_destroy` alongside the entity list.
+
+### 52.4 Demo Content, Generated Rather Than Hand-Authored
+
+Proving the feature needed real content: a script that requests a load,
+and a scene on the other end of it. Rather than hand-writing `.scene`
+JSON (fragile -- the format has grown a lot of per-component fields
+across 52 phases, and a typo wouldn't be caught until the file failed to
+parse), both demo scenes were generated the same way Stage 4 generated
+its WAV files: a temporary block in `Application::Init()` building real
+`Scene`/`Entity` objects through the actual engine API and handing them
+to `SceneSerializer::SaveToFile`, guaranteeing well-formed output because
+it's the same code path a real save takes.
+
+`assets/scripts/level_exit.lua` is the new reusable example -- a Trigger
+entity's script with the destination path as a single commented constant
+to edit, matching `goal_zone.lua`/`damage_zone.lua`'s existing
+"duplicate the file, change the one constant" convention rather than
+inventing a per-entity parameter system. `assets/scenes/level_1.scene`'s
+Level Exit trigger uses it to load `level_2.scene`; `level_2.scene`'s own
+Goal Zone trigger reuses `goal_zone.lua` completely unmodified, which is
+itself part of the proof -- a scene loaded through `Game.LoadScene`
+starts its scripts exactly the same way a scene loaded any other way
+does, with nothing scene-transition-specific for a script author to know
+about.
+
+One incidental discovery while writing the generator: `assets/scenes/`
+was blanket-`.gitignore`d as "runtime-generated scene files," a rule that
+predates this phase and made sense while the only things ever saved
+there were scratch self-test output. That's no longer true -- these two
+files are real, deliberate shipped content, the same category as
+`assets/scripts/*.lua` and `assets/audio/*.wav`, both already tracked --
+so the ignore rule was removed rather than force-adding around it.
+
+### 52.5 Verification
+
+A temporary self-test in `Application::Init()` (removed after confirming)
+checked, against the real compiled engine: `SceneTransitionFadeAlpha`
+returns the expected opacity for a sample point in each fade direction;
+both demo scenes save successfully; and a full transition cycle run
+against the *live* scene -- snapshotted first and restored after via
+`SerializeScene`/`DeserializeScene`, so the test never permanently
+replaces the editor's own default startup scene -- confirmed requesting
+a load flips the phase to `FadingOut`, advancing time past the fade-out
+duration performs the actual swap (phase becomes `FadingIn`; the new
+scene's Player and Level Exit entities are present; entity count changed
+from 12 to 5; `GameplayState.status` is back to `Playing`), and advancing
+past the fade-in duration returns the phase to `None`. Separately,
+`singularity-engine.exe --play assets/scenes/level_1.scene` was launched
+directly (the same entry path Stage 5 built): clean launch, no crash, no
+stderr output.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2589,6 +2730,7 @@ character controller, the v0.43.1-alpha paint brush cursor hotfix, the
 v0.44.0-alpha Lua player-controller binding, the v0.45.0-alpha game
 state management & gameplay HUD, the v0.46.0-alpha player/trigger/
 physics fix and jump, the v0.47.0-alpha deferred entity destruction
-and Lua methods-table fix, the v0.48.0-alpha movement audio pass, and
-the v0.49.0-alpha export/runtime pipeline (Stage 5).*
+and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
+v0.49.0-alpha export/runtime pipeline (Stage 5), and the v0.50.0-alpha
+scene transitions pass (Stage 6).*
 

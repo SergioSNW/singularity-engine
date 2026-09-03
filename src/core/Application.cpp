@@ -2165,6 +2165,10 @@ void Application::EnterPlayMode()
     // snapshot below discards every other in-play mutation.
     m_game = GameplayState();
 
+    // Stage 6: a Stop mid-fade must not leave a stale target/timer sitting
+    // around for the next Play session to stumble into.
+    m_scene_transition = SceneTransitionState();
+
     // Stage 4: fresh footstep/landing audio state, so a stale mid-air/
     // mid-cadence value from a previous session can't fire a spurious
     // landing thump or an off-beat first footstep this session.
@@ -2296,6 +2300,90 @@ void Application::ExitPlayMode()
     // Restore the workspace-appropriate chrome (e.g. hide the viewport again in
     // the Sequencing workspace) that the isolated play view overrode.
     SyncWorkspaceSideEffects(m_workspace_manager.GetWorkspace());
+}
+
+// Stage 6: advances the in-flight Game.LoadScene() fade by dt. The actual
+// scene swap happens exactly once, at the FadingOut -> FadingIn boundary
+// (screen fully black), via PerformSceneTransition.
+void Application::UpdateSceneTransition(float dt)
+{
+    if (m_scene_transition.phase == SceneTransitionPhase::None)
+        return;
+
+    m_scene_transition.t += dt / kSceneTransitionFadeDuration;
+    if (m_scene_transition.t < 1.0f)
+        return;
+
+    if (m_scene_transition.phase == SceneTransitionPhase::FadingOut)
+    {
+        PerformSceneTransition(m_scene_transition.target_scene);
+        m_scene_transition.phase = SceneTransitionPhase::FadingIn;
+        m_scene_transition.t = 0.0f;
+    }
+    else
+    {
+        m_scene_transition.phase = SceneTransitionPhase::None;
+        m_scene_transition.t = 0.0f;
+    }
+}
+
+// Stage 6: the actual scene swap, run once the screen is fully black. Mirrors
+// EnterPlayMode's session-start steps (stop the old session/audio, clear
+// physics, load, start the new session, auto-play audio) but skips the parts
+// that only make sense when there's an editor to return to on Stop: no undo
+// snapshot is retaken (m_scene_snapshot still holds the ORIGINAL pre-Play
+// scene, so Stop always restores to what the user was editing, regardless of
+// how many scene transitions happened during the session), no camera blend
+// (the screen is black; GetActiveCameraPose picks up the new scene's active
+// camera on its own, the same way it already does after any scene load), and
+// no panel-visibility bookkeeping (already applied once, for the whole Play
+// session, by EnterPlayMode).
+void Application::PerformSceneTransition(const std::string &path)
+{
+    if (m_script_engine)
+        m_script_engine->StopSession();
+    if (m_audio)
+        m_audio->StopAll();
+    if (m_physics)
+        m_physics->Clear();
+
+    std::string error;
+    if (m_scene_manager && !m_scene_manager->LoadScene(path, &error))
+    {
+        // Whatever LoadScene left the scene in (untouched on a missing file,
+        // since ReadJsonFile fails before Scene::Clear() runs; possibly
+        // empty on malformed JSON) is what fades back in -- better than a
+        // permanently black screen.
+        ConsoleError("[scene transition] failed to load '" + path + "': " + error);
+        PushToast("Scene transition failed: " + error);
+    }
+
+    // The prompt banner and Won/Lost status described the level being left;
+    // health and score are the player's running progress and carry over,
+    // the same "numbers vs. built-in meaning" split GameplayState's own doc
+    // comment describes.
+    m_game.status = GameplayState::Status::Playing;
+    m_game.prompt.clear();
+    m_game.pending_scene.clear();
+
+    m_footstep_timer = 0.0f;
+    m_player_was_grounded = false;
+
+    std::string script_errors;
+    if (m_script_engine)
+        m_script_engine->StartSession(*m_scene, script_errors);
+    if (!script_errors.empty())
+        ConsoleError("[scene transition] script errors: " + script_errors);
+
+    if (m_audio)
+    {
+        for (auto &entity_ptr : m_scene->GetEntities())
+        {
+            Entity &entity = *entity_ptr;
+            if (entity.audio.auto_play && !entity.audio.path.empty())
+                m_audio->Play(entity.audio.path, entity.audio.volume, entity.audio.loop);
+        }
+    }
 }
 
 void Application::SavePlayModePanelState()
@@ -3389,6 +3477,20 @@ void Application::RenderGameplayHUD()
         dl->AddRect(p0, p1, IM_COL32(90, 90, 110, 255), 6.0f);
         dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y),
                     IM_COL32(240, 240, 245, 255), m_game.prompt.c_str());
+    }
+
+    // --- Scene transition fade (Stage 6) ---
+    // Drawn over everything above (health/score/prompt), before the early
+    // return below, so a fade in flight also covers the win/lose screen --
+    // a transition that lands mid-Won/Lost still hides the stale headline
+    // instead of flashing it under the new scene for one frame.
+    {
+        const float alpha = SceneTransitionFadeAlpha(m_scene_transition);
+        if (alpha > 0.0f)
+        {
+            const ImU32 col = IM_COL32(6, 6, 8, (int)(alpha * 255.0f));
+            dl->AddRectFilled(img_min, ImVec2(img_min.x + img_size.x, img_min.y + img_size.y), col);
+        }
     }
 
     // --- Win / lose screen ---
@@ -5477,6 +5579,22 @@ void Application::Run()
             // finished, before the scene is ever read again this frame
             // (rendering, next frame's Update).
             m_scene->FlushPendingDestroyEntities();
+
+            // Stage 6: a script's Game.LoadScene(path) call (same safe point
+            // as the destroy-queue flush above) is accepted as a new
+            // transition only when none is already in flight -- a second
+            // call made mid-fade just sits in m_game.pending_scene until the
+            // current one finishes, then starts its own fade right after,
+            // rather than being dropped or interrupting the first.
+            if (!m_game.pending_scene.empty() &&
+                m_scene_transition.phase == SceneTransitionPhase::None)
+            {
+                m_scene_transition.phase = SceneTransitionPhase::FadingOut;
+                m_scene_transition.t = 0.0f;
+                m_scene_transition.target_scene = m_game.pending_scene;
+                m_game.pending_scene.clear();
+            }
+            UpdateSceneTransition((float)dt);
         }
 
         // Phase 35 timeline playback: advances the global clock and writes the

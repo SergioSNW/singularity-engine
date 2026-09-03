@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.50.0-alpha] — 2026-09-03
+
+### Added
+
+- **Scene transitions** (Stage 6): a new `Game.LoadScene(path)` Lua binding lets a script swap the active scene at runtime without ever leaving Play mode — e.g. walking into a level-exit trigger. The swap is wrapped in a brief fade-to-black-and-back (`src/core/SceneTransition.h`) rather than applied instantly: it reads as an intentional transition instead of a jarring pop, and it lets the actual scene load happen at the one safe point in the frame (right after `Scene::FlushPendingDestroyEntities`, once every per-frame system has finished walking the entity list) rather than mid-call from inside a trigger's `OnTriggerEnter`.
+- **`Application::PerformSceneTransition`**: reuses `SceneManager::LoadScene` (the same call the editor's own Open Scene menu item uses, which reloads into the existing `Scene` object in place so every panel's cached `Scene*` stays valid) and mirrors `EnterPlayMode`'s session-start steps — stop the outgoing script session and audio, clear physics, load, start a fresh session, auto-play the new scene's audio. Health and score carry over between scenes (the player's running progress); the prompt banner and any Won/Lost status reset, since those described the level being left. A failed load (bad path) logs an error and still fades back in on whatever the scene was left in, rather than leaving the screen permanently black.
+- **A new example script**, `assets/scripts/level_exit.lua`: attach to a Trigger-collider entity to make it a level exit, with the destination scene path as a single clearly-commented constant to edit (matching `goal_zone.lua`/`damage_zone.lua`'s existing "duplicate and edit" convention).
+- **Two demo scenes**, `assets/scenes/level_1.scene` and `level_2.scene`, proving the feature end to end: Level 1's "Level Exit" trigger (`level_exit.lua`) loads Level 2; Level 2 reuses the existing `goal_zone.lua` unmodified on its own trigger, showing that a freshly-loaded scene's scripts bind and run exactly like a scene loaded any other way. Generated with real engine code (a temporary self-test building `Scene`/`SceneSerializer` output directly, the same technique Stage 4's procedural audio used) rather than hand-authored JSON.
+
+### Fixed
+
+- **A latent bug in `Scene::Clear()`**: an `entity:Destroy()` queued but not yet flushed on the scene being discarded (`m_pending_destroy`) survived the clear untouched. Since entity ids restart from 0 on every `Clear()`, a stale id here could silently delete an unrelated entity in whatever loads next, the first time the queue is flushed — a real risk once scene transitions made "destroy this pickup, then load the next level" a natural pattern to write in one script. `Clear()` now empties the pending-destroy queue along with the entity list.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test in `Application::Init()` confirmed, against the real compiled engine: `SceneTransitionFadeAlpha` returns the expected values for both fade directions; both demo scenes save successfully; and a full transition cycle against the live scene (snapshotted first and restored after, so the test never permanently replaces the editor's own default scene) — requesting a load, advancing past the fade-out duration (confirmed the phase flips to FadingIn and the scene swap actually happened: the new scene's Player and Level Exit entities are present, entity count changed from 12 to 5), advancing past the fade-in duration (confirmed the phase returns to None) — passed in full. Separately launched the built exe with `--play assets/scenes/level_1.scene`: clean launch, no crash, no stderr output.
+
 ## [0.49.0-alpha] — 2026-09-02
 
 ### Added

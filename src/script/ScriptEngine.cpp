@@ -757,6 +757,20 @@ int LuaGameGetStatus(lua_State *L)
     return 1;
 }
 
+// Stage 6: queues a scene swap rather than performing it here -- Application
+// consumes `pending_scene` once per frame, at the one safe point after every
+// system that walks the entity list this frame has finished (this call
+// itself may be running from inside PhysicsManager::Step's own entity
+// iteration, e.g. a trigger's OnTriggerEnter). The path should live under
+// assets/ (e.g. "assets/scenes/level_2.scene") so it survives Export Build,
+// which copies assets/ wholesale.
+int LuaGameLoadScene(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    if (g_game_state) g_game_state->pending_scene = path;
+    return 0;
+}
+
 // entity:Destroy() -- queues the entity for removal (see Scene::
 // QueueDestroyEntity's comment for why this can't just call DestroyEntity
 // synchronously: this may be running from inside PhysicsManager::Step()'s or
@@ -832,6 +846,7 @@ void RegisterEngineApi(lua_State *L)
     lua_pushcfunction(L, LuaGameWin); lua_setfield(L, -2, "Win");
     lua_pushcfunction(L, LuaGameLose); lua_setfield(L, -2, "Lose");
     lua_pushcfunction(L, LuaGameGetStatus); lua_setfield(L, -2, "GetStatus");
+    lua_pushcfunction(L, LuaGameLoadScene); lua_setfield(L, -2, "LoadScene");
     lua_setfield(L, -2, "Game");            // api.Game = game -> [api]
 
     lua_newtable(L);                        // [api, api_mt]

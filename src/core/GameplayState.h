@@ -24,4 +24,10 @@ struct GameplayState
     int score = 0;
     std::string prompt;   // empty = no prompt banner shown
     Status status = Status::Playing;
+
+    // Stage 6: set by Game.LoadScene(path) (ScriptEngine.cpp), consumed by
+    // Application once per frame at the one safe point after every
+    // per-frame system has finished walking the entity list -- see
+    // SceneTransition.h. Empty = no scene load requested this frame.
+    std::string pending_scene;
 };

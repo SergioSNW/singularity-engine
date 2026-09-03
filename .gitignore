@@ -56,6 +56,3 @@ editor_theme.json
 first-steps.md
 ENGINE_TEXTBOOK.md
 test_math.cpp
-
-# Runtime-generated scene files (working-dir relative)
-assets/scenes/

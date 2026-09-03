@@ -1,0 +1,562 @@
+{
+  "engine": "singularity-engine",
+  "version": 1,
+  "meta": {
+    "name": "",
+    "author": "",
+    "created": ""
+  },
+  "collision_matrix": {
+    "layer_0": {
+      "name": "Default",
+      "mask": 65535
+    },
+    "layer_1": {
+      "name": "Player",
+      "mask": 65535
+    },
+    "layer_2": {
+      "name": "Environment",
+      "mask": 65535
+    },
+    "layer_3": {
+      "name": "Projectile",
+      "mask": 65535
+    },
+    "layer_4": {
+      "name": "Enemy",
+      "mask": 65535
+    },
+    "layer_5": {
+      "name": "Pickup",
+      "mask": 65535
+    },
+    "layer_6": {
+      "name": "Interactable",
+      "mask": 65535
+    },
+    "layer_7": {
+      "name": "Debris",
+      "mask": 65535
+    },
+    "layer_8": {
+      "name": "Character",
+      "mask": 65535
+    },
+    "layer_9": {
+      "name": "Water",
+      "mask": 65535
+    },
+    "layer_10": {
+      "name": "Vehicle",
+      "mask": 65535
+    },
+    "layer_11": {
+      "name": "Destructible",
+      "mask": 65535
+    },
+    "layer_12": {
+      "name": "Sensor",
+      "mask": 65535
+    },
+    "layer_13": {
+      "name": "CameraBlock",
+      "mask": 65535
+    },
+    "layer_14": {
+      "name": "Trigger",
+      "mask": 65535
+    },
+    "layer_15": {
+      "name": "Custom",
+      "mask": 65535
+    }
+  },
+  "entities": [
+    {
+      "uuid": "c1d21f43-021c-496c-8891-6de504f52ac8",
+      "parent": null,
+      "name": "Camera",
+      "transform": {
+        "position": [
+          0,
+          3,
+          8
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "material": {
+        "color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": ""
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": -14,
+        "yaw": 0,
+        "primary": true
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "8f4b1b5a-c0b9-47b8-bcc1-cd24a1ff96f6",
+      "parent": null,
+      "name": "Directional Light",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "material": {
+        "color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "active": false,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": ""
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": true,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "0ee4916e-1e41-4c4f-aa76-b437899f8548",
+      "parent": null,
+      "name": "Ground",
+      "transform": {
+        "position": [
+          0,
+          -0.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          10,
+          1,
+          10
+        ]
+      },
+      "material": {
+        "color": [
+          0.300000012,
+          0.550000012,
+          0.280000001,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": ""
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": true,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "08b2571a-2871-4504-ade2-ab9d199156d3",
+      "parent": null,
+      "name": "Player",
+      "transform": {
+        "position": [
+          0,
+          0,
+          4
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "material": {
+        "color": [
+          0.850000024,
+          0.550000012,
+          0.200000003,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": "__builtin_capsule__"
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": true,
+        "type": "solid",
+        "center": [
+          0,
+          0.899999976,
+          0
+        ],
+        "extents": [
+          0.400000006,
+          0.899999976,
+          0.400000006
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": true,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "38497f68-8c97-465b-96cd-f06fb3531e3f",
+      "parent": null,
+      "name": "Level Exit",
+      "transform": {
+        "position": [
+          0,
+          0,
+          -6
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          2,
+          2
+        ]
+      },
+      "material": {
+        "color": [
+          0.850000024,
+          0.649999976,
+          0.200000003,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": ""
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": true,
+        "type": "trigger",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": "assets/scripts/level_exit.lua"
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "landscape": {
+        "enabled": false
+      }
+    }
+  ]
+}

@@ -164,6 +164,12 @@ void Scene::Clear()
 {
     m_entities.clear();
     m_next_id = 0;
+
+    // A queued-but-not-yet-flushed entity:Destroy() from the scene being
+    // discarded must not survive into whatever gets loaded next -- ids are
+    // reused starting from 0, so a stale id here would silently delete an
+    // unrelated entity in the new scene the next time the queue is flushed.
+    m_pending_destroy.clear();
 }
 
 std::vector<std::unique_ptr<Entity>>& Scene::GetEntities()
