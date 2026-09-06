@@ -89,10 +89,13 @@ static const float kViewportSupersample = 1.0f;
 static void CameraBasis(const EditorCamera &pose, Vec3 &fwd, Vec3 &right, Vec3 &up)
 {
     const float r = 3.14159265358979323846f / 180.0f;
-    const float cy = std::cosf(pose.yaw * r);
-    const float sy = std::sinf(pose.yaw * r);
-    const float cp = std::cosf(pose.pitch * r);
-    const float sp = std::sinf(pose.pitch * r);
+    // std::cosf/std::sinf are an MSVC-only extension, not standard C++ --
+    // std::cos/std::sin's float overload (selected here since the argument
+    // is already a float) is the portable equivalent GCC/libstdc++ has too.
+    const float cy = std::cos(pose.yaw * r);
+    const float sy = std::sin(pose.yaw * r);
+    const float cp = std::cos(pose.pitch * r);
+    const float sp = std::sin(pose.pitch * r);
     fwd   = { -cp * sy,  sp, -cp * cy };
     right = {  cy,      0.0f, -sy };
     up    = {  sy * sp, cp,  cy * sp };
