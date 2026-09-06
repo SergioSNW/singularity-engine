@@ -3479,6 +3479,48 @@ void Application::RenderGameplayHUD()
                     IM_COL32(240, 240, 245, 255), m_game.prompt.c_str());
     }
 
+    // --- Script-driven UI (Stage 7): OnGUI() / UI.* ---
+    // Wired fresh every frame -- these callbacks close over this call's own
+    // `dl`/img_min, so they must never be reachable once RenderGameplayHUD
+    // returns. SetUIContext(nullptr) right after guarantees that even if
+    // RenderGUI's Lua call threw and never restored anything itself.
+    if (m_script_engine)
+    {
+        m_ui_context.width = img_size.x;
+        m_ui_context.height = img_size.y;
+        m_ui_context.draw_text = [dl, img_min](float x, float y, const std::string &text,
+                                               float r, float g, float b, float a) {
+            dl->AddText(ImVec2(img_min.x + x, img_min.y + y),
+                        IM_COL32((int)(r * 255.0f), (int)(g * 255.0f),
+                                 (int)(b * 255.0f), (int)(a * 255.0f)),
+                        text.c_str());
+        };
+        m_ui_context.draw_rect = [dl, img_min](float x, float y, float w, float h,
+                                               float r, float g, float b, float a) {
+            dl->AddRectFilled(ImVec2(img_min.x + x, img_min.y + y),
+                              ImVec2(img_min.x + x + w, img_min.y + y + h),
+                              IM_COL32((int)(r * 255.0f), (int)(g * 255.0f),
+                                       (int)(b * 255.0f), (int)(a * 255.0f)));
+        };
+        m_ui_context.draw_button = [img_min](float x, float y, float w, float h,
+                                             const std::string &text) -> bool {
+            // A real ImGui::Button (not a hand-drawn rect + hit-test) so a
+            // script's UI gets hover/press feedback and the editor's own
+            // theme for free. PushID on the position rather than the label
+            // keeps two same-text buttons at different spots from colliding,
+            // while staying stable frame-to-frame for a button whose
+            // position doesn't change (the normal case).
+            ImGui::SetCursorScreenPos(ImVec2(img_min.x + x, img_min.y + y));
+            ImGui::PushID((int)(x * 4919.0f) ^ (int)(y * 104729.0f));
+            const bool clicked = ImGui::Button(text.c_str(), ImVec2(w, h));
+            ImGui::PopID();
+            return clicked;
+        };
+        m_script_engine->SetUIContext(&m_ui_context);
+        m_script_engine->RenderGUI(*m_scene);
+        m_script_engine->SetUIContext(nullptr);
+    }
+
     // --- Scene transition fade (Stage 6) ---
     // Drawn over everything above (health/score/prompt), before the early
     // return below, so a fade in flight also covers the win/lose screen --

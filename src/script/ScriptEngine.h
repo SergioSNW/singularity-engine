@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GameplayState.h"
+#include "UIContext.h"
 
 #include <string>
 #include <vector>
@@ -35,6 +36,15 @@ public:
     // alive. Runtime errors are recorded in LastError() and routed to the
     // engine console.
     void UpdateSession(Scene &scene, float dt);
+
+    // Stage 7: call OnGUI() on every bound entity that defines it, once per
+    // frame, from inside Application::RenderGameplayHUD() specifically (not
+    // the general Update pass above) -- OnGUI's UI.* calls need the real
+    // ImGui draw list/window that only exists at that point in the frame.
+    // Requires SetUIContext() to have been called first (a null context
+    // makes every UI.* binding a silent no-op, same convention as a null
+    // AudioManager).
+    void RenderGUI(Scene &scene);
 
     // Collision / trigger event kind. The PhysicsManager dispatches these to
     // scripted entities with a handle to the other entity of the pair.
@@ -75,6 +85,12 @@ public:
     // lifetime), but the bindings degrade to a no-op if it somehow is.
     void SetGameplayState(GameplayState *state);
 
+    // The UIContext the UI.* bindings (Text/Rect/Button/Width/Height) draw
+    // through. Set right before RenderGUI() and cleared right after by
+    // Application -- never held across frames, since the ImGui draw list it
+    // wraps is only valid for the one call that owns it.
+    void SetUIContext(UIContext *ui);
+
     const std::string &LastError() const { return m_error; }
 
 private:
@@ -91,6 +107,7 @@ private:
         int on_collision_exit_ref;   // OnCollisionExit(other)    (LUA_NOREF if absent)
         int on_trigger_enter_ref;    // OnTriggerEnter(other)     (LUA_NOREF if absent)
         int on_trigger_exit_ref;     // OnTriggerExit(other)      (LUA_NOREF if absent)
+        int on_gui_ref;              // OnGUI()                   (LUA_NOREF if absent)
     };
 
     lua_State *m_lua;
@@ -99,6 +116,7 @@ private:
     std::string m_last_error_logged;  // dedupe persistent runtime errors
     AudioManager *m_audio;
     GameplayState *m_game;
+    UIContext *m_ui;
 
     lua_State *m_repl;        // persistent REPL VM (null until first Execute)
     int m_repl_env_ref;       // registry ref to the REPL scratchpad _ENV

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.52.0-alpha] — 2026-09-06
+
+### Added
+
+- **Script-driven in-game UI** (Stage 7): a new `UI.*` Lua API — `UI.Text(x, y, text, r?, g?, b?, a?)`, `UI.Rect(x, y, w, h, r?, g?, b?, a?)`, `UI.Button(x, y, w, h, text)` (returns `true` the exact frame it's clicked), and `UI.Width()`/`UI.Height()` for laying out relative to the actual play viewport instead of a fixed resolution. A new `OnGUI()` script lifecycle hook (alongside the existing `OnStart`/`OnUpdate`/`OnTriggerEnter`/etc.) is called once per frame, specifically from inside `Application::RenderGameplayHUD()` rather than the general Update pass, since that's the one point in the frame where the real ImGui draw list/window context `UI.*` needs actually exists. `UI.Button` is backed by a real `ImGui::Button`, so script-drawn UI gets hover/press feedback and the engine's own dark theme for free, not a hand-rolled rect-plus-hit-test.
+- **`src/script/UIContext.h`**: the bridge behind `UI.*`, keeping `ScriptEngine.cpp` free of any ImGui dependency the same way the existing `AudioManager`/`GameplayState` bridges do — a plain struct of `std::function` callbacks (`draw_text`/`draw_rect`/`draw_button`) that `Application::RenderGameplayHUD` wires up fresh every frame and clears again immediately after, since the draw list the callbacks close over is only valid for that one call.
+- **This closes a real capability gap, not just a nice-to-have**: until now, nothing could build a main menu, a pause screen, a dialog, or any custom HUD — `RenderGameplayHUD` was a fixed health/score/prompt/win-lose display with no way for a game's own script to add to or replace it. Combined with Stage 6's `Game.LoadScene`, a menu is now just a scene with a camera, a light, and one script.
+- **A new example script**, `assets/scripts/main_menu.lua`, and a demo scene, `assets/scenes/main_menu.scene`: a title, a subtitle, and a centered "Start Game" button that calls `Game.LoadScene("assets/scenes/level_1.scene")` — completing the menu → level_1 → level_2 loop across Stage 6 and Stage 7's demo content.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test exercised the full `UIContext` bridge headlessly (mock callbacks recording every call instead of a real ImGui context, since ImGui rendering itself can't be unit-tested): confirmed a script's `OnGUI` fires and draws in the expected order (2 text calls, 1 rect, 1 button) with the exact arguments passed from Lua; confirmed `UI.Width()`/`UI.Height()` reflect the injected context; confirmed a `UI.Button` return value of `true` reaches the script and its `Game.AddScore` call actually runs; and confirmed a null `UIContext` skips `OnGUI` entirely rather than running it with no-op draws. Separately, launched the real compiled exe with `--play assets/scenes/main_menu.scene` — the actual ImGui draw list and `ImGui::Button` path, not the mock — for several real frames: clean launch, no crash, no stderr output.
+
 ## [0.51.0-alpha] — 2026-09-03
 
 ### Fixed

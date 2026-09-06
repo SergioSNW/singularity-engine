@@ -2837,6 +2837,133 @@ arrays far too short for a `resolution` of 64 loads and rebuilds its mesh
 without crashing; and a stale, pre-filled error string ends up empty
 after a successful load.
 
+## Phase 54 — Script-Driven In-Game UI (Stage 7)
+
+Every prior gameplay-facing Stage added a fixed, C++-authored slice of
+HUD (health/score in Stage 3, footstep audio triggers in Stage 4, a
+scene-swap fade in Stage 6) that a script could feed data into but never
+reshape. That was fine for a health bar -- there's really only one
+sensible way to draw "Health: 87" -- but it meant nothing could exist
+that isn't already built in: no main menu, no pause screen, no dialog
+box, no inventory grid. Stage 7 closes that gap the same way the engine
+closes every other gap it can: hand the capability to Lua instead of
+building the one specific screen someone happens to need next.
+
+### 54.1 Why `OnGUI()`, Not Another Field on `GameplayState`
+
+`Game.ShowPrompt(text)` already proved the "script feeds data, C++ draws
+a fixed box" pattern works for a single string. Generalizing that
+pattern to arbitrary UI would mean `GameplayState` growing an
+ever-expanding grab bag of typed fields (a title, a button, a list of
+menu items, their positions...) with `RenderGameplayHUD` interpreting
+all of it -- essentially reinventing a UI framework's data model one
+field at a time, and still capped at whatever shapes someone thought to
+add. Instead, Stage 7 hands scripts a small set of *drawing* primitives
+(`UI.Text`/`UI.Rect`/`UI.Button`) and a hook that runs every frame
+(`OnGUI()`, mirroring `OnUpdate(dt)`'s existing per-frame contract) --
+immediate-mode, the same style Dear ImGui itself uses, which is exactly
+where a hand-rolled bespoke retained-mode widget system would have added
+complexity for no real benefit in an engine this size. A menu, a HUD, a
+dialog, and an inventory grid are all just "a script that calls
+`UI.Text`/`UI.Rect`/`UI.Button` in whatever arrangement it wants" --
+nothing new to build in C++ per shape of screen.
+
+### 54.2 `OnGUI()` Cannot Run From the Same Place `OnUpdate` Does
+
+This is the one genuinely new piece of plumbing the phase needed, and
+the reason it isn't just "add another hook next to OnUpdate." Every
+existing hook (`OnStart`, `OnUpdate`, `OnTriggerEnter`, ...) fires from
+`Application::Run()`'s Update stage, which runs before the 3D scene (and
+therefore the viewport's ImGui window) is ever drawn that frame. `UI.*`
+needs a live `ImDrawList*` and a valid ImGui cursor/window context to
+mean anything -- neither exists yet at that point in the frame. The only
+place both exist is inside `Application::RenderGameplayHUD()`, called
+from `ViewportPanel`'s own `on_gameplay_hud` callback, itself invoked
+*inside* the isolated viewport's `ImGui::Begin()`/`ImGui::End()` pair,
+right before `End()` -- exactly where Stage 3's health/score boxes
+already draw. So `ScriptEngine::RenderGUI(scene)` is a new, separate
+per-frame entry point (alongside `UpdateSession`, not replacing it),
+called only from that one call site.
+
+### 54.3 Keeping `ScriptEngine.cpp` Free of ImGui
+
+Every other engine-side bridge this file talks to -- `AudioManager`,
+`GameplayState` -- is a plain C++ type with no rendering dependency,
+which is what lets `ScriptEngine.cpp` stay a Lua-and-plain-data module
+with no ImGui include anywhere in it. `UI.*` threatened to break that,
+since drawing text and buttons is inherently an ImGui operation. The fix
+is `src/script/UIContext.h`: a small struct of `std::function` callbacks
+(`draw_text`/`draw_rect`/`draw_button`, plus a `width`/`height` pair) with
+zero ImGui or Lua types in its signature. `Application::RenderGameplayHUD`
+constructs the real, ImGui-backed lambdas -- closing over that call's own
+`dl`/`img_min` -- and wires them into a `UIContext` right before calling
+`RenderGUI`, then clears the context immediately after
+(`SetUIContext(nullptr)`), the same "never held longer than the one call
+that owns it" discipline `g_play_scene` and `g_audio_manager` already
+follow for their own narrower windows.
+
+This paid off immediately in verification: because the bridge is just
+callbacks, a self-test could inject *mock* lambdas that record every
+call into a vector instead of drawing anything, and assert on exactly
+what a script's `OnGUI()` invoked and with what arguments -- something
+impossible to check directly against a real ImGui draw list without an
+actual rendered frame to inspect pixel-by-pixel.
+
+### 54.4 `UI.Button` Is a Real `ImGui::Button`, Not a Hand-Rolled Hit Test
+
+The tempting shortcut -- draw a rect, then compare `ImGui::GetMousePos()`
+against it by hand -- was rejected in favor of calling
+`ImGui::SetCursorScreenPos` followed by an actual `ImGui::Button`. This
+means a script's button gets real ImGui behavior for free: hover
+highlight, press-down feedback, and the exact same dark-slate theme
+(`Theme.cpp`) the rest of the editor and HUD already use, so script-drawn
+UI looks visually consistent with the engine's own chrome without a
+script author choosing a single color. The one thing a hand-rolled
+`ImGui::Button` call needs that a raw draw-list call doesn't is a stable
+*ID* -- ImGui tracks hover/active state per-widget by ID, derived by
+default from the label text, so two buttons with the same text at
+different positions would collide. `UI.Button` sidesteps this with
+`ImGui::PushID` keyed off the button's own (x, y) position rather than
+its label: stable across frames for a button that doesn't move (the
+normal case), but never colliding with a same-labeled button drawn
+somewhere else on screen.
+
+### 54.5 Closing the Loop: a Menu Is Just a Scene
+
+The concrete proof this closes a real gap rather than adding an API
+nobody needed yet: `assets/scripts/main_menu.lua` and
+`assets/scenes/main_menu.scene` -- a scene containing nothing but a
+Camera, a Directional Light, and one entity whose only component that
+matters is its script. No player, no mesh, no collider. `OnGUI()` draws
+a title, a subtitle, and a centered "Start Game" button
+(`UI.Width()`/`UI.Height()` used to center it against the actual
+viewport size, not a hardcoded resolution); clicking it calls
+`Game.LoadScene("assets/scenes/level_1.scene")` -- Stage 6's mechanism,
+completely unaware that the scene requesting the load has no gameplay
+in it at all. This closes the loop across two Stages' demo content: menu
+-> level_1 (Stage 6's `level_exit.lua`) -> level_2 (reusing Stage 2's
+`goal_zone.lua`), with nothing in any of those three scenes needing to
+know that either of the other two exist.
+
+### 54.6 Verification
+
+A temporary self-test (removed after confirming) exercised the
+`UIContext` bridge headlessly: a real `ScriptEngine` session bound a
+script defining `OnGUI()`, and mock `draw_text`/`draw_rect`/`draw_button`
+lambdas recorded every call into a vector instead of touching ImGui.
+Confirmed, against the real compiled bindings: the script's `OnGUI` ran
+and drew in the expected order with the exact arguments passed from Lua
+(two `UI.Text` calls, one `UI.Rect`, one `UI.Button`); `UI.Width()`/
+`UI.Height()` reflected the injected context's size; a `UI.Button`
+returning `true` reached the script's `if` branch and its
+`Game.AddScore(7)` call actually ran (checked via a real `GameplayState`
+instance); and passing a null `UIContext` skipped `OnGUI` entirely
+rather than running it with every `UI.*` call silently doing nothing.
+Separately, `singularity-engine.exe --play assets/scenes/main_menu.scene`
+was launched directly -- exercising the real `ImGui::Button` path, not
+the mock -- for several real frames: clean launch, no crash, no stderr
+output.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2848,6 +2975,7 @@ state management & gameplay HUD, the v0.46.0-alpha player/trigger/
 physics fix and jump, the v0.47.0-alpha deferred entity destruction
 and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
 v0.49.0-alpha export/runtime pipeline (Stage 5), the v0.50.0-alpha
-scene transitions pass (Stage 6), and the v0.51.0-alpha save/load
-robustness pass.*
+scene transitions pass (Stage 6), the v0.51.0-alpha save/load
+robustness pass, and the v0.52.0-alpha script-driven in-game UI
+pass (Stage 7).*
 

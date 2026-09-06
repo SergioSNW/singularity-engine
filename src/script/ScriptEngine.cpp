@@ -61,6 +61,13 @@ AudioManager *g_audio_manager = nullptr;
 // lifetime, this is just where the Lua bridge reaches it.
 GameplayState *g_game_state = nullptr;
 
+// The UIContext the UI.* bindings draw through (Stage 7). Unlike
+// g_audio_manager/g_game_state, this is only ever non-null for the single
+// RenderGUI() call that owns it -- Application sets it right before that
+// call and clears it right after, since the ImGui draw list it wraps isn't
+// valid outside that one point in the frame.
+UIContext *g_ui_context = nullptr;
+
 // The Scene the current Play session is running against -- set at the top
 // of StartSession, cleared in StopSession. entity:Destroy() needs to reach
 // the scene to queue itself for removal, and unlike Vector3/Transform/
@@ -685,6 +692,74 @@ int LuaAudioStop(lua_State *L)
     return 0;
 }
 
+// --- UI (Stage 7: script-driven in-game UI) ---
+//
+// A script defining OnGUI() gets it called once per frame, only while
+// RenderGUI() is running (see ScriptEngine::RenderGUI / Application::
+// RenderGameplayHUD) -- outside that window g_ui_context is null and every
+// call below is a silent no-op, same convention as a detached AudioManager.
+// Coordinates are pixels relative to the play viewport's top-left corner
+// (see UIContext.h); color channels are 0-1 floats, defaulting to opaque
+// white when omitted. This is deliberately a thin, unopinionated drawing
+// surface -- menus, custom HUDs, dialogs, whatever a given game needs --
+// rather than a widget framework with its own layout rules.
+
+int LuaUIText(lua_State *L)
+{
+    const double x = luaL_checknumber(L, 1);
+    const double y = luaL_checknumber(L, 2);
+    const char *text = luaL_checkstring(L, 3);
+    const double r = luaL_optnumber(L, 4, 1.0);
+    const double g = luaL_optnumber(L, 5, 1.0);
+    const double b = luaL_optnumber(L, 6, 1.0);
+    const double a = luaL_optnumber(L, 7, 1.0);
+    if (g_ui_context && g_ui_context->draw_text)
+        g_ui_context->draw_text((float)x, (float)y, text, (float)r, (float)g, (float)b, (float)a);
+    return 0;
+}
+
+int LuaUIRect(lua_State *L)
+{
+    const double x = luaL_checknumber(L, 1);
+    const double y = luaL_checknumber(L, 2);
+    const double w = luaL_checknumber(L, 3);
+    const double h = luaL_checknumber(L, 4);
+    const double r = luaL_optnumber(L, 5, 1.0);
+    const double g = luaL_optnumber(L, 6, 1.0);
+    const double b = luaL_optnumber(L, 7, 1.0);
+    const double a = luaL_optnumber(L, 8, 1.0);
+    if (g_ui_context && g_ui_context->draw_rect)
+        g_ui_context->draw_rect((float)x, (float)y, (float)w, (float)h,
+                                (float)r, (float)g, (float)b, (float)a);
+    return 0;
+}
+
+int LuaUIButton(lua_State *L)
+{
+    const double x = luaL_checknumber(L, 1);
+    const double y = luaL_checknumber(L, 2);
+    const double w = luaL_checknumber(L, 3);
+    const double h = luaL_checknumber(L, 4);
+    const char *text = luaL_checkstring(L, 5);
+    bool clicked = false;
+    if (g_ui_context && g_ui_context->draw_button)
+        clicked = g_ui_context->draw_button((float)x, (float)y, (float)w, (float)h, text);
+    lua_pushboolean(L, clicked);
+    return 1;
+}
+
+int LuaUIWidth(lua_State *L)
+{
+    lua_pushnumber(L, g_ui_context ? g_ui_context->width : 0.0);
+    return 1;
+}
+
+int LuaUIHeight(lua_State *L)
+{
+    lua_pushnumber(L, g_ui_context ? g_ui_context->height : 0.0);
+    return 1;
+}
+
 // --- Game (Stage 3 gameplay HUD / state bridge) ---
 //
 // health/score are plain numbers with no built-in meaning -- there is no
@@ -818,6 +893,14 @@ void RegisterEngineApi(lua_State *L)
     lua_pushcfunction(L, LuaAudioStop); lua_setfield(L, -2, "Stop");
     lua_setfield(L, -2, "Audio");           // api.Audio = audio -> [api]
 
+    lua_newtable(L);                        // [api, ui]
+    lua_pushcfunction(L, LuaUIText); lua_setfield(L, -2, "Text");
+    lua_pushcfunction(L, LuaUIRect); lua_setfield(L, -2, "Rect");
+    lua_pushcfunction(L, LuaUIButton); lua_setfield(L, -2, "Button");
+    lua_pushcfunction(L, LuaUIWidth); lua_setfield(L, -2, "Width");
+    lua_pushcfunction(L, LuaUIHeight); lua_setfield(L, -2, "Height");
+    lua_setfield(L, -2, "UI");              // api.UI = ui -> [api]
+
     lua_newtable(L);                        // [api, input]
     lua_pushcfunction(L, LuaInputGetAction); lua_setfield(L, -2, "GetAction");
     lua_pushcfunction(L, LuaInputGetActionDown); lua_setfield(L, -2, "GetActionDown");
@@ -945,6 +1028,7 @@ ScriptEngine::ScriptEngine()
     : m_lua(nullptr)
     , m_audio(nullptr)
     , m_game(nullptr)
+    , m_ui(nullptr)
     , m_repl(nullptr)
     , m_repl_env_ref(LUA_NOREF)
 {
@@ -971,6 +1055,12 @@ void ScriptEngine::SetGameplayState(GameplayState *state)
 {
     m_game = state;
     g_game_state = state;
+}
+
+void ScriptEngine::SetUIContext(UIContext *ui)
+{
+    m_ui = ui;
+    g_ui_context = ui;
 }
 
 bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)
@@ -1023,6 +1113,7 @@ bool ScriptEngine::BindEntity(Scene &scene, Entity &entity, std::string &error)
     se.on_collision_exit_ref = bind_hook("OnCollisionExit");
     se.on_trigger_enter_ref = bind_hook("OnTriggerEnter");
     se.on_trigger_exit_ref = bind_hook("OnTriggerExit");
+    se.on_gui_ref = bind_hook("OnGUI");
     se.env_ref = luaL_ref(L, LUA_REGISTRYINDEX); // pops env
 
     m_scripted.push_back(se);
@@ -1118,6 +1209,42 @@ void ScriptEngine::UpdateSession(Scene &scene, float dt)
     }
 }
 
+void ScriptEngine::RenderGUI(Scene &scene)
+{
+    if (!m_lua || !m_ui)
+        return;
+
+    // Deliberately does NOT clear m_error the way UpdateSession does: this
+    // runs later in the same frame, after UpdateSession already may have
+    // recorded a real gameplay error, and clobbering it here would erase
+    // that message before anything gets a chance to read it. A new OnGUI
+    // error is still logged (and still dedupes against m_last_error_logged
+    // the same way), it just doesn't reset the shared m_error field first.
+    std::string gui_error;
+    for (const ScriptedEntity &se : m_scripted)
+    {
+        if (se.on_gui_ref == LUA_NOREF)
+            continue;
+        if (!scene.GetEntityById(se.entity_id))
+            continue;                       // destroyed during play: skip
+
+        lua_rawgeti(m_lua, LUA_REGISTRYINDEX, se.on_gui_ref);
+        if (lua_pcall(m_lua, 0, 0, 0) != LUA_OK)
+        {
+            if (gui_error.empty())
+                gui_error = lua_tostring(m_lua, -1);
+            lua_pop(m_lua, 1);
+        }
+    }
+
+    if (!gui_error.empty() && gui_error != m_last_error_logged)
+    {
+        m_last_error_logged = gui_error;
+        m_error = gui_error;
+        ConsoleError("[ScriptEngine] " + gui_error);
+    }
+}
+
 void ScriptEngine::DispatchEvent(int entity_id, ScriptEvent event, Entity *other)
 {
     if (!m_lua)
@@ -1187,6 +1314,8 @@ void ScriptEngine::StopSession()
             luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_trigger_enter_ref);
         if (se.on_trigger_exit_ref != LUA_NOREF)
             luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_trigger_exit_ref);
+        if (se.on_gui_ref != LUA_NOREF)
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, se.on_gui_ref);
     }
     m_scripted.clear();
 

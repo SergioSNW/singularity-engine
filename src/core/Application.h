@@ -21,6 +21,7 @@ struct SDL_Texture;
 #include "core/Landscape.h"
 #include "core/GameplayState.h"
 #include "core/SceneTransition.h"
+#include "script/UIContext.h"
 #include "core/Environment.h"
 #include "core/Material.h"
 #include "render/EnvironmentFX.h"
@@ -555,6 +556,11 @@ private:
     // Stage 6: in-flight Game.LoadScene() fade, reset alongside m_game every
     // EnterPlayMode() so nothing carries over from a Stop mid-transition.
     SceneTransitionState m_scene_transition;
+
+    // Stage 7: the bridge behind a script's OnGUI()/UI.* calls. Its callbacks
+    // are only valid for the single RenderGameplayHUD() call that wires them
+    // up (see there) -- reassigned fresh every frame, never held across one.
+    UIContext m_ui_context;
 
     // Stage 4 footstep/landing audio (UpdatePlayerController): the cadence
     // timer counts up while the player is moving and grounded, firing a
