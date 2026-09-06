@@ -71,8 +71,12 @@ public:
 private:
     Input();
 
-    // Keyboard state: index = SDL_Scancode.
-    static const int kMaxScancodes = 512;
+    // Keyboard state: index = SDL_Scancode. constexpr (not just const) so
+    // this is an implicitly-inline variable (C++17) with no separate .cpp
+    // definition needed -- std::min(num_keys, kMaxScancodes) in Input.cpp
+    // binds it by reference, which ODR-uses it; GCC's linker enforces that
+    // a definition must exist somewhere, MSVC silently tolerated the gap.
+    static constexpr int kMaxScancodes = 512;
     unsigned char m_current_keys[kMaxScancodes] = {};
     unsigned char m_previous_keys[kMaxScancodes] = {};
 
@@ -83,7 +87,7 @@ private:
     // Mouse state.
     int m_mouse_x = 0;
     int m_mouse_y = 0;
-    static const int kMaxMouseButtons = 8;
+    static constexpr int kMaxMouseButtons = 8;  // constexpr: see kMaxScancodes above
     bool m_mouse_current[kMaxMouseButtons] = {};
     bool m_mouse_previous[kMaxMouseButtons] = {};
     bool m_mouse_down_events[kMaxMouseButtons] = {};
