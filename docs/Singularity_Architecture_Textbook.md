@@ -2964,6 +2964,45 @@ was launched directly -- exercising the real `ImGui::Button` path, not
 the mock -- for several real frames: clean launch, no crash, no stderr
 output.
 
+## Phase 55 — Documentation & Positioning
+
+The last item on the "what's still missing for a professional product"
+list wasn't engine work at all: `README.md` had drifted badly behind
+what actually exists, still describing a "2D game engine" at
+v0.40.0-alpha with a dependency list missing Lua and SDL_mixer entirely
+and a project-structure tree from before the editor's most-used panels
+existed. For a project whose explicit purpose is a portfolio piece, the
+front door being stale is a real cost, not a cosmetic one -- a reader's
+first (and sometimes only) impression comes from that file, not from
+running the editor or reading the textbook.
+
+Rewritten to lead with the most differentiated, checkable technical
+claim (a CPU software 3D rasterizer, zero OpenGL/Vulkan/Direct3D anywhere
+-- verified by grepping the entire `src/` tree before publishing it as a
+claim, not asserted from memory), an honest scope statement (a retro-
+scale portfolio engine, explicitly not competing with Unity/Unreal), a
+feature list matched against what actually shipped, and a "Try it"
+section built around the real `main_menu.scene` -> `level_1.scene` ->
+`level_2.scene` demo loop Stages 6 and 7 already produced -- rather than
+writing a synthetic quick-start example, the existing demo content
+became the walkthrough.
+
+Two smaller repo-root files carried the same kind of drift. `architecture.md`
+was a pre-implementation design brief (2D, an `entt`-based ECS,
+precompiled headers) describing a plan the project moved past almost
+immediately -- rather than deleting that history, it's kept as an
+explicitly-marked superseded original brief with a short "what was
+actually built instead" section, redirecting to this textbook as the
+current source of truth. `AGENTS.md` had the same "2D" claim and listed
+only SDL2/Dear ImGui as dependencies despite Lua 5.4 and SDL_mixer being
+load-bearing since Stages 2 and 4 respectively; corrected to match
+current reality, including reconciling its "no inheritance" mandate with
+`EditorPanel`'s own single-level virtual interface (a deliberate,
+narrow, already-existing exception, not an unstated violation of the
+rule). A `LICENSE` file was also added -- the README had declared MIT
+for as long as it's existed, with no license file in the repository to
+actually back that up.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -2976,6 +3015,6 @@ physics fix and jump, the v0.47.0-alpha deferred entity destruction
 and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
 v0.49.0-alpha export/runtime pipeline (Stage 5), the v0.50.0-alpha
 scene transitions pass (Stage 6), the v0.51.0-alpha save/load
-robustness pass, and the v0.52.0-alpha script-driven in-game UI
-pass (Stage 7).*
+robustness pass, the v0.52.0-alpha script-driven in-game UI pass
+(Stage 7), and the v0.53.0-alpha documentation & positioning pass.*
 

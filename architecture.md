@@ -1,45 +1,75 @@
-# Singularity Engine
+# Architecture
 
-> **Current version:** v0.40.0-alpha — Visual & UI Polish Sprint: professional dark-slate ImGui theme, cleaner viewport defaults, bilinear bloom sampling, and null-safety hardening across the render pipeline.
-> [CHANGELOG](../CHANGELOG.md)
+> **Current version:** v0.53.0-alpha — see [CHANGELOG.md](CHANGELOG.md) for the
+> full version history and [README.md](README.md) for the current feature set.
 
-## Architecture and Technical Feasibility Document
+This file was originally written as a pre-implementation design brief —
+a plan for what the engine would be before any of it existed. Most of
+that plan changed once real constraints showed up (the ECS became plain
+data structs directly on each `Entity`, not a library like `entt`; the
+renderer ended up doing a full custom 3D pipeline rather than staying
+2D; precompiled headers were never needed). Rather than deleting that
+history or leaving it to quietly go stale next to the real
+implementation, it's kept below as the original brief, clearly marked as
+superseded.
 
-### 1. Overview
+**For how the engine actually works today**, see:
 
-**Singularity Engine** is a 2D video game engine for PC and its respective editor, written in C++. It is designed with a radical focus on minimalism, resource efficiency, and thermal control, allowing for agile and stable development even on hardware with severe cooling and power constraints.
+- [README.md](README.md) — current feature set, build instructions, and
+  what the project is (and isn't) aiming to be.
+- [docs/Singularity_Architecture_Textbook.md](docs/Singularity_Architecture_Textbook.md) —
+  the canonical, actively-maintained architecture reference: one numbered
+  phase per milestone, written as design rationale (why a system is built
+  the way it is) rather than a changelog of what shipped.
 
-### 2. Design Principles
+---
 
-- **Thermal Efficiency by Design:** Prioritizing a low processing footprint to prevent system overheating during prolonged editor use.
-- **Minimized Compile Times:** Code structuring oriented towards ultra-fast incremental builds, drastically reducing CPU stress spikes.
-- **Clean Architecture:** Absolute decoupling of core subsystems (Rendering, Physics, Business Core) to facilitate scalability, maintenance, and isolated testing.
+## Original design brief (superseded — kept for history)
 
-### 3. Proposed Technology Stack
+### Overview
 
-- **Language:** C++ (C++17 or C++20 standard to leverage modern features without bloating compile times).
-- **Windowing & Input:** SDL2 or SFML (lightweight, proven libraries with excellent native 2D performance).
-- **Editor Interface:** Dear ImGui (industry-standard tool, extremely lightweight, and easy to integrate).
-- **Build System:** CMake + Ninja (to maximize compilation speed and manage dependencies efficiently).
-- **Data Architecture:** Entity-Component-System (ECS), such as `entt`, to guarantee cache data locality (maximum performance) and total modularity in game logic.
+Singularity Engine was originally scoped as a 2D video game engine for
+PC, written in C++, designed with a focus on minimalism, resource
+efficiency, and thermal control on hardware with limited cooling. The
+implementation grew well past 2D — the renderer is a full software 3D
+pipeline (world/view/projection transforms, backface culling, per-
+triangle depth sorting, directional lighting with soft shadows), and
+"minimalism" came to mean *no GPU 3D API dependency*, not a small
+feature set.
 
-### 4. Thermal Mitigation and Performance Strategy
+### Original design principles
 
-Given that the target development environment is highly sensitive to heat, Singularity Engine will implement the following low-level architectural rules:
+- **Thermal efficiency by design:** a low processing footprint to avoid
+  overheating during long editor sessions.
+- **Minimized compile times:** fast incremental builds.
+- **Clean architecture:** decoupled core subsystems (rendering, physics,
+  core logic) for maintainability and isolated testing.
 
-#### A. GPU Control (The Editor)
+### Originally proposed technology stack
 
-- **Mandatory FPS Capping:** The editor will never run with an unlocked framerate. Vertical Synchronization (V-Sync) will be forced at the swap chain level, with a secondary capper at 60 FPS in the main loop.
-- **Lazy Rendering:** While the engine is in edit mode and not in _Play_ mode, the editor interface will minimize draw calls. If the user does not interact (mouse movement, drag and drop), the main loop will go to sleep, reducing GPU usage to practically zero.
+- **Language:** C++17/20.
+- **Windowing & input:** SDL2 or SFML.
+- **Editor interface:** Dear ImGui.
+- **Build system:** CMake + Ninja.
+- **Data architecture:** an ECS library (e.g. `entt`) for cache locality
+  and modularity.
 
-#### B. CPU Control (Compilation Process)
+What was actually built: SDL2 (windowing, input, and the 2D
+`SDL_RenderGeometry` call every rasterized triangle ultimately goes
+through), Dear ImGui (docking branch), CMake with `FetchContent` for
+zero-install dependencies (also fetching Lua 5.4 and SDL_mixer, neither
+of which were part of the original plan), and a hand-rolled ECS — each
+`Entity` is a plain struct holding every component inline, no external
+library.
 
-- **Forward Declarations:** Strict prohibition of including heavy `.h` files inside other headers. Forward declarations will be used to isolate dependencies and prevent a single change from triggering a recompilation of half the project.
-- **Precompiled Headers (PCH):** Use of precompiled headers for all third-party code (the C++ STL, SDL, ImGui), so the compiler does not have to reprocess them during every development iteration.
-- **Library Modularity:** Separation of the engine into static libraries (`.lib` / `.a`). A change in the audio subsystem must not trigger the re-linking of the graphics subsystem.
+### Thermal/performance rules that did carry through
 
-### 5. Workflow
-
-1.  **Fast Iteration:** CPU control rules ensure that when modifying the C++ logic of an entity, the incremental compilation takes just 2 to 5 seconds (a negligible heat spike).
-2.  **Safe Prolonged Sessions:** By combining lightweight 2D rendering with strict frame control, the computer chassis will maintain stable operating temperatures.
-3.  **Clean Prototyping:** Utilizing an ECS architecture allows for the creation of complex gameplay systems without generating the "spaghetti" code that typically slows down compilation in engines based on deep object-oriented inheritance.
+- The editor targets V-Sync-capped frame pacing rather than an unlocked
+  loop.
+- Headers stay light where practical (forward declarations over heavy
+  includes) to keep incremental builds fast — informal discipline rather
+  than a hard rule enforced by tooling.
+- Precompiled headers and a static-library-per-subsystem split were
+  planned but never implemented; a single executable target with
+  `FetchContent`-managed dependencies turned out to be simple enough that
+  neither was needed at this project's size.

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.53.0-alpha] — 2026-09-06
+
+### Changed
+
+- **Documentation and positioning pass** (no functional changes; version bumped to keep this shipped unit of work in step with every other one). `README.md` was still describing the project as it looked at v0.40.0-alpha months ago — a generic "2D game engine," a stale dependency list missing Lua and SDL_mixer entirely, and a project-structure tree from before most of the engine existed. Rewritten from scratch: an accurate, specific opening description (the CPU software-rasterized 3D pipeline, confirmed by grepping the whole `src/` tree for any GPU 3D API reference — none exist), an honest "what this is and isn't" section (a portfolio project scoped for retro-style games, explicitly not competing with Unity/Unreal), a feature list matching what's actually shipped, a "Try it" walkthrough using the real `main_menu.scene` → `level_1.scene` → `level_2.scene` demo loop from Stages 6 and 7, corrected build instructions for both the Visual Studio and Ninja generators, and an accurate `src/`/`assets/`/`docs/` layout.
+- **`architecture.md`** was a pre-implementation design brief describing a plan (2D, an `entt`-based ECS, precompiled headers) that the actual build departed from early on, still carrying the v0.40.0-alpha version banner. Rather than deleting that history, it's now clearly marked as a superseded original brief, with a short "what was actually built instead" section and a pointer to `docs/Singularity_Architecture_Textbook.md` as the canonical, current architecture reference.
+- **`AGENTS.md`** corrected: it also described the engine as 2D, undersold the actual dependency list (Lua 5.4 and SDL_mixer were added long after this file was written and are load-bearing today, not optional extras), and understated its own single-level `EditorPanel` virtual-interface pattern as if it violated the "no inheritance" rule it states. Reworded to describe what the codebase actually does, not what it looked like several dozen phases ago.
+- **Added `LICENSE`** (MIT): the README already declared the project MIT-licensed, but no license file existed in the repository to back that up.
+
 ## [0.52.0-alpha] — 2026-09-06
 
 ### Added
