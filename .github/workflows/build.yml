@@ -13,6 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Ninja + a plain cl.exe/link.exe on PATH, rather than naming a
+      # specific "Visual Studio NN YYYY" CMake generator -- that name has to
+      # match whatever VS generation happens to be preinstalled on the
+      # runner image, which changes over time out of this repo's control.
+      # This works against whatever MSVC toolchain is actually present.
+      - uses: ilammy/msvc-dev-cmd@v1
+
       # CMakeLists.txt fetches SDL2, SDL_mixer, Dear ImGui, and Lua from
       # source via FetchContent -- caching build/_deps skips re-downloading
       # and re-building all four on every run. Keyed on CMakeLists.txt's own
@@ -24,10 +31,10 @@ jobs:
           key: windows-deps-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configure
-        run: cmake -B build -G "Visual Studio 17 2022"
+        run: cmake -B build -G Ninja
 
       - name: Build
-        run: cmake --build build --config Debug --parallel
+        run: cmake --build build --parallel
 
       # Same check used throughout local development: launch the real exe
       # and confirm it's still running a few seconds later, rather than
@@ -35,7 +42,7 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "build\Debug\singularity-engine.exe" -PassThru
+          $p = Start-Process -FilePath "build\singularity-engine.exe" -PassThru
           Start-Sleep -Seconds 5
           if ($p.HasExited) {
             Write-Error "Engine exited immediately with code $($p.ExitCode)"

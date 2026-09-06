@@ -41,8 +41,15 @@
 #include "render/MaterialCore.h"
 #include "core/CommandHistory.h"
 #include "core/Console.h"
+// ExportBuild (Stage 5) needs to resolve the path of its own running
+// executable to copy it into the exported build -- there's no portable
+// standard-library way to do that, so each platform gets its own API.
+#ifdef _WIN32
 #define NOMINMAX
-#include <windows.h>  // GetModuleFileNameA, for ExportBuild's self-copy (Stage 5)
+#include <windows.h>  // GetModuleFileNameA
+#else
+#include <unistd.h>   // readlink() against /proc/self/exe
+#endif
 #include "core/AssetImporter.h"
 #include "core/Landscape.h"
 #include "core/PlayerController.h"
@@ -2082,14 +2089,28 @@ bool Application::ExportBuild(const std::string &output_dir, const std::string &
         return false;
     }
 
-    char exe_path[MAX_PATH] = {};
-    const DWORD len = GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
-    if (len == 0 || len == MAX_PATH)
+    char exe_path[4096] = {};
+#ifdef _WIN32
+    const DWORD len = GetModuleFileNameA(nullptr, exe_path, (DWORD)sizeof(exe_path));
+    if (len == 0 || len == sizeof(exe_path))
     {
         if (error) *error = "could not resolve the running executable's own path";
         return false;
     }
+#else
+    const ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len <= 0)
+    {
+        if (error) *error = "could not resolve the running executable's own path";
+        return false;
+    }
+    exe_path[len] = '\0';
+#endif
+#ifdef _WIN32
     const std::string dest_exe = output_dir + "/" + game_name + ".exe";
+#else
+    const std::string dest_exe = output_dir + "/" + game_name;
+#endif
     std::filesystem::copy_file(exe_path, dest_exe,
                                std::filesystem::copy_options::overwrite_existing, ec);
     if (ec)
