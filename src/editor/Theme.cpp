@@ -190,19 +190,27 @@ static const ImWchar *GlyphRangesWithSymbols()
     return ranges;
 }
 
+// ImGui's own AddFontFromFileTTF asserts (aborting the whole process on a
+// build with assertions enabled, which includes every Debug config this
+// project ships) when the path doesn't exist, rather than returning nullptr
+// for the caller to fall back on -- so the fallback chain below only works
+// at all if a missing path is filtered out *before* ever calling it. This
+// matters well beyond CI: the two "C:/Windows/Fonts/..." paths per font are
+// only ever reachable on Windows machines that happen to have those exact
+// fonts installed, so any Linux build, or a locked-down/customized Windows
+// install missing one of them, would hit this without the guard.
 static ImFont *LoadFont(const char *primary, const char *fallback,
                         const char *fallback2, float pixel_size)
 {
     ImGuiIO &io = ImGui::GetIO();
-    if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            primary, pixel_size, nullptr, GlyphRangesWithSymbols()))
-        return font;
-    if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            fallback, pixel_size, nullptr, GlyphRangesWithSymbols()))
-        return font;
-    if (ImFont *font = io.Fonts->AddFontFromFileTTF(
-            fallback2, pixel_size, nullptr, GlyphRangesWithSymbols()))
-        return font;
+    for (const char *path : { primary, fallback, fallback2 })
+    {
+        if (!path || !*path || !std::filesystem::exists(path))
+            continue;
+        if (ImFont *font = io.Fonts->AddFontFromFileTTF(
+                path, pixel_size, nullptr, GlyphRangesWithSymbols()))
+            return font;
+    }
     return io.Fonts->AddFontDefault();
 }
 
