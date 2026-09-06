@@ -5922,13 +5922,23 @@ void Application::Shutdown()
     m_scene_manager = nullptr;
     m_scene = nullptr;
 
-    // Flush any pending layout capture while the ImGui context is still alive
-    // (SaveIniSettingsToMemory needs it), then persist the preset state.
-    m_workspace_manager.FinalizeSave();
+    // Guarded: Shutdown() runs unconditionally from the destructor, including
+    // when Init() bailed out before ever creating an ImGui context (e.g. no
+    // renderer could be created -- SDL's dummy driver on a headless CI
+    // runner, or a broken graphics driver on a real machine). Tearing down
+    // ImGui in that case would hit its own "already shutdown?" assertion
+    // instead of exiting cleanly.
+    if (ImGui::GetCurrentContext())
+    {
+        // Flush any pending layout capture while the ImGui context is still
+        // alive (SaveIniSettingsToMemory needs it), then persist the preset
+        // state.
+        m_workspace_manager.FinalizeSave();
 
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
+        ImGui_ImplSDLRenderer2_Shutdown();
+        ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+    }
 
     delete m_window;
     m_window = nullptr;

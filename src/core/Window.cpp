@@ -30,6 +30,15 @@ Window::Window(int width, int height, const char *title)
             -1,
             SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED
         );
+        // Fall back to software rendering rather than leaving the window
+        // renderer-less: a machine with no usable GPU driver, a VM without
+        // GPU passthrough, or SDL's headless "dummy" video driver (used by
+        // CI) all fail an accelerated request outright. The engine already
+        // does its own 3D rasterization on the CPU, so a software SDL
+        // renderer for the final 2D blit is a real, working degrade path
+        // rather than a CI-only workaround.
+        if (!m_renderer)
+            m_renderer = SDL_CreateRenderer(m_window, -1, SDL_RENDERER_SOFTWARE);
     }
 }
 
