@@ -3003,6 +3003,147 @@ rule). A `LICENSE` file was also added -- the README had declared MIT
 for as long as it's existed, with no license file in the repository to
 actually back that up.
 
+## Phase 56 — Continuous Integration, and Five Bugs It Immediately Found
+
+This project had never been built anywhere but one Windows/MSVC
+machine, across 55 prior phases. That's not a hypothetical risk to
+flag and move past -- it's the direct explanation for why five real,
+previously-invisible bugs surfaced within the first hour of standing up
+a second build environment. Every one of them was reachable on a real
+user's machine under the right conditions; none was a CI-only artifact.
+This phase is as much a record of *why each bug hid for as long as it
+did* as it is the CI setup itself.
+
+### 56.1 The Workflow, and Its First Failure Mode
+
+`.github/workflows/build.yml` builds on `windows-latest` and
+`ubuntu-latest` on every push/PR to `main`, then launches the real
+built exe and confirms it's still running a few seconds later --
+mechanically the same "does it crash" check used by hand throughout
+this entire project's development (`Start-Process` + a delayed
+`HasExited` check), now automated instead of run manually before every
+commit. `build/_deps` (SDL2, SDL_mixer, Dear ImGui, and Lua -- all
+compiled from source via `FetchContent`, never a quick build) is cached
+via `actions/cache`, keyed on `CMakeLists.txt`'s own hash, so a typical
+push only rebuilds the engine's own ~40 files rather than four
+libraries from scratch.
+
+The very first run failed before building anything: `cmake -B build -G
+"Visual Studio 17 2022"` errored with "could not find any instance of
+Visual Studio." The generator name has to match whatever VS generation
+GitHub happens to have preinstalled on the runner image at any given
+time -- a detail entirely outside this repository's control, and one
+that silently drifts. The fix removes the dependency on knowing that
+name at all: `ilammy/msvc-dev-cmd@v1` puts a plain `cl.exe`/`link.exe`
+on `PATH` from whatever MSVC toolchain is actually present, and
+`cmake -B build -G Ninja` builds against that -- faster than the
+multi-config MSBuild generator besides, and immune to this exact
+failure mode recurring.
+
+### 56.2 Two Portability Gaps: One From a New Feature, One From Day One
+
+`Application.cpp`'s unconditional `#include <windows.h>` (added in
+Phase 51 for `ExportBuild`'s `GetModuleFileNameA` self-copy) doesn't
+exist on Linux at all -- a straightforward compile error, guarded
+behind `#ifdef _WIN32` with `readlink("/proc/self/exe", ...)` filling
+the same role on Linux. This one is easy to explain: it's genuinely new
+code, written and only ever tested on the one platform that has it.
+
+`std::cosf`/`std::sinf` in `CameraBasis` (present since much earlier)
+is a subtler case -- an MSVC-specific `<cmath>` extension that looks
+exactly like standard C++ (`std::` prefix, follows the `<cmath>`
+naming convention) but isn't one; GCC's libstdc++ simply doesn't define
+it. `std::cos`/`std::sin`'s float overload, selected automatically
+since the argument is already a `float`, is the actual portable
+spelling of the same operation. Nothing about reading this code on
+Windows would ever suggest it wasn't standard -- it compiled, linked,
+and ran correctly there for as long as it existed.
+
+### 56.3 An ODR Rule GCC Enforces and MSVC Doesn't
+
+`Input::kMaxScancodes`/`kMaxMouseButtons` are class-`static const int`
+members initialized in the header, with no corresponding
+`const int Input::kMaxScancodes;` line in `Input.cpp`. Per the
+standard, that's only valid if the member is never *ODR-used* --
+and `std::min(num_keys, kMaxScancodes)` in `Input::NewFrame` does
+exactly that, since `std::min` takes both arguments by `const&`,
+forcing the compiler to take the member's address. GNU `ld` enforced
+this correctly and refused to link with "undefined reference to
+`Input::kMaxScancodes`"; MSVC's linker had apparently been resolving
+the same missing symbol some other way (constant-folding the
+comparison away before the address use ever became a real linker
+symbol, most likely) without ever surfacing a diagnostic. `static
+constexpr` -- implicitly `inline` since C++17 -- needs no out-of-line
+definition on either toolchain, which is both the fix and the more
+correct way to have written a compile-time integer constant in the
+first place.
+
+### 56.4 Two Bugs Chained Together: No Accelerated Renderer, Then a Crash on Exit
+
+`Window::Window()` requested only `SDL_RENDERER_ACCELERATED` --
+reasonable on a development machine with a real GPU, but a silent dead
+end anywhere that flag can't be satisfied: no usable GPU driver, a VM
+without GPU passthrough, or (surfacing this on the Linux runner) SDL's
+headless "dummy" video driver, which has no accelerated backend at all.
+`SDL_CreateRenderer` returning null there isn't itself a crash --
+`Init()` just returns `false`, `main()` returns 1 -- but it does mean
+the engine already does 100% of its actual 3D work on the CPU and was
+refusing to run at all over a GPU-only requirement for the *last* step
+in the pipeline, the 2D blit. Fixed with a real fallback: `Init()` now
+tries `SDL_RENDERER_SOFTWARE` when the accelerated request fails, which
+is a working degrade path on a real machine, not just a CI
+accommodation.
+
+That fallback is what exposed the second, more serious bug. Once
+`Init()` could get *past* the renderer check and reach ImGui setup, the
+Linux run crashed with `ImGui_ImplSDLRenderer2_Shutdown()`'s own
+"already shutdown?" assertion. `Application::~Application()` calls
+`Shutdown()` unconditionally, and `Shutdown()` tore down ImGui
+unconditionally too -- fine as long as `Init()` always got far enough
+to create an ImGui context first, which had quietly been true on every
+machine this project had ever run on until this exact fallback path
+existed. Guarded on `ImGui::GetCurrentContext()` now: a failed `Init()`
+exits cleanly regardless of which step it failed at, instead of
+aborting on whichever ImGui call happens to run first during teardown.
+
+### 56.5 A Fallback Chain That Had Never Actually Run
+
+The last bug is the one most worth internalizing for future bridge
+code: `Theme.cpp`'s `LoadFont` was *written* with a three-tier fallback
+(`primary`, `fallback`, `fallback2`, then `AddFontDefault()`), but it
+had never actually worked, on any platform, ever. `ImGui::
+AddFontFromFileTTF` calls `IM_ASSERT` on a missing path rather than
+returning `nullptr` -- and `IM_ASSERT` maps to the standard `assert()`,
+which *aborts the process* in any build with assertions enabled
+(every Debug config this project has ever shipped). The first call in
+the chain failing doesn't fall through to the second; it terminates
+the program before `LoadFont` ever gets to try. This had been
+completely invisible because the UI font's primary path
+(`assets/fonts/Roboto-Regular.ttf`) is a real, checked-in file that
+has always existed -- so the fallback chain behind it was dead code
+from the moment it was written, never exercised because the first
+branch always succeeded. The monospace font has no such primary: all
+three of its candidates are hardcoded `"C:/Windows/Fonts/..."` paths,
+meaning it was one Linux build, or one Windows machine missing
+Cascadia Mono/Consolas/Courier New, away from crashing on startup the
+entire time. Fixed at the root: `LoadFont` now checks
+`std::filesystem::exists()` on each candidate *before* ever calling
+into ImGui, so a missing path is skipped rather than asserted on --
+making the fallback chain (and `AddFontDefault()`'s guarantee of
+*something* rendering) actually reachable for the first time.
+
+### 56.6 Verification
+
+Both CI jobs are green end to end: a clean configure and build on
+`windows-latest` (Ninja + `ilammy/msvc-dev-cmd`) and `ubuntu-latest`
+(Ninja + GCC), followed by a real launch of the built exe -- SDL's
+dummy video/audio drivers standing in for a display on the headless
+Linux runner -- confirmed still running several seconds later with no
+crash and no stderr output. Every fix in this phase was also rebuilt
+and launch-checked locally on Windows first, confirming the
+already-working accelerated-rendering path was untouched by any of the
+fallback/guard logic added alongside it.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -3016,5 +3157,6 @@ and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
 v0.49.0-alpha export/runtime pipeline (Stage 5), the v0.50.0-alpha
 scene transitions pass (Stage 6), the v0.51.0-alpha save/load
 robustness pass, the v0.52.0-alpha script-driven in-game UI pass
-(Stage 7), and the v0.53.0-alpha documentation & positioning pass.*
+(Stage 7), the v0.53.0-alpha documentation & positioning pass, and the
+v0.54.0-alpha continuous integration pass.*
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.54.0-alpha] — 2026-09-07
+
+### Added
+
+- **GitHub Actions CI** (`.github/workflows/build.yml`): every push and PR to `main` now builds on both `windows-latest` (Ninja + `ilammy/msvc-dev-cmd` for a plain `cl.exe`/`link.exe`, rather than naming a specific "Visual Studio NN YYYY" CMake generator that has to match whatever VS generation happens to be preinstalled on the runner image) and `ubuntu-latest` (Ninja + GCC), then launches the real built exe and confirms it's still running a few seconds later — the same launch-and-check-it's-alive verification used by hand throughout this project's development, now automated. `build/_deps` (SDL2/SDL_mixer/Dear ImGui/Lua, all built from source via `FetchContent`) is cached, keyed on `CMakeLists.txt`'s own hash, so only the engine's own code rebuilds on a typical push. A build-status badge now sits at the top of `README.md`.
+- This project had genuinely never been built anywhere but this one Windows/MSVC machine before. Standing up Linux CI immediately surfaced five real, previously-invisible bugs — none of them CI artifacts, all reachable on a real machine under the right conditions:
+
+### Fixed
+
+- **`Application.cpp`'s unconditional `#include <windows.h>`** (Stage 5's `ExportBuild`, needed only for `GetModuleFileNameA`) failed to compile at all on Linux. Guarded behind `#ifdef _WIN32`, with `readlink("/proc/self/exe", ...)` as the Linux equivalent for resolving the running executable's own path, and no `.exe` suffix appended to the exported binary there.
+- **`std::cosf`/`std::sinf`** (`CameraBasis`) are an MSVC-only `<cmath>` extension, not standard C++ — GCC's libstdc++ doesn't provide them. Replaced with `std::cos`/`std::sin`, whose float overload is selected automatically since the argument is already a `float`.
+- **`Input::kMaxScancodes`/`kMaxMouseButtons`** are class-`static const int` members with no out-of-line definition. `std::min(num_keys, kMaxScancodes)` binds its argument by reference, which ODR-uses the member and requires that definition to exist somewhere — GNU `ld` correctly failed the link with "undefined reference"; MSVC's linker silently tolerated the same gap. Changed to `static constexpr`, which is implicitly inline (C++17) and needs no separate definition on either toolchain.
+- **`Window::Window()` only ever requested `SDL_RENDERER_ACCELERATED`**, so on any machine where that fails — no usable GPU driver, a VM without GPU passthrough, or SDL's headless "dummy" video driver — `Init()` silently produced a null renderer with zero explanation to the user. Now falls back to `SDL_RENDERER_SOFTWARE`, a real working degrade path (the engine already rasterizes its own 3D on the CPU; only the final 2D blit needs the SDL renderer at all).
+- **That fallback then exposed a second bug**: `Application::Shutdown()` runs unconditionally from the destructor and called `ImGui_ImplSDLRenderer2_Shutdown()` etc. even when `Init()` had bailed out before ImGui was ever created — tripping ImGui's own "already shutdown?" assertion and aborting instead of exiting cleanly. Now guarded on `ImGui::GetCurrentContext()`.
+- **`Theme.cpp`'s `LoadFont` fallback chain (primary → fallback → fallback2 → `AddFontDefault()`) never actually worked.** ImGui's own `AddFontFromFileTTF` asserts — aborting the whole process on any build with assertions enabled, which includes every Debug config this project ships — when the path doesn't exist, rather than returning `nullptr` for the caller to fall back on. The monospace font's three candidate paths are 100% `"C:/Windows/Fonts/..."` with no bundled option at all, so any non-Windows machine, or a locked-down/customized Windows install missing one of those exact fonts, hit this immediately on startup. Now checks `std::filesystem::exists()` before ever calling into ImGui, so a missing path is skipped instead of asserted on.
+
+### Verified
+
+- Both CI jobs green end to end: clean configure, build, and a live launch of the real exe (SDL's dummy video/audio drivers on the headless Linux runner) with no crash and no stderr output. Confirmed locally on Windows after every fix in this pass that the normal accelerated-rendering path is unaffected.
+
 ## [0.53.0-alpha] — 2026-09-06
 
 ### Changed

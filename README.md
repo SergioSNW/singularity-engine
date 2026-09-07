@@ -6,7 +6,9 @@ pipeline. Every stage a GPU normally owns (vertex transforms, projection,
 triangle rasterization, depth sorting, shading) is engine code; the only
 thing SDL2 is asked to do is blit the finished triangles to the screen.
 
-**v0.53.0-alpha** — [full version history in CHANGELOG.md](CHANGELOG.md)
+[![Build](https://github.com/SergioSNW/singularity-engine/actions/workflows/build.yml/badge.svg)](https://github.com/SergioSNW/singularity-engine/actions/workflows/build.yml)
+
+**v0.54.0-alpha** — [full version history in CHANGELOG.md](CHANGELOG.md)
 
 ## What this is (and isn't)
 
