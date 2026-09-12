@@ -8,7 +8,7 @@ thing SDL2 is asked to do is blit the finished triangles to the screen.
 
 [![Build](https://github.com/SergioSNW/singularity-engine/actions/workflows/build.yml/badge.svg)](https://github.com/SergioSNW/singularity-engine/actions/workflows/build.yml)
 
-**v0.54.0-alpha** — [full version history in CHANGELOG.md](CHANGELOG.md)
+**v0.55.0-alpha** — [full version history in CHANGELOG.md](CHANGELOG.md)
 
 ## What this is (and isn't)
 
@@ -26,8 +26,9 @@ end to end, not to be a general-purpose AAA engine.
 
 - **CPU software rasterizer** — a full 3D pipeline (world/view/projection
   transforms, backface culling, per-triangle depth sorting, directional
-  lighting with soft ray-cast shadows) built on top of SDL2's 2D
-  `SDL_RenderGeometry`, with zero GPU 3D API dependency.
+  lighting with soft ray-cast shadows, plus local point lights for torches,
+  lamps, and glowing pickups) built on top of SDL2's 2D `SDL_RenderGeometry`,
+  with zero GPU 3D API dependency.
 - **A real editor** — docking Dear ImGui workspace with a scene hierarchy,
   inspector, content browser with thumbnail generation, material/texture
   authoring, an integrated Lua script IDE, a real-time performance

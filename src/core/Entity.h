@@ -19,6 +19,7 @@ struct Entity
     ScriptComponent script;  // Lua gameplay script bound on play start
     AudioComponent audio;  // sound effect reference (WAV/OGG) for the audio bridge
     DirectionalLightComponent light;  // directional light feeding the shading pipeline
+    PointLightComponent point_light;  // local omnidirectional light (Stage 8)
     LandscapeComponent landscape;  // procedural heightfield terrain (Phase 34)
     AnimationComponent animation;  // transform keyframe tracks (Phase 35)
     PlayerControllerComponent player;  // WASD + gravity character controller (Stage 2)

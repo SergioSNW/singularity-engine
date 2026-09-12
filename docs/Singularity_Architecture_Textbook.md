@@ -3144,6 +3144,110 @@ and launch-checked locally on Windows first, confirming the
 already-working accelerated-rendering path was untouched by any of the
 fallback/guard logic added alongside it.
 
+## Phase 57 — Point Lights (Stage 8)
+
+The lighting model had exactly one shape since it was first built: a
+single scene-wide directional light, guaranteed to exist by
+`EnsureActiveLight`, with everything else (ambient floor, shadow
+attenuation) hanging off that one global direction. That's the right
+model for a sun or a moon; it has nothing to offer a torch, a lamp, or
+a glowing pickup, all of which light a small area from a fixed point in
+space rather than the whole scene from infinitely far away. Stage 8
+adds that second shape without disturbing the first.
+
+### 57.1 A Second Component, Not a Bigger One
+
+The alternative to a new `PointLightComponent` was generalizing
+`DirectionalLightComponent` itself -- a `Type` enum switching between
+Directional and Point fields on one struct. That would have touched
+every existing reference to `entity.light.*` across `Application.cpp`,
+`Scene.cpp`, `SceneSerializer.cpp`, and `InspectorPanel.cpp` for a
+feature that doesn't need any of that code to change. `Entity` already
+carries a dozen-plus components side by side, each independently
+enabled (`ColliderComponent`, `PlayerControllerComponent`,
+`AudioComponent`...); a second, independent light component that an
+entity may or may not carry follows that exact pattern; a directional
+sun and a point-lit torch can coexist on the same entity if a scene
+ever wanted that, with zero interaction between them.
+
+### 57.2 Why the Renderer Needed a Per-Vertex Light Direction, Not Just a Second Loop
+
+`GatherSceneLights` builds a flat `std::vector<RenderLight>` once per
+frame; `ShadeVertex` loops over it once per vertex. For a directional
+light this works because `dir` is the same everywhere in the scene --
+computed once, reused for every triangle. A point light's direction
+*to* the light is different at every point in space, so it cannot be
+precomputed into a fixed field the way a directional light's can. The
+fix folds both shapes into the same `RenderLight` struct and the same
+loop: a `Type` tag, a `position` field (Point only, resolved once in
+`GatherSceneLights` via `ComputeWorldMatrix` so a torch parented under a
+moving platform lights from where it actually is), and a `to_light`
+direction computed *inside* `ShadeVertex`'s loop body, per light per
+vertex, branching on `l.type`. Reusing the loop rather than writing a
+second one means diffuse, ambient, and the Blinn-Phong specular term
+all automatically apply to both light shapes with no duplicated math --
+only the direction and an added distance-attenuation term differ.
+
+Attenuation is `(1 - dist/range)²` rather than physically-correct
+inverse-square, matching the engine's established preference (see the
+Directional shadow's own linear distance fade) for falloff curves an
+editor user can reason about and place by eye: "zero at this exact
+distance" is a far more useful mental model when dragging a Range
+slider than an inverse-square curve that asymptotically never quite
+reaches zero. Point lights also skip `DirectionalShadowFactor` entirely
+(`shadow_strength` forced to 0 in `GatherSceneLights`) -- they're
+explicitly a local fill/accent light in this pass, not a second
+shadow-casting source, which keeps the one existing shadow ray-cast
+untouched and avoids a much larger scope (per-point-light shadow maps
+or ray casts) for a feature whose actual ask was "make torches
+possible," not "make torches cast shadows."
+
+### 57.3 The Torch Marker: Two New General-Purpose Primitives, Not a One-Off Mesh
+
+The visual the user asked for -- "a sphere attached to a cylinder,
+symbolizing a torch" -- didn't need a bespoke composite mesh generator.
+`Application::CreatePointLight()` spawns two entities the same way
+`CreatePlayer()` and the demo scene's Cube/Cube-Child pair already do:
+a parent (the light itself, a small sphere) and a child ("Torch
+Handle," a cylinder) parented beneath it, purely a placement visual
+with no light, collider, or script of its own. `PushSpawn` already
+captures a full descendant subtree (`SerializeEntityTree`), so Undo
+removes both entities in one step for free.
+
+That meant the only genuinely new work was two mesh builders,
+`BuildSphereMesh`/`BuildCylinderMesh` in `Mesh.cpp`, following the
+`quad`-lambda-plus-wireframe pattern `BuildCapsuleMesh` already
+established. Both are registered as ordinary builtins
+(`kBuiltinSpherePath`/`kBuiltinCylinderPath`) with "Create Sphere"/
+"Create Cylinder" commands alongside Cube and Octahedron -- generally
+useful block-out primitives now available to any scene, not
+special-cased to the torch marker that motivated them. The sphere is
+center-pivoted (matching the Cube); the cylinder is base-pivoted
+(matching Wall/Floor/Capsule), since a post or pillar is almost always
+meant to sit on a surface rather than be centered on it -- exactly the
+property that makes stacking the handle underneath the light-marker
+sphere trivial.
+
+### 57.4 Verification
+
+No pixel of this phase's output could be visually inspected directly
+(no screen-capture path exists in this environment), so verification
+leaned harder than usual on checking the *math* against hand-derived
+expected values rather than "does it look right." A temporary self-test
+confirmed, against the real compiled engine: `CreatePointLight`
+produces the expected sphere-parent/cylinder-child structure with the
+light component enabled only on the parent, and Undo removes both;
+`point_light` round-trips exactly through a real save-then-load; and,
+most importantly, `ShadeVertex` called directly with a synthetic
+`RenderLight` produces the exact expected brightness at four points
+along a single line moving away from the light -- near-full intensity
+at near-zero distance, exactly zero at `range`, still exactly zero (no
+negative value, no NaN) well beyond `range`, and precisely the `(1 -
+0.5)² = 0.25` the falloff formula predicts at the midpoint. A final
+check confirmed a directional light's own shading is bit-for-bit
+unaffected by any of this -- same result regardless of the shaded
+point's position, exactly as before Stage 8 existed.
+
 *End of textbook section covering versions v0.1.0-alpha through the architecture
 refactor, the v0.30.0-alpha real-time performance profiler UI, the v0.31.0-alpha
 advanced content browser & thumbnail generator, the v0.40.0-alpha visual &
@@ -3157,6 +3261,7 @@ and Lua methods-table fix, the v0.48.0-alpha movement audio pass, the
 v0.49.0-alpha export/runtime pipeline (Stage 5), the v0.50.0-alpha
 scene transitions pass (Stage 6), the v0.51.0-alpha save/load
 robustness pass, the v0.52.0-alpha script-driven in-game UI pass
-(Stage 7), the v0.53.0-alpha documentation & positioning pass, and the
-v0.54.0-alpha continuous integration pass.*
+(Stage 7), the v0.53.0-alpha documentation & positioning pass, the
+v0.54.0-alpha continuous integration pass, and the v0.55.0-alpha
+point lights pass (Stage 8).*
 

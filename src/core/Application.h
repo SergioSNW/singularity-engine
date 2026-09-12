@@ -281,6 +281,10 @@ private:
     //                          authored at while Play is active.
     Entity *CreatePlayer();
     Entity *FindPlayerEntity() const;
+
+    // Stage 8: spawns a point-light "torch" (glowing sphere marker + a
+    // parented cylinder handle beneath it, purely decorative).
+    Entity *CreatePointLight();
     void UpdatePlayerController(float dt);
     void UpdatePlayerCameraFollow();
 

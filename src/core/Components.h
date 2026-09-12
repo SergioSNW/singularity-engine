@@ -168,6 +168,24 @@ struct DirectionalLightComponent
     float   shadow_distance = 30.0f;
 };
 
+// Local omnidirectional light (Stage 8), positioned at the entity's own world
+// position (parent transforms apply, same as everywhere else) -- a torch, a
+// glowing pickup, a lamp, anything that lights a small area rather than the
+// whole scene. `range` is the world-unit distance at which the light's
+// contribution reaches zero (a smooth falloff to that distance, not physical
+// inverse-square, so it stays easy to reason about and to cull by). Unlike
+// DirectionalLightComponent, a point light never casts shadows in this pass --
+// it's a local fill/accent light, not the scene's primary shadow-casting
+// source, so there's no shadow_strength/bias/distance group here.
+struct PointLightComponent
+{
+    bool  enabled = false;
+    float color[3] = { 1.0f, 0.85f, 0.55f };  // warm, torch-like default
+    float intensity = 1.5f;
+    float range = 8.0f;
+    float ambient = 0.0f;
+};
+
 // Procedural heightfield terrain (Phase 34). When `enabled`, the entity owns a
 // scalable grid of vertices: `heights` stores one height per vertex over a
 // (resolution+1) x (resolution+1) grid spanning `size` x `size` world units

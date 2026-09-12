@@ -1,6 +1,6 @@
 # Architecture
 
-> **Current version:** v0.54.0-alpha — see [CHANGELOG.md](CHANGELOG.md) for the
+> **Current version:** v0.55.0-alpha — see [CHANGELOG.md](CHANGELOG.md) for the
 > full version history and [README.md](README.md) for the current feature set.
 
 This file was originally written as a pre-implementation design brief —

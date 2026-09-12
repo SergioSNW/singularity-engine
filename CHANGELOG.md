@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.55.0-alpha] — 2026-09-12
+
+### Added
+
+- **Point lights (Stage 8)**: a new `PointLightComponent` — omnidirectional, positioned at the entity's own world position (parent transforms apply), fading smoothly to zero at a configurable `range` rather than physically (easy to reason about and to place by eye), with its own color/intensity/ambient. Unlike the existing directional light, a point light never casts a shadow in this pass — it's a local fill/accent light (a torch, a lamp, a glowing pickup), not the scene's primary shadow-casting source. Fully wired into the existing shading pipeline (`RenderLight`/`GatherSceneLights`/`ShadeVertex` in `Application.cpp`): diffuse, ambient, and the Blinn-Phong specular term all correctly attenuate with distance, and directional lights are entirely unaffected (same fixed global direction and shadow behavior as before).
+- **"Create Point Light"** (Command Palette + viewport right-click menu): spawns a torch-styled marker — a small glowing sphere (the actual light) with a slender cylinder "handle" parented beneath it, purely as a placement visual. Undo removes both in one step.
+- **Two new general-purpose builtin primitives**, `kBuiltinSpherePath` and `kBuiltinCylinderPath` (`Mesh.cpp`), introduced for the torch marker but exposed as ordinary placeable primitives too ("Create Sphere"/"Create Cylinder" alongside the existing Cube/Octahedron) — a center-pivoted UV sphere and a base-pivoted cylinder, both with full normals, UVs, and a wireframe silhouette for Wireframe view mode.
+- **Inspector UI**: a "Point Light" component section (Enabled/Color/Intensity/Range/Ambient) mirroring the existing "Directional Light" section's layout and undo-tracked editing.
+- Full save/load support: `point_light` serializes and round-trips exactly like every other component.
+
+### Verified
+
+- Clean MSVC rebuild (benign `LNK4044 /static` + `M_PI` warnings only). A temporary self-test confirmed, against the real compiled engine: `CreatePointLight` produces the expected two-entity structure (sphere-mesh parent with `point_light.enabled`, cylinder-mesh child with no light of its own) and Undo removes both; a point light's fields round-trip exactly through save-then-load; and the shading math itself is correct — near-zero distance gives near-full intensity, exactly at `range` gives zero contribution, beyond `range` stays at zero (no negative or NaN falloff), and the midpoint (half of `range`) matches the expected `x²` falloff curve to within floating-point tolerance. A directional-light regression check confirmed its shading is completely unaffected by the point-light changes (same result regardless of the shaded point's position, exactly as before).
+
 ## [0.54.0-alpha] — 2026-09-07
 
 ### Added

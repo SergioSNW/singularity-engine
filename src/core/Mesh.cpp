@@ -357,19 +357,171 @@ static Mesh BuildCapsuleMesh(float radius, float height)
     return mesh;
 }
 
-const char *const kBuiltinCubePath    = "__builtin_cube__";
-const char *const kBuiltinWallPath    = "__builtin_wall__";
-const char *const kBuiltinFloorPath   = "__builtin_floor__";
-const char *const kBuiltinRampPath    = "__builtin_ramp__";
-const char *const kBuiltinCapsulePath = "__builtin_capsule__";
+// Center-pivoted UV sphere (matches the Cube's own center pivot, unlike the
+// base-pivoted block-out primitives above -- a generic decorative/functional
+// primitive is as often hung or stacked as it is floor-placed). Originally a
+// Stage 8 point-light marker (the "bulb" half of a torch, sphere + cylinder),
+// kept general-purpose like every other builtin here rather than special-cased.
+static Mesh BuildSphereMesh(float radius)
+{
+    radius = std::max(radius, 0.02f);
+    Mesh mesh;
+    mesh.name = "Sphere Primitive";
+    const int rings = 12;
+    const int slices = 16;
+    const float PI = 3.14159265358979f;
+    mesh.positions.reserve((size_t)rings * slices * 6);
+    mesh.uvs.reserve(mesh.positions.capacity());
+
+    for (int r = 0; r < rings; ++r)
+    {
+        const float v0 = (float)r / rings, v1 = (float)(r + 1) / rings;
+        const float theta0 = v0 * PI, theta1 = v1 * PI;
+        const float sy0 = std::sin(theta0), cy0 = std::cos(theta0);
+        const float sy1 = std::sin(theta1), cy1 = std::cos(theta1);
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 2.0f * PI;
+            const float p1 = (float)(s + 1) / slices * 2.0f * PI;
+            const float cx0 = std::cos(p0), sx0 = std::sin(p0);
+            const float cx1 = std::cos(p1), sx1 = std::sin(p1);
+            const Vec3 a{ radius * sy0 * cx0, radius * cy0, radius * sy0 * sx0 };
+            const Vec3 b{ radius * sy0 * cx1, radius * cy0, radius * sy0 * sx1 };
+            const Vec3 c{ radius * sy1 * cx1, radius * cy1, radius * sy1 * sx1 };
+            const Vec3 d{ radius * sy1 * cx0, radius * cy1, radius * sy1 * sx0 };
+            mesh.positions.push_back(a); mesh.positions.push_back(b); mesh.positions.push_back(c);
+            mesh.positions.push_back(a); mesh.positions.push_back(c); mesh.positions.push_back(d);
+            const float u0 = (float)s / slices, u1 = (float)(s + 1) / slices;
+            mesh.uvs.push_back({ u0, 1.0f - v0 }); mesh.uvs.push_back({ u1, 1.0f - v0 });
+            mesh.uvs.push_back({ u1, 1.0f - v1 });
+            mesh.uvs.push_back({ u0, 1.0f - v0 }); mesh.uvs.push_back({ u1, 1.0f - v1 });
+            mesh.uvs.push_back({ u0, 1.0f - v1 });
+        }
+    }
+
+    // Sparse wireframe: interior latitude rings plus four pole-to-pole
+    // longitude arcs, enough to read as a sphere silhouette in Wireframe mode.
+    for (int r = 1; r < rings; ++r)
+    {
+        const float theta = (float)r / rings * PI;
+        const float ring_y = radius * std::cos(theta);
+        const float ring_r = radius * std::sin(theta);
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 2.0f * PI;
+            const float p1 = (float)(s + 1) / slices * 2.0f * PI;
+            mesh.edge_lines.push_back({ ring_r * std::cos(p0), ring_y, ring_r * std::sin(p0) });
+            mesh.edge_lines.push_back({ ring_r * std::cos(p1), ring_y, ring_r * std::sin(p1) });
+        }
+    }
+    for (int q = 0; q < 4; ++q)
+    {
+        const float phi = (float)q / 4.0f * 2.0f * PI;
+        Vec3 prev{ 0.0f, radius, 0.0f };
+        for (int r = 1; r <= rings; ++r)
+        {
+            const float theta = (float)r / rings * PI;
+            const float ring_r = radius * std::sin(theta);
+            const Vec3 cur{ ring_r * std::cos(phi), radius * std::cos(theta), ring_r * std::sin(phi) };
+            mesh.edge_lines.push_back(prev);
+            mesh.edge_lines.push_back(cur);
+            prev = cur;
+        }
+    }
+
+    mesh.bounds_min = { -radius, -radius, -radius };
+    mesh.bounds_max = {  radius,  radius,  radius };
+    return mesh;
+}
+
+// Base-pivoted cylinder (bottom at y=0, top at y=height) -- like Wall/Floor/
+// Capsule, meant to be dropped directly onto a surface (a pillar, a post, the
+// handle half of a Stage 8 torch) rather than centered like the Cube/Sphere.
+static Mesh BuildCylinderMesh(float radius, float height)
+{
+    radius = std::max(radius, 0.02f);
+    height = std::max(height, 0.05f);
+    Mesh mesh;
+    mesh.name = "Cylinder Primitive";
+    const int slices = 16;
+    const float PI = 3.14159265358979f;
+
+    auto quad = [&](const Vec3 &a, const Vec3 &b, const Vec3 &c, const Vec3 &d) {
+        mesh.positions.push_back(a); mesh.positions.push_back(b); mesh.positions.push_back(c);
+        mesh.positions.push_back(a); mesh.positions.push_back(c); mesh.positions.push_back(d);
+        mesh.uvs.push_back({0.0f, 0.0f}); mesh.uvs.push_back({1.0f, 0.0f}); mesh.uvs.push_back({1.0f, 1.0f});
+        mesh.uvs.push_back({0.0f, 0.0f}); mesh.uvs.push_back({1.0f, 1.0f}); mesh.uvs.push_back({0.0f, 1.0f});
+    };
+
+    // Side wall.
+    for (int s = 0; s < slices; ++s)
+    {
+        const float p0 = (float)s / slices * 2.0f * PI;
+        const float p1 = (float)(s + 1) / slices * 2.0f * PI;
+        const float cx0 = std::cos(p0), sx0 = std::sin(p0);
+        const float cx1 = std::cos(p1), sx1 = std::sin(p1);
+        quad({ radius * cx0, height, radius * sx0 }, { radius * cx1, height, radius * sx1 },
+             { radius * cx1, 0.0f,   radius * sx1 }, { radius * cx0, 0.0f,   radius * sx0 });
+    }
+
+    // Top cap (y=height) and bottom cap (y=0).
+    for (int side = 0; side < 2; ++side)
+    {
+        const float y = side == 0 ? height : 0.0f;
+        const Vec3 center{ 0.0f, y, 0.0f };
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 2.0f * PI;
+            const float p1 = (float)(s + 1) / slices * 2.0f * PI;
+            const Vec3 a{ radius * std::cos(p0), y, radius * std::sin(p0) };
+            const Vec3 b{ radius * std::cos(p1), y, radius * std::sin(p1) };
+            if (side == 0) { mesh.positions.push_back(center); mesh.positions.push_back(b); mesh.positions.push_back(a); }
+            else           { mesh.positions.push_back(center); mesh.positions.push_back(a); mesh.positions.push_back(b); }
+            mesh.uvs.push_back({0.5f, 0.5f}); mesh.uvs.push_back({1.0f, 0.0f}); mesh.uvs.push_back({0.0f, 0.0f});
+        }
+    }
+
+    // Wireframe: top/bottom rings plus four verticals.
+    auto ring_at = [&](float y) {
+        for (int s = 0; s < slices; ++s)
+        {
+            const float p0 = (float)s / slices * 2.0f * PI;
+            const float p1 = (float)(s + 1) / slices * 2.0f * PI;
+            mesh.edge_lines.push_back({ radius * std::cos(p0), y, radius * std::sin(p0) });
+            mesh.edge_lines.push_back({ radius * std::cos(p1), y, radius * std::sin(p1) });
+        }
+    };
+    ring_at(0.0f);
+    ring_at(height);
+    for (int q = 0; q < 4; ++q)
+    {
+        const float phi = (float)q / 4.0f * 2.0f * PI;
+        mesh.edge_lines.push_back({ radius * std::cos(phi), 0.0f,   radius * std::sin(phi) });
+        mesh.edge_lines.push_back({ radius * std::cos(phi), height, radius * std::sin(phi) });
+    }
+
+    mesh.bounds_min = { -radius, 0.0f,   -radius };
+    mesh.bounds_max = {  radius, height,  radius };
+    return mesh;
+}
+
+const char *const kBuiltinCubePath     = "__builtin_cube__";
+const char *const kBuiltinWallPath     = "__builtin_wall__";
+const char *const kBuiltinFloorPath    = "__builtin_floor__";
+const char *const kBuiltinRampPath     = "__builtin_ramp__";
+const char *const kBuiltinCapsulePath  = "__builtin_capsule__";
+const char *const kBuiltinSpherePath   = "__builtin_sphere__";
+const char *const kBuiltinCylinderPath = "__builtin_cylinder__";
 
 const char *BuiltinPrimitiveDisplayName(const std::string &path)
 {
-    if (path == kBuiltinCubePath)    return "Cube";
-    if (path == kBuiltinWallPath)    return "Wall";
-    if (path == kBuiltinFloorPath)   return "Floor";
-    if (path == kBuiltinRampPath)    return "Ramp";
-    if (path == kBuiltinCapsulePath) return "Capsule";
+    if (path == kBuiltinCubePath)     return "Cube";
+    if (path == kBuiltinWallPath)     return "Wall";
+    if (path == kBuiltinFloorPath)    return "Floor";
+    if (path == kBuiltinRampPath)     return "Ramp";
+    if (path == kBuiltinCapsulePath)  return "Capsule";
+    if (path == kBuiltinSpherePath)   return "Sphere";
+    if (path == kBuiltinCylinderPath) return "Cylinder";
     return nullptr;
 }
 
@@ -648,6 +800,17 @@ MeshLibrary::MeshLibrary()
     Mesh capsule = BuildCapsuleMesh(0.4f, 1.8f);
     ComputeVertexNormals(capsule);
     m_meshes.emplace(kBuiltinCapsulePath, std::move(capsule));
+
+    // General-purpose sphere (0.5m radius, matching the Cube's 1m size) and
+    // a slender post-sized cylinder (0.3m diameter, 1m tall) -- introduced
+    // for Stage 8's point-light torch marker, useful as plain primitives too.
+    Mesh sphere = BuildSphereMesh(0.5f);
+    ComputeVertexNormals(sphere);
+    m_meshes.emplace(kBuiltinSpherePath, std::move(sphere));
+
+    Mesh cylinder = BuildCylinderMesh(0.15f, 1.0f);
+    ComputeVertexNormals(cylinder);
+    m_meshes.emplace(kBuiltinCylinderPath, std::move(cylinder));
 }
 
 const Mesh* MeshLibrary::Load(const std::string &path, std::string *error)

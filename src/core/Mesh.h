@@ -39,6 +39,8 @@ extern const char *const kBuiltinWallPath;
 extern const char *const kBuiltinFloorPath;
 extern const char *const kBuiltinRampPath;
 extern const char *const kBuiltinCapsulePath;
+extern const char *const kBuiltinSpherePath;
+extern const char *const kBuiltinCylinderPath;
 
 // Short, human-readable name for a builtin primitive path (e.g. a spawned
 // entity's default tag, or a UI label) -- nullptr if `path` isn't one of the

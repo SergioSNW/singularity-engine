@@ -927,6 +927,35 @@ void InspectorPanel::OnImGuiRender(float dt)
         ImGui::PopID();
     }
 
+    // --- Point Light (Stage 8) ---
+    if (ComponentHeader("Point Light", "Reset", [this, entity]() {
+        if (m_history)
+            m_history->BeginEntityEdit(entity->id, "Reset Point Light");
+        entity->point_light = PointLightComponent();
+        entity->point_light.enabled = true;  // reset restores a lit light, like Material
+        if (m_history)
+        {
+            m_history->EndEntityEdit();
+            m_edit_entity = -1;
+        }
+    }))
+    {
+        ImGui::PushID("PointLight");
+        BeginEditSession("Edit Point Light");
+        ImGui::Checkbox("Enabled##PointLight", &entity->point_light.enabled);
+        EndEditSessionIfReleased();
+        ImGui::ColorEdit3("Color##PointLight", entity->point_light.color);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Intensity##PointLight", &entity->point_light.intensity, 0.05f, 0.0f, 10.0f);
+        EndEditSessionIfReleased();
+        ImGui::DragFloat("Range##PointLight", &entity->point_light.range, 0.1f, 0.1f, 200.0f);
+        EndEditSessionIfReleased();
+        ImGui::SliderFloat("Ambient##PointLight", &entity->point_light.ambient, 0.0f, 1.0f);
+        EndEditSessionIfReleased();
+        TextDisabledWrapped("Lights outward from this entity's own position; fades smoothly to zero at Range. Never casts a shadow.");
+        ImGui::PopID();
+    }
+
     // If the panel loses the session target (selection cleared/changed without
     // a commit), close the dangling transaction now so the next selection
     // starts clean.

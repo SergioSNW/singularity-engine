@@ -420,14 +420,23 @@ struct FillTri
     SDL_Texture *texture = nullptr;
 };
 
-// Resolved directional light used by the shading pass. `dir` is the normalized
-// world-space direction the light TRAVELS; shading uses `-dir` (toward the
-// light) so a surface is lit when its normal faces the source. `color` tints
-// the diffuse term, `intensity` scales it, and `ambient` is the view-independent
-// floor. The shadow group drives the ray-cast directional shadow attenuation.
+// Resolved light used by the shading pass -- either a Directional (`dir` is
+// the normalized world-space direction the light TRAVELS; shading uses `-dir`
+// so a surface is lit when its normal faces the source) or, since Stage 8, a
+// Point light (`position` in world space, falling off to zero at `range`,
+// with the actual per-vertex direction/attenuation computed on the fly in
+// ShadeVertex since -- unlike a directional light's single global `dir` --
+// it varies with the shaded point's own position). `color` tints the diffuse
+// term, `intensity` scales it, `ambient` is a per-light view-independent
+// floor. The shadow group only ever applies to Directional: a point light
+// never casts a shadow in this pass, it's a local fill/accent light.
 struct RenderLight
 {
-    Vec3  dir{ 0.0f, -1.0f, 0.0f };
+    enum class Type { Directional, Point };
+    Type  type = Type::Directional;
+    Vec3  dir{ 0.0f, -1.0f, 0.0f };        // Directional only
+    Vec3  position{ 0.0f, 0.0f, 0.0f };    // Point only
+    float range = 8.0f;                     // Point only
     Vec3  color{ 1.0f, 1.0f, 1.0f };
     float intensity = 1.0f;
     float ambient = 0.10f;
@@ -473,8 +482,9 @@ static float DirectionalShadowFactor(const RenderLight &light, const Vec3 &centr
     return 1.0f;
 }
 
-// Gather the scene's active directional lights. With none active the preview
-// falls back to a key light so the test mesh is always readable.
+// Gather the scene's active directional AND point (Stage 8) lights. With
+// none active the preview falls back to a key light so the test mesh is
+// always readable.
 static std::vector<RenderLight> GatherSceneLights(Scene *scene)
 {
     std::vector<RenderLight> lights;
@@ -483,22 +493,40 @@ static std::vector<RenderLight> GatherSceneLights(Scene *scene)
     for (auto &entity_ptr : scene->GetEntities())
     {
         const Entity &e = *entity_ptr;
-        if (!e.light.active)
-            continue;
-        RenderLight l;
-        Vec3 dir = Vec3Normalize({ e.light.direction[0],
-                                   e.light.direction[1],
-                                   e.light.direction[2] });
-        if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-            dir = { 0.0f, -1.0f, 0.0f };
-        l.dir = dir;
-        l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
-        l.intensity = e.light.intensity;
-        l.ambient = e.light.ambient;
-        l.shadow_strength = e.light.shadow_strength;
-        l.shadow_bias = e.light.shadow_bias;
-        l.shadow_distance = e.light.shadow_distance;
-        lights.push_back(l);
+        if (e.light.active)
+        {
+            RenderLight l;
+            l.type = RenderLight::Type::Directional;
+            Vec3 dir = Vec3Normalize({ e.light.direction[0],
+                                       e.light.direction[1],
+                                       e.light.direction[2] });
+            if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
+                dir = { 0.0f, -1.0f, 0.0f };
+            l.dir = dir;
+            l.color = { e.light.color[0], e.light.color[1], e.light.color[2] };
+            l.intensity = e.light.intensity;
+            l.ambient = e.light.ambient;
+            l.shadow_strength = e.light.shadow_strength;
+            l.shadow_bias = e.light.shadow_bias;
+            l.shadow_distance = e.light.shadow_distance;
+            lights.push_back(l);
+        }
+        if (e.point_light.enabled)
+        {
+            RenderLight l;
+            l.type = RenderLight::Type::Point;
+            // World-space position accounts for the parent chain, same as
+            // every other world-matrix consumer here (a torch attached to a
+            // wall, or parented under a moving platform, lights from where
+            // it actually sits, not its local-space offset).
+            l.position = Mat4TransformPoint(scene->ComputeWorldMatrix(e), Vec3{0.0f, 0.0f, 0.0f});
+            l.range = std::max(e.point_light.range, 0.01f);
+            l.color = { e.point_light.color[0], e.point_light.color[1], e.point_light.color[2] };
+            l.intensity = e.point_light.intensity;
+            l.ambient = e.point_light.ambient;
+            l.shadow_strength = 0.0f;  // point lights never cast shadows in this pass
+            lights.push_back(l);
+        }
     }
     return lights;
 }
@@ -625,23 +653,49 @@ static void ShadeVertex(const Vec3 &n, const Vec3 &centroid, const Vec3 &cam_pos
     out_r = out_g = out_b = pbr::AmbientFloor(fill_intensity, ao);
     for (const RenderLight &l : lights)
     {
-        float diffuse = std::max(0.0f, Vec3Dot(n, Vec3Scale(l.dir, -1.0f))) * l.intensity;
+        // Directional: a single global "toward the light" direction and no
+        // distance falloff. Point (Stage 8): the direction varies per shaded
+        // point (there's no one global direction to precompute in
+        // GatherSceneLights the way there is for Directional), and intensity
+        // falls off smoothly to zero at `range` rather than physically --
+        // easy to reason about and to eyeball-place in the editor.
+        Vec3 to_light;
+        float atten = 1.0f;
+        if (l.type == RenderLight::Type::Point)
+        {
+            Vec3 delta = Vec3Sub(l.position, centroid);
+            const float dist = Vec3Length(delta);
+            to_light = (dist > 1e-5f) ? Vec3Scale(delta, 1.0f / dist) : Vec3{ 0.0f, 1.0f, 0.0f };
+            const float x = std::clamp(1.0f - dist / l.range, 0.0f, 1.0f);
+            atten = x * x;
+        }
+        else
+        {
+            to_light = Vec3Scale(l.dir, -1.0f);
+        }
+
+        float diffuse = std::max(0.0f, Vec3Dot(n, to_light)) * l.intensity * atten;
         float shadow = 1.0f;
-        if (diffuse > 0.0f && l.shadow_strength > 0.0f && !occluders.empty())
+        if (l.type == RenderLight::Type::Directional && diffuse > 0.0f &&
+            l.shadow_strength > 0.0f && !occluders.empty())
             shadow = DirectionalShadowFactor(l, centroid, n, occluders, self);
-        const float ambient = pbr::AmbientFloor(l.ambient, ao);
+        // A point light's own ambient floor fades with distance like the rest
+        // of its contribution; a directional light's stays global (the sun's
+        // ambient bounce doesn't care how far away the surface is).
+        const float ambient = pbr::AmbientFloor(l.ambient, ao) *
+                              (l.type == RenderLight::Type::Point ? atten : 1.0f);
         float factor = ambient + (1.0f - ambient) * diffuse * shadow;
 
         float spec_r = 0.0f, spec_g = 0.0f, spec_b = 0.0f;
         if (spec_weight > 0.0f)
         {
-            Vec3 h = Vec3Add(Vec3Scale(l.dir, -1.0f), v);
+            Vec3 h = Vec3Add(to_light, v);
             const float h_len = Vec3Length(h);
             if (h_len > 1e-5f)
             {
                 h = Vec3Scale(h, 1.0f / h_len);
                 const float spec = pbr::BlinnPhong(Vec3Dot(n, h), spec_power) *
-                                   l.intensity * spec_weight;
+                                   l.intensity * spec_weight * atten;
                 spec_r = spec * f0_r;
                 spec_g = spec * f0_g;
                 spec_b = spec * f0_b;
@@ -2612,6 +2666,51 @@ Entity *Application::CreatePlayer()
     return &created;
 }
 
+// Stage 8: a point light presented as a torch -- a small glowing sphere
+// (the actual PointLightComponent, and the only part that does anything)
+// with a slender cylinder "handle" parented underneath it, purely as a
+// placement marker. The handle carries no light/collider/script of its own;
+// PushSpawn captures the whole two-entity subtree, so Undo removes both.
+Entity *Application::CreatePointLight()
+{
+    if (!m_scene)
+        return nullptr;
+
+    Entity &created = m_scene->CreateEntity("Point Light");
+    created.mesh.path = kBuiltinSpherePath;
+    created.transform.scale[0] = 0.4f;
+    created.transform.scale[1] = 0.4f;
+    created.transform.scale[2] = 0.4f;
+    created.material.color[0] = 1.0f;
+    created.material.color[1] = 0.85f;
+    created.material.color[2] = 0.55f;
+    created.material.color[3] = 1.0f;
+    created.point_light.enabled = true;
+
+    Entity &handle = m_scene->CreateEntity("Torch Handle", &created);
+    handle.mesh.path = kBuiltinCylinderPath;
+    handle.transform.position[1] = -1.0f;  // hangs down from the light marker
+    handle.transform.scale[0] = 0.3f;
+    handle.transform.scale[2] = 0.3f;
+    handle.material.color[0] = 0.35f;
+    handle.material.color[1] = 0.25f;
+    handle.material.color[2] = 0.18f;
+    handle.material.color[3] = 1.0f;
+
+    const float yaw = m_editor_camera.yaw * 3.1415926535f / 180.0f;
+    created.transform.position[0] = m_editor_camera.position.x - std::sin(yaw) * 4.0f;
+    created.transform.position[1] = m_editor_camera.position.y;
+    created.transform.position[2] = m_editor_camera.position.z - std::cos(yaw) * 4.0f;
+
+    if (m_history)
+        m_history->PushSpawn(created, "Create 'Point Light'");
+    m_selection->entity_id = created.id;
+    m_selection->entity_name = created.tag.tag;
+    m_scene_status = "Created 'Point Light'";
+    PushToast("Created 'Point Light'");
+    return &created;
+}
+
 // The first entity with player.enabled, or nullptr. Mirrors FindActiveCamera's
 // single-match convention -- there is no multi-player concept here.
 Entity *Application::FindPlayerEntity() const
@@ -3937,6 +4036,10 @@ void Application::DrawViewportContextMenu()
             SpawnPrimitive("Cube", nullptr, "Checker.mat");
         if (ImGui::MenuItem("Create Octahedron"))
             SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
+        if (ImGui::MenuItem("Create Sphere"))
+            SpawnPrimitive("Sphere", kBuiltinSpherePath, nullptr);
+        if (ImGui::MenuItem("Create Cylinder"))
+            SpawnPrimitive("Cylinder", kBuiltinCylinderPath, nullptr);
         if (ImGui::MenuItem("Create Landscape"))
         {
             // Spawn + select + arm the brush, then jump into the Landscape
@@ -3956,6 +4059,8 @@ void Application::DrawViewportContextMenu()
             m_scene_status = "Created 'Directional Light'";
             PushToast("Created 'Directional Light'");
         }
+        if (ImGui::MenuItem("Create Point Light"))
+            CreatePointLight();
         if (ImGui::MenuItem("Create Camera"))
         {
             Entity &cam = m_scene->CreateEntity("Camera");
@@ -4690,6 +4795,12 @@ bool Application::Init(int width, int height, const char *title)
     cp.Register({ "Create Octahedron", "Create", "", [this]() {
         SpawnPrimitive("Octahedron", "octahedron.obj", nullptr);
     } });
+    cp.Register({ "Create Sphere", "Create", "", [this]() {
+        SpawnPrimitive("Sphere", kBuiltinSpherePath, nullptr);
+    } });
+    cp.Register({ "Create Cylinder", "Create", "", [this]() {
+        SpawnPrimitive("Cylinder", kBuiltinCylinderPath, nullptr);
+    } });
     cp.Register({ "Create Directional Light", "Create", "", [this]() {
         Entity &light = CreateDirectionalLightEntity(*m_scene, "Directional Light");
         if (m_history)
@@ -4699,6 +4810,7 @@ bool Application::Init(int width, int height, const char *title)
         m_scene_status = "Created 'Directional Light'";
         PushToast("Created 'Directional Light'");
     } });
+    cp.Register({ "Create Point Light", "Create", "", [this]() { CreatePointLight(); } });
     cp.Register({ "Create Camera", "Create", "", [this]() {
         Entity &cam = m_scene->CreateEntity("Camera");
         cam.transform.position[0] = m_editor_camera.position.x;

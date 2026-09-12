@@ -164,6 +164,14 @@ void WriteEntityFields(json::Value &ent, const Entity &e)
     light.object.emplace_back("shadow_distance", json::Value::MakeNumber(e.light.shadow_distance));
     ent.object.emplace_back("light", std::move(light));
 
+    json::Value point_light = json::Value::MakeObject();
+    point_light.object.emplace_back("enabled", json::Value::MakeBool(e.point_light.enabled));
+    point_light.object.emplace_back("color", Vec3ToJson(e.point_light.color));
+    point_light.object.emplace_back("intensity", json::Value::MakeNumber(e.point_light.intensity));
+    point_light.object.emplace_back("range", json::Value::MakeNumber(e.point_light.range));
+    point_light.object.emplace_back("ambient", json::Value::MakeNumber(e.point_light.ambient));
+    ent.object.emplace_back("point_light", std::move(point_light));
+
     // Procedural landscape: the height grid AND the painted vertex colors are
     // serialized (Phase 42's Surface & Material Painting writes `colors` at
     // runtime same as sculpting writes `heights` -- dropping either one here
@@ -281,6 +289,15 @@ void ReadEntityFields(const json::Value &ent, Entity &e)
         e.light.shadow_strength = (float)lgt->Number("shadow_strength", e.light.shadow_strength);
         e.light.shadow_bias = (float)lgt->Number("shadow_bias", e.light.shadow_bias);
         e.light.shadow_distance = (float)lgt->Number("shadow_distance", e.light.shadow_distance);
+    }
+
+    if (const json::Value *pl = ent.Find("point_light"); pl && pl->IsObject())
+    {
+        e.point_light.enabled = pl->Bool("enabled", e.point_light.enabled);
+        Vec3FromJson(e.point_light.color, pl->Find("color"));
+        e.point_light.intensity = (float)pl->Number("intensity", e.point_light.intensity);
+        e.point_light.range = (float)pl->Number("range", e.point_light.range);
+        e.point_light.ambient = (float)pl->Number("ambient", e.point_light.ambient);
     }
 
     if (const json::Value *lsc = ent.Find("landscape"); lsc && lsc->IsObject())
