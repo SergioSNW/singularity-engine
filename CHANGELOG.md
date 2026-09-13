@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.55.1-alpha] — 2026-09-13
+
+### Changed
+
+- **`assets/scenes/level_1.scene`**: added two torches (Stage 8's point-light marker) flanking the Level Exit trigger, generated the same way as the rest of this scene's content — real engine code building real `Scene`/`Entity` objects and saving through `SceneSerializer`, not hand-edited JSON. Content-only; no engine changes.
+
 ## [0.55.0-alpha] — 2026-09-12
 
 ### Added

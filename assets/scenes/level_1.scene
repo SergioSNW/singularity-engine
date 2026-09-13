@@ -166,6 +166,17 @@
         "shadow_bias": 0.0500000007,
         "shadow_distance": 30
       },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
       "landscape": {
         "enabled": false
       }
@@ -262,6 +273,17 @@
         "shadow_strength": 0.600000024,
         "shadow_bias": 0.0500000007,
         "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
       },
       "landscape": {
         "enabled": false
@@ -360,6 +382,17 @@
         "shadow_bias": 0.0500000007,
         "shadow_distance": 30
       },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
       "landscape": {
         "enabled": false
       }
@@ -457,6 +490,17 @@
         "shadow_bias": 0.0500000007,
         "shadow_distance": 30
       },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
       "landscape": {
         "enabled": false
       }
@@ -553,6 +597,449 @@
         "shadow_strength": 0.600000024,
         "shadow_bias": 0.0500000007,
         "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "e4b56dbe-8b0e-4ce3-ab4c-27c4b70a65f4",
+      "parent": null,
+      "name": "Torch Left",
+      "transform": {
+        "position": [
+          -2,
+          1,
+          -5
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.400000006,
+          0.400000006,
+          0.400000006
+        ]
+      },
+      "material": {
+        "color": [
+          1,
+          0.850000024,
+          0.550000012,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": "__builtin_sphere__"
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": true,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "9ca05cf9-2f02-4b53-9aba-2656769684a9",
+      "parent": "e4b56dbe-8b0e-4ce3-ab4c-27c4b70a65f4",
+      "name": "Torch Left Handle",
+      "transform": {
+        "position": [
+          0,
+          -1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.300000012,
+          1,
+          0.300000012
+        ]
+      },
+      "material": {
+        "color": [
+          0.349999994,
+          0.25,
+          0.180000007,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": "__builtin_cylinder__"
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "ca2f243f-63a3-4cb2-bbef-76494a6ee368",
+      "parent": null,
+      "name": "Torch Right",
+      "transform": {
+        "position": [
+          2,
+          1,
+          -5
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.400000006,
+          0.400000006,
+          0.400000006
+        ]
+      },
+      "material": {
+        "color": [
+          1,
+          0.850000024,
+          0.550000012,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": "__builtin_sphere__"
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": true,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
+      },
+      "landscape": {
+        "enabled": false
+      }
+    },
+    {
+      "uuid": "76c2cf0e-91a5-464a-a140-9b93e195e5cb",
+      "parent": "ca2f243f-63a3-4cb2-bbef-76494a6ee368",
+      "name": "Torch Right Handle",
+      "transform": {
+        "position": [
+          0,
+          -1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.300000012,
+          1,
+          0.300000012
+        ]
+      },
+      "material": {
+        "color": [
+          0.349999994,
+          0.25,
+          0.180000007,
+          1
+        ],
+        "active": true,
+        "material": "",
+        "texture": ""
+      },
+      "mesh": {
+        "path": "__builtin_cylinder__"
+      },
+      "camera": {
+        "fov": 60,
+        "near_plane": 0.100000001,
+        "far_plane": 100,
+        "pitch": 0,
+        "yaw": 0,
+        "primary": false
+      },
+      "collider": {
+        "enabled": false,
+        "type": "solid",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "extents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layers": 1,
+        "physics_material": ""
+      },
+      "player": {
+        "enabled": false,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "move_speed": 5,
+        "jump_speed": 7
+      },
+      "script": {
+        "path": ""
+      },
+      "audio": {
+        "path": "",
+        "loop": false,
+        "volume": 1,
+        "auto_play": false
+      },
+      "light": {
+        "active": false,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 0.75,
+        "direction": [
+          0.400000006,
+          -0.800000012,
+          -0.449999988
+        ],
+        "ambient": 0.100000001,
+        "shadow_strength": 0.600000024,
+        "shadow_bias": 0.0500000007,
+        "shadow_distance": 30
+      },
+      "point_light": {
+        "enabled": false,
+        "color": [
+          1,
+          0.850000024,
+          0.550000012
+        ],
+        "intensity": 1.5,
+        "range": 8,
+        "ambient": 0
       },
       "landscape": {
         "enabled": false
